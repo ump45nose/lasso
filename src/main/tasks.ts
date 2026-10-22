@@ -1,7 +1,7 @@
 import { BrowserWindow, WebContentsView, clipboard } from 'electron';
 import type { Rectangle, WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { ChatGPTAdapter } from './adapters/chatgpt';
+import { ChatGPTAdapter, isRestoredPage } from './adapters/chatgpt';
 import type { PageSnapshot } from './adapters/chatgpt';
 import { isIdleCandidate, IDLE_RELEASE_MS } from './task-policy';
 import type { DeliveryStatus, Preset, ShellState, TaskActivity, TaskSummary } from '../shared/contracts';
@@ -189,10 +189,14 @@ export class TaskManager {
     this.delivery(task, { phase: 'waiting', message: '正在恢复原对话…', canCopy: false });
     try {
       await this.navigate(task, url);
+      controller.signal.throwIfAborted();
       await task.adapter!.waitRestored(url, task.savedResponseId!, controller.signal);
-      task.resumeUrl = null; this.delivery(task, null);
+      controller.signal.throwIfAborted();
+      if (task.controller === controller) { task.resumeUrl = null; this.delivery(task, null); }
     } catch (error) {
-      if (!controller.signal.aborted || timedOut) this.delivery(task, { phase: 'error', message: '原对话暂未恢复。重新加载将重试原链接，不会重发提示词。', canCopy: false });
+      if (task.controller === controller && (!controller.signal.aborted || timedOut)) {
+        this.delivery(task, { phase: 'error', message: '原对话暂未恢复。可在网页重试，或重新加载原链接；不会重发提示词。', canCopy: false });
+      }
     } finally {
       clearTimeout(timeout);
       if (task.controller === controller) task.controller = null;
@@ -257,6 +261,13 @@ export class TaskManager {
       if (!old || old.url !== snapshot.url || old.activity !== snapshot.activity || old.draft !== snapshot.draft
         || old.hasDraft !== snapshot.hasDraft || old.progress !== snapshot.progress || old.responseId !== snapshot.responseId || old.lastInputAt !== snapshot.lastInputAt) {
         task.lastActivityAt = Date.now(); task.retainedReason = null; task.retryReleaseAt = 0;
+      }
+      // A website retry may finish after our wait timed out. Use the same two-observation
+      // proof as waitRestored so a recovered page does not remain permanently pending.
+      if (!task.controller && task.resumeUrl && task.savedResponseId && old
+        && isRestoredPage(old, task.resumeUrl, task.savedResponseId)
+        && isRestoredPage(snapshot, task.resumeUrl, task.savedResponseId)) {
+        task.resumeUrl = null; task.delivery = null;
       }
       task.observed = snapshot; task.activity = snapshot.activity; task.hasDraft = snapshot.hasDraft;
       task.restoreUrl = snapshot.restoreUrl; task.url = snapshot.url;

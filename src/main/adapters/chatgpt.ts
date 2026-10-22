@@ -23,6 +23,11 @@ export interface PageSnapshot {
   refusal?: string;
   clicked?: boolean;
 }
+/** A saved answer must be present after a successful history load, not only in cached DOM. */
+export function isRestoredPage(snapshot: PageSnapshot, url: string, responseId: string): boolean {
+  return snapshot.ready && !snapshot.recoveryError && snapshot.historyLoaded && snapshot.activity === 'complete'
+    && snapshot.restoreUrl === url && snapshot.responseId === responseId;
+}
 // This function runs in the website. Keep site-specific DOM knowledge here.
 function pageBridge(command: 'read' | 'focus' | 'clear-new' | 'retry-restore' | 'submit', expected = ''): PageSnapshot {
   // Isolated-world state observes interaction without exposing a local IPC bridge to the site.
@@ -135,7 +140,7 @@ export class ChatGPTAdapter {
     let matched = false;
     while (!signal.aborted) {
       const saved = await this.read();
-      const complete = saved.historyLoaded && saved.activity === 'complete' && saved.restoreUrl === url && saved.responseId === responseId;
+      const complete = isRestoredPage(saved, url, responseId);
       // History fetch can finish while the UI still briefly shows a cached turn.
       if (complete && matched) return;
       matched = complete;
