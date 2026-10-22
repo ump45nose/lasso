@@ -1,0 +1,4 @@
+#!/bin/zsh
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+cd -- "${0:A:h}"
+exec npm start
