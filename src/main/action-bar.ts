@@ -1,11 +1,13 @@
 import { BrowserWindow, ipcMain, Menu, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
+import { WindowMotion } from './motion';
 import { fitToWorkArea } from './position';
 import type { ActionBarState, Preset, SelectionContext } from '../shared/contracts';
 
 export class ActionBar {
   readonly window: BrowserWindow;
+  private motion: WindowMotion;
   private selection: SelectionContext | null = null;
   private presets: Preset[] = [];
   private busy = false;
@@ -16,6 +18,7 @@ export class ActionBar {
       backgroundColor: '#FFFEFB', roundedCorners: true,
       webPreferences: { preload: join(__dirname, 'action-bar-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
     });
+    this.motion = new WindowMotion(this.window);
     this.window.setAlwaysOnTop(true, 'pop-up-menu');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -58,12 +61,12 @@ export class ActionBar {
     this.selection = selection;
     if (!this.presets.some(p => p.enabled) || this.busy) return;
     this.position(selection);
-    this.window.showInactive();
+    this.motion.show(true);
   }
   contains(point: { x: number; y: number }) {
     const b = this.window.getBounds();
     return this.window.isVisible() && point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height;
   }
-  hide() { this.selection = null; this.window.hide(); }
-  destroy() { this.window.destroy(); }
+  hide() { this.selection = null; this.motion.hide(); }
+  destroy() { this.motion.dispose(); this.window.destroy(); }
 }

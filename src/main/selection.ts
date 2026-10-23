@@ -6,6 +6,8 @@ import type { CaptureStatus, SelectionContext, Settings } from '../shared/contra
 export class SelectionCapture {
   private hook: SelectionHook | null = null;
   private suppressUntil = 0;
+  private permissionPrompted = false;
+  private trustTimer: ReturnType<typeof setInterval> | null = null;
   constructor(
     private onSelection: (selection: SelectionContext) => void,
     private onStatus: (status: CaptureStatus) => void,
@@ -15,8 +17,21 @@ export class SelectionCapture {
   configure(settings: Settings) {
     this.hook?.stop();
     this.onDismiss();
+    if (this.trustTimer) { clearInterval(this.trustTimer); this.trustTimer = null; }
     if (!settings.selectionEnabled) return this.onStatus({ status: 'paused', message: '划词已暂停' });
-    if (!systemPreferences.isTrustedAccessibilityClient(false)) return this.onStatus({ status: 'permission', message: '需要辅助功能权限才能读取选中文字' });
+    if (!systemPreferences.isTrustedAccessibilityClient(false)) {
+      // Signed installs keep a stable identity. Only first-time/migration consent
+      // needs a prompt; reopening settings must not repeatedly prompt the user.
+      if (!this.permissionPrompted) {
+        this.permissionPrompted = true;
+        systemPreferences.isTrustedAccessibilityClient(true);
+      }
+      this.trustTimer = setInterval(() => {
+        if (!systemPreferences.isTrustedAccessibilityClient(false)) return;
+        this.configure(settings);
+      }, 1000);
+      return this.onStatus({ status: 'permission', message: '需要在「隐私与安全 → 设备控制和数据访问」中允许 Lasso，才能读取选中文字' });
+    }
     try {
       if (!this.hook) {
         this.hook = new SelectionHook();
@@ -49,5 +64,8 @@ export class SelectionCapture {
     if (data) this.receive(data);
   }
   suppress() { this.suppressUntil = Date.now() + 500; }
-  cleanup() { this.hook?.cleanup(); }
+  cleanup() {
+    if (this.trustTimer) clearInterval(this.trustTimer);
+    this.hook?.cleanup();
+  }
 }

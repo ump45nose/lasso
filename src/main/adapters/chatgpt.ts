@@ -1,7 +1,9 @@
 import type { WebContents } from 'electron';
-import type { TaskActivity } from '../../shared/contracts';
+import type { ExecutionCatalog, ExecutionProfile, TaskActivity } from '../../shared/contracts';
+import { WebProfile } from './web-profile';
 import { setTimeout as delay } from 'node:timers/promises';
 
+export type PageCommand = 'read' | 'focus' | 'clear-new' | 'retry-restore' | 'submit' | 'attachment';
 export interface PageSnapshot {
   url: string;
   title: string;
@@ -20,11 +22,19 @@ export interface PageSnapshot {
   responseId: string | null;
   historyLoaded: boolean;
   recoveryError: boolean;
+  attachmentReady?: boolean;
+  attachmentPresent?: boolean;
+  uploadError?: string;
   refusal?: string;
   clicked?: boolean;
 }
+/** A saved answer must be present after a successful history load, not only in cached DOM. */
+export function isRestoredPage(snapshot: PageSnapshot, url: string, responseId: string): boolean {
+  return snapshot.ready && !snapshot.recoveryError && snapshot.historyLoaded && snapshot.activity === 'complete'
+    && snapshot.restoreUrl === url && snapshot.responseId === responseId;
+}
 // This function runs in the website. Keep site-specific DOM knowledge here.
-function pageBridge(command: 'read' | 'focus' | 'clear-new' | 'retry-restore' | 'submit', expected = ''): PageSnapshot {
+function pageBridge(command: PageCommand, expected = ''): PageSnapshot {
   // Isolated-world state observes interaction without exposing a local IPC bridge to the site.
   const context = window as Window & { __quickAskActivity?: { lastInputAt: number } };
   if (!context.__quickAskActivity) {
@@ -83,9 +93,20 @@ function pageBridge(command: 'read' | 'focus' | 'clear-new' | 'retry-restore' | 
     emptyHome, activity, restoreUrl, historyLoaded, recoveryError, lastInputAt: context.__quickAskActivity.lastInputAt,
     progress: `${lastTurn?.getAttribute('data-content-search-turn-key') || ''}:${turnState || ''}:${lastTurn?.textContent?.length || 0}`,
     responseId: [...(lastTurn?.querySelectorAll('[data-chatgpt-selection-message-id]') || [])].at(-1)?.getAttribute('data-chatgpt-selection-message-id') || null,
+    attachmentPresent: attachments,
+    attachmentReady: attachments && !form?.querySelector('[role="progressbar"], [data-state="uploading"], .animate-spin') && Boolean(send && !send.disabled),
+    uploadError: [...(form?.querySelectorAll('[role="alert"]') || [])].filter(visible).map(e => e.textContent).join('\n'),
     canSend: Boolean(send && visible(send) && !send.disabled && send.getAttribute('aria-disabled') !== 'true')
   };
   if (command === 'read') return snapshot;
+  if (command === 'attachment') {
+    const actions = [...document.querySelectorAll<HTMLElement>('button, [role="button"], [role="menuitem"]')].filter(visible);
+    const label = (element: HTMLElement) => (element.getAttribute('aria-label') || element.textContent || '').trim();
+    const upload = actions.find(element => /^(添加照片和文件|Add photos (?:and|&) files|Upload from computer)/i.test(label(element)));
+    if (upload) upload.click();
+    else actions.find(element => /^(添加文件等内容|添加文件|Add files|Add files and more)/i.test(label(element)) || element.matches('[data-testid="composer-plus-btn"]'))?.click();
+    return snapshot;
+  }
   if (command === 'retry-restore') {
     const retry = [...(document.querySelector('main')?.querySelectorAll<HTMLButtonElement>('button') || [])]
       .find(button => visible(button) && /^(再试一次|重试|Try again|Retry)$/i.test(button.textContent?.trim() || ''));
@@ -113,19 +134,27 @@ function pageBridge(command: 'read' | 'focus' | 'clear-new' | 'retry-restore' | 
 
 export class ChatGPTAdapter {
   private submitAttempted = false;
-  constructor(private contents: WebContents) {}
-  private read(command: 'read' | 'focus' | 'clear-new' | 'retry-restore' | 'submit' = 'read', expected = ''): Promise<PageSnapshot> {
-    return this.contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `(${pageBridge.toString()})(${JSON.stringify(command)}, ${JSON.stringify(expected)})` }]);
+  constructor(protected contents: WebContents, private bridge = pageBridge, private target: 'chatgpt' | 'gemini' = 'chatgpt') {}
+  applyProfile(profile: ExecutionProfile, signal: AbortSignal) { return new WebProfile(this.contents, this.target).apply(profile, signal); }
+  verifyProfile(profile: ExecutionProfile, signal: AbortSignal) { return new WebProfile(this.contents, this.target).verify(profile, signal); }
+  catalog(model: string, signal: AbortSignal, refresh = false): Promise<ExecutionCatalog> { return new WebProfile(this.contents, this.target).catalog(model, signal, refresh); }
+  private read(command: PageCommand = 'read', expected = ''): Promise<PageSnapshot> {
+    return this.contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `(${this.bridge.toString()})(${JSON.stringify(command)}, ${JSON.stringify(expected)})` }], command === 'attachment');
   }
   snapshot() { return this.read(); }
   async waitReady(signal: AbortSignal, onLogin: (login: boolean) => void) {
     let loadingSince = Date.now();
     while (!signal.aborted) {
-      const result = await this.read();
+      let result: PageSnapshot;
+      try { result = await this.read(); } catch (error) {
+        signal.throwIfAborted();
+        if (this.contents.isDestroyed() || Date.now() - loadingSince > 45_000) throw error;
+        await delay(100, undefined, { signal }); continue;
+      }
       onLogin(result.login);
       if (result.ready) return;
       if (result.login) loadingSince = Date.now();
-      else if (Date.now() - loadingSince > 45_000) throw new Error('未找到可编辑的 ChatGPT 输入框。请检查网页是否加载完成；原文仍保留。');
+      else if (Date.now() - loadingSince > 45_000) throw new Error(`未找到可编辑的 ${this.target === 'gemini' ? 'Gemini' : 'ChatGPT'} 输入框。请检查网页是否加载完成；原文仍保留。`);
       await delay(500, undefined, { signal });
     }
     signal.throwIfAborted();
@@ -135,7 +164,7 @@ export class ChatGPTAdapter {
     let matched = false;
     while (!signal.aborted) {
       const saved = await this.read();
-      const complete = saved.historyLoaded && saved.activity === 'complete' && saved.restoreUrl === url && saved.responseId === responseId;
+      const complete = isRestoredPage(saved, url, responseId);
       // History fetch can finish while the UI still briefly shows a cached turn.
       if (complete && matched) return;
       matched = complete;
@@ -168,7 +197,63 @@ export class ChatGPTAdapter {
     await this.contents.insertText(text);
     await delay(100, undefined, { signal });
     const actual = await this.read();
-    if (actual.draft !== text.replace(/\r\n?/g, '\n')) throw new Error('网页未完整接收文本，已停止自动发送。可复制保留的原文后在网页处理。');
+    const expected = text.replace(/\r\n?/g, '\n');
+    if (actual.draft !== expected) throw new Error(`网页未完整接收文本（预期 ${expected.length}，读回 ${actual.draft.length} 字符），已停止自动发送。可复制保留的原文后在网页处理。`);
+  }
+  async upload(path: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    const existing = await this.read();
+    if (existing.attachmentPresent) {
+      if (existing.attachmentReady) return;
+    } else {
+      const debuggerAPI = this.contents.debugger;
+      if (debuggerAPI.isAttached()) throw new Error('请先关闭网页开发者工具，再重试图片上传。');
+      debuggerAPI.attach('1.3');
+      let chooserNode: number | undefined;
+      const onMessage = (_event: Electron.Event, method: string, params: { backendNodeId?: number }) => {
+        if (method === 'Page.fileChooserOpened') chooserNode = params.backendNodeId;
+      };
+      debuggerAPI.on('message', onMessage);
+      try {
+        await debuggerAPI.sendCommand('Page.enable');
+        await debuggerAPI.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
+        const inputs = async (): Promise<number[]> => {
+          const { root } = await debuggerAPI.sendCommand('DOM.getDocument');
+          return (await debuggerAPI.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type="file"]' })).nodeIds;
+        };
+        let nodeIds = await inputs();
+        if (nodeIds.length !== 1) {
+          await this.read('attachment');
+          await delay(300, undefined, { signal });
+          nodeIds = await inputs();
+          if (!chooserNode && nodeIds.length !== 1) {
+            // Site menus render asynchronously; the second step selects their file action.
+            await this.read('attachment');
+            await delay(300, undefined, { signal });
+            nodeIds = await inputs();
+          }
+        }
+        signal.throwIfAborted();
+        if (chooserNode) await debuggerAPI.sendCommand('DOM.setFileInputFiles', { backendNodeId: chooserNode, files: [path] });
+        else if (nodeIds.length === 1) await debuggerAPI.sendCommand('DOM.setFileInputFiles', { nodeId: nodeIds[0], files: [path] });
+        else throw new Error('未能定位唯一的图片上传入口，请在网页中处理；图片已保留。');
+      } finally {
+        debuggerAPI.off('message', onMessage);
+        if (debuggerAPI.isAttached()) {
+          await debuggerAPI.sendCommand('Page.setInterceptFileChooserDialog', { enabled: false }).catch(() => {});
+          debuggerAPI.detach();
+        }
+      }
+    }
+    const deadline = Date.now() + 60_000;
+    while (Date.now() < deadline) {
+      signal.throwIfAborted();
+      const snapshot = await this.read();
+      if (snapshot.uploadError) throw new Error(snapshot.uploadError);
+      if (snapshot.attachmentReady) return;
+      await delay(300, undefined, { signal });
+    }
+    throw new Error('未能确认图片上传完成，请检查网页后重试；不会只发送文字。');
   }
   async submit(text: string, signal: AbortSignal) {
     if (this.submitAttempted) throw new Error('已尝试提交，不会重复发送');
@@ -179,14 +264,14 @@ export class ChatGPTAdapter {
       snapshot = await this.read();
     }
     signal.throwIfAborted();
-    this.submitAttempted = true;
     const before = await this.read('submit', text);
     if (before.refusal) throw new Error(before.refusal);
+    this.submitAttempted = true;
     const submittedBy = Date.now() + 10_000;
     while (Date.now() < submittedBy) {
       await delay(300, undefined, { signal });
       const after = await this.read();
-      if (!after.draft && (after.running || after.userMessages > before.userMessages || /\/c\//.test(after.url))) return;
+      if (!after.draft && (after.running || after.userMessages > before.userMessages )) return;
     }
     throw new Error('已经点击发送，但未能确认提交结果。请查看网页，不会自动重发。');
   }

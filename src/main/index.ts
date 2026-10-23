@@ -1,27 +1,34 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle, WebContents } from 'electron';
-import { join } from 'node:path';
-import { mkdirSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, statSync } from 'node:fs';
+import { CaptureManager } from './capture';
+import { Images, type ImageInput } from './images';
 import { readSettings, writeSettings } from './settings';
 import { fitToWorkArea, placeNear } from './position';
 import { SelectionCapture } from './selection';
+import { WindowMotion } from './motion';
 import { ActionBar } from './action-bar';
-import { TaskManager, CHAT_PARTITION } from './tasks';
-import { readPresets, writePresets, renderPrompt } from './presets';
-import { taskActivityLabels } from '../shared/contracts';
-import type { Action, ShellState, SelectionContext, Preset, Settings } from '../shared/contracts';
+import { TaskManager } from './tasks';
+import { readPresets, writePresets, composePrompt } from './presets';
+import { targetLabels, taskActivityLabels } from '../shared/contracts';
+import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer } from '../shared/contracts';
 
-const PARTITION = CHAT_PARTITION;
 const HEADER_HEIGHT = 80;
-app.setName('选中即问');
+app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
 app.setPath('userData', join(app.getPath('appData'), 'mac-ai-prompt'));
 const hasLock = app.requestSingleInstanceLock();
 let win: BrowserWindow;
+let motion: WindowMotion;
 let tasks: TaskManager;
 let tray: Tray;
 let settingsPath: string;
 let presetsPath: string;
+let images: Images;
+let screenshots: CaptureManager;
+let inputImage: ImageInput | null = null;
 let capture: SelectionCapture;
 let actionBar: ActionBar;
 let lastSelection: SelectionContext | null = null;
@@ -30,7 +37,7 @@ let blurTimer: ReturnType<typeof setTimeout>;
 let quitting = false;
 let quitPromptOpen = false;
 let nativeDialogs = 0;
-let state: Omit<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'title' | 'hostname' | 'loading' | 'pageError' | 'delivery'>;
+let state: Omit<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'title' | 'hostname' | 'loading' | 'pageError' | 'delivery' | 'activeTarget'>;
 function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 
 function publish() {
@@ -40,8 +47,8 @@ function publish() {
 function layout() {
   if (!win || win.isDestroyed() || !tasks) return;
   const [width, height] = win.getContentSize();
-  const top = HEADER_HEIGHT + (tasks.snapshot().delivery ? 36 : 0);
-  tasks.layout({ x: 0, y: top, width, height: Math.max(0, height - top) }, !state.settingsOpen);
+  const top = HEADER_HEIGHT + (tasks.snapshot().delivery ? 36 : 0) + (state.screenshotError ? 64 : 0);
+  tasks.layout({ x: 0, y: top, width, height: Math.max(0, height - top) }, !state.settingsOpen && !state.inputImage);
 }
 function showWindow() {
   if (!win) return;
@@ -49,10 +56,10 @@ function showWindow() {
   const area = screen.getDisplayMatching(win.getBounds()).workArea;
   win.setBounds(state.expanded ? area : fitToWorkArea(win.getBounds(), area));
   actionBar?.hide();
-  win.show();
+  motion.show();
   app.focus({ steal: true });
   win.focus();
-  if (!state.settingsOpen) tasks.focus();
+  if (!state.settingsOpen && !state.inputImage) tasks.focus();
 }
 function openSettings() {
   capture?.configure(state.settings);
@@ -74,10 +81,10 @@ function expand() {
   if (!state.expanded) {
     smallBounds = bounds;
     state.expanded = true;
-    win.setBounds(area);
+    win.setBounds(area, !systemPreferences.getAnimationSettings().prefersReducedMotion);
   } else {
     state.expanded = false;
-    win.setBounds(fitToWorkArea(smallBounds!, area));
+    win.setBounds(fitToWorkArea(smallBounds!, area), !systemPreferences.getAnimationSettings().prefersReducedMotion);
   }
   layout();
   publish();
@@ -86,7 +93,7 @@ function deferHide() {
   clearTimeout(blurTimer);
   // Focus moves through a gap when a login child or native menu opens.
   blurTimer = setTimeout(() => {
-    if (!state.pinned && nativeDialogs === 0 && !BrowserWindow.getFocusedWindow()) win.hide();
+    if (!state.pinned && nativeDialogs === 0 && !BrowserWindow.getFocusedWindow()) motion.hide();
   }, 150);
 }
 async function confirm(message: string, detail: string) {
@@ -101,7 +108,7 @@ async function confirm(message: string, detail: string) {
 async function requestQuit() {
   if (quitPromptOpen) return;
   quitPromptOpen = true;
-  if (tasks.size && !await confirm('退出选中即问？', `本次 ${tasks.size} 个任务会关闭，正在进行的任务和未发送内容不会在下次启动时恢复。`)) {
+  if (tasks.size && !await confirm('退出 Lasso？', `本次 ${tasks.size} 个任务会关闭，正在进行的任务和未发送内容不会在下次启动时恢复。`)) {
     quitPromptOpen = false;
     return;
   }
@@ -111,7 +118,7 @@ async function requestQuit() {
 function isHTTPS(url: string) { return new URL(url).protocol === 'https:'; }
 function isLogin(url: string) {
   const host = new URL(url).hostname;
-  return ['chatgpt.com', 'openai.com', 'auth0.com', 'accounts.google.com', 'appleid.apple.com', 'login.microsoftonline.com', 'login.live.com']
+  return ['gemini.google.com', 'chatgpt.com', 'openai.com', 'auth0.com', 'accounts.google.com', 'appleid.apple.com', 'login.microsoftonline.com', 'login.live.com']
     .some(domain => host === domain || host.endsWith('.' + domain));
 }
 function secureRemote(contents: WebContents) {
@@ -121,7 +128,7 @@ function secureRemote(contents: WebContents) {
     if (url === 'about:blank' || (isHTTPS(url) && isLogin(url))) {
       return { action: 'allow', overrideBrowserWindowOptions: {
         parent: win, width: 560, height: 720, autoHideMenuBar: true,
-        webPreferences: { partition: PARTITION, nodeIntegration: false, contextIsolation: true, sandbox: true }
+        webPreferences: { session: contents.session, nodeIntegration: false, contextIsolation: true, sandbox: true }
       } };
     }
     if (isHTTPS(url)) void shell.openExternal(url);
@@ -144,14 +151,16 @@ function selectTask(id: string) {
 function updateTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开小窗', click: showWindow },
-    { label: '打开 ChatGPT', click: () => openChat() },
-    { label: '新对话', click: () => openChat(true) },
+    { label: `打开 ${targetLabels[state.settings.lastTarget]}`, click: () => openChat() },
+    { label: '新对话', click: showNewTaskMenu },
+    { label: '截图', accelerator: state.settings.screenshotShortcut || undefined, click: () => void startScreenshot() },
+    { label: '使用剪贴板图片', click: () => { void readImage().catch(error => dialog.showErrorBox('图片未能读取', error.message)); } },
     { label: '运行预设…', click: showPresetMenu },
     { label: '暂停划词', type: 'checkbox', checked: !state.settings.selectionEnabled, click: () => { const result = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback }); if (result.error) dialog.showErrorBox('未能保存划词设置', result.error); } },
     { label: '置顶', type: 'checkbox', checked: state.pinned, click: setPin },
     { type: 'separator' },
     { label: '设置…', click: openSettings },
-    { label: '退出选中即问', click: () => void requestQuit() }
+    { label: '退出 Lasso', click: () => void requestQuit() }
   ]));
 }
 function registerShortcut(shortcut: string): string | null {
@@ -160,6 +169,19 @@ function registerShortcut(shortcut: string): string | null {
     if (globalShortcut.register(shortcut, () => { clearSelection(); capture?.current(); showWindow(); if (lastSelection) showPresetMenu(); })) return null;
     return `${shortcut} 已被占用，请换一组快捷键。`;
   } catch { return '快捷键格式无效，例如 Control+Option+Space。'; }
+}
+async function startScreenshot() {
+  state.screenshotError=null; layout(); publish();
+  try { await screenshots.start(); } catch(error) {
+    console.warn('[screenshot]', (error as Error).message);
+    state.screenshotError=(error as Error).message;layout();showWindow();publish();
+  }
+}
+function registerScreenshotShortcut(shortcut: string): string | null {
+  if(!shortcut)return null;
+  if(/^(?:Alt|Option)\+Space$/i.test(shortcut))return 'Option+Space 已留给 Raycast，请选择其他快捷键。';
+  if(shortcut===state.settings.shortcut)return '截图快捷键不能与唤起小窗相同。';
+  try { return globalShortcut.register(shortcut,()=>void startScreenshot())?null:'截图快捷键已被占用。'; }catch{return '快捷键格式无效。';}
 }
 function assertLocal(event: IpcMainInvokeEvent) {
   if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
@@ -187,35 +209,123 @@ function showPresetMenu() {
       enabled: !p.needsSelection || Boolean(selection),
       click: () => void runPreset(p.id, selection)
     })),
-    { type: 'separator' }, { label: '预设设置…', click: openSettings }
+    { type: 'separator' },
+    { label: '临时选择目标', submenu: Object.entries(targetLabels).map(([target, label]) => ({ label, submenu: state.presets.filter(p => p.enabled).map(p => ({ label: `${p.name}${target !== p.target && (p.model || p.effort) ? ' · 跟随目标默认' : ''}`, enabled: !p.needsSelection || Boolean(selection), click: () => void runPreset(p.id, selection, { target: target as Target }) })) })) },
+    { label: '预设设置…', click: openSettings }
   ]).popup({ window: win });
 }
-async function runPreset(id: string, selection: SelectionContext | null) {
+async function runPreset(id: string, selection: SelectionContext | null, options: LaunchOptions = {}) {
   const preset = state.presets.find(p => p.id === id && p.enabled);
   if (!preset) return { error: '这个预设已停用或删除' };
-  if (preset.needsSelection && !selection?.text) return { error: '请先选中文字' };
-  const text = renderPrompt(preset, selection?.text || '');
+  if (options.imageId && options.imageId !== inputImage?.id) return { error: '图片已被替换，请重新选择。' };
+  if (options.imageId) selection = null;
+  if (preset.needsSelection && !selection?.text && !options.imageId) return { error: '请先选中文字' };
+  const text = composePrompt(preset, selection, state.settings.appPrompts);
   actionBar.hide(); capture.suppress(); clearSelection();
+  if (!options.imageId && inputImage) removeImage();
   if (selection && !state.pinned && !state.expanded) {
     win.setBounds(placeNear(selection.anchor, screen.getDisplayNearestPoint(selection.anchor).workArea));
   }
   state.settingsOpen = false;
-  const result = tasks.runPreset(preset, text);
+  rememberTarget(options.target || preset.target);
+  const result = tasks.runPreset(preset, text, options);
+  if (options.imageId) { inputImage = null; state.inputImage = null; }
   layout(); showWindow(); publish();
   return result;
 }
 
+async function choosePath(kind: 'directory' | 'executable' | 'application') {
+  nativeDialogs++;
+  try {
+    const result = await dialog.showOpenDialog(win, { properties: [kind === 'directory' ? 'openDirectory' : 'openFile'], ...(kind === 'application' ? { defaultPath: '/Applications', filters: [{ name: 'macOS 应用', extensions: ['app'] }] } : {}) });
+    const path = result.filePaths[0];
+    if (result.canceled || !path) return null;
+    if (kind !== 'application') return { path };
+    const plist = join(path, 'Contents/Info.plist');
+    const bundleId = execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleIdentifier', plist], { encoding: 'utf8' }).trim();
+    return { path, bundleId, name: basename(path, '.app') };
+  } finally { nativeDialogs--; }
+}
+function rememberTarget(target: Target) {
+  if (state.settings.lastTarget === target) return;
+  const settings = { ...state.settings, lastTarget: target };
+  writeSettings(settingsPath, settings); state.settings = settings; updateTray();
+}
+function launchTask(options: LaunchOptions) {
+  state.settingsOpen = false; clearSelection();
+  if (options.target) rememberTarget(options.target);
+  tasks.newChat(true, options); layout(); showWindow(); publish();
+}
+function showNewTaskMenu() {
+  nativeDialogs++;
+  Menu.buildFromTemplate([
+    ...Object.entries(targetLabels).map(([target, label]) => ({ label, click: () => launchTask({ target: target as Target }) })),
+    { type: 'separator' as const },
+    ...(['codex', 'pi'] as const).map(target => ({ label: `${targetLabels[target]} · 选择工作目录…`, click: async () => {
+      const choice = await choosePath('directory'); if (choice) launchTask({ target, cwd: choice.path });
+    } }))
+  ]).popup({ window: win, callback: () => { nativeDialogs--; } });
+}
+async function readImage(taskId?: string) {
+  const image = await images.capture();
+  if (taskId) { try { tasks.agentImage(taskId, image); } catch (error) { images.remove(image); throw error; } }
+  else {
+    images.remove(inputImage); inputImage = image; state.inputImage = images.preview(image);
+    clearSelection(); state.settingsOpen = false; layout(); showWindow(); win.webContents.focus(); publish();
+  }
+}
+function removeImage(taskId?: string) {
+  if (taskId) tasks.agentImage(taskId, null);
+  else { images.remove(inputImage); inputImage = null; state.inputImage = null; layout(); publish(); }
+}
+
 function installIPC() {
+  ipcMain.handle('shell:external', (event, url: string) => { assertLocal(event); if (['https:', 'http:'].includes(new URL(url).protocol)) return shell.openExternal(url); });
+  const result = async (action: () => unknown) => { try { await action(); return { error: null }; } catch (error) { return { error: (error as Error).message }; } };
+  ipcMain.handle('shell:integrations', (event, value: Pick<Settings, 'local' | 'appPrompts'>) => {
+    assertLocal(event);
+    return result(() => {
+      for (const target of ['codex', 'pi'] as const) {
+        const config = value.local[target];
+        if (typeof config.executable !== 'string' || !statSync(config.cwd).isDirectory()) throw new Error('请选择有效的 CLI 路径和工作目录。');
+      }
+      const ids = new Set<string>();
+      for (const rule of value.appPrompts) {
+        if (!rule.bundleId.trim() || ids.has(rule.bundleId) || !rule.name.trim() || typeof rule.prompt !== 'string' || typeof rule.enabled !== 'boolean') throw new Error('应用规则需要唯一的 bundle ID 和名称。');
+        ids.add(rule.bundleId);
+      }
+      const next = { ...state.settings, local: value.local, appPrompts: value.appPrompts };
+      writeSettings(settingsPath, next); state.settings = next; publish();
+    });
+  });
+  ipcMain.handle('shell:choose-path', (event, kind) => { assertLocal(event); return choosePath(kind); });
+  ipcMain.handle('shell:new-task', (event, options: LaunchOptions) => { assertLocal(event); launchTask(options); });
+  ipcMain.handle('shell:image', (event, id?: string) => { assertLocal(event); return result(() => readImage(id)); });
+  ipcMain.handle('shell:image-remove', (event, id?: string) => { assertLocal(event); removeImage(id); });
+  ipcMain.handle('agent:state', (event, id: string) => { assertLocal(event); return tasks.getAgent(id); });
+  ipcMain.handle('agent:draft', (event, id: string, text: string) => { assertLocal(event); tasks.agentDraft(id, text); });
+  ipcMain.handle('agent:send', (event, id: string) => { assertLocal(event); return result(() => tasks.agentSend(id)); });
+  ipcMain.handle('agent:stop', (event, id: string) => { assertLocal(event); return result(() => tasks.agentStop(id)); });
+  ipcMain.handle('shell:execution-catalog', async (event, target: Target, model = '', refresh = false) => {
+    assertLocal(event);
+    if (!['chatgpt', 'gemini', 'codex', 'pi'].includes(target) || typeof model !== 'string' || typeof refresh !== 'boolean') return { catalog: null, error: '无效的目标或模型' };
+    try { return { catalog: await tasks.executionCatalog(target, model, refresh), error: null }; } catch (error) { return { catalog: null, error: (error as Error).message }; }
+  });
+  ipcMain.handle('agent:effort', (event, id: string, effort: string) => { assertLocal(event); return result(() => tasks.agentEffort(id, effort)); });
+  ipcMain.handle('agent:models-refresh', (event, id: string) => { assertLocal(event); return result(() => tasks.agentRefreshModels(id)); });
+  ipcMain.handle('agent:model', (event, id: string, model: string) => { assertLocal(event); return result(() => tasks.agentModel(id, model)); });
+  ipcMain.handle('agent:answer', (event, id: string, requestId: string, answer: AgentAnswer) => { assertLocal(event); return result(() => tasks.agentAnswer(id, requestId, answer)); });
   ipcMain.handle('shell:capture', (event, options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>) => { assertLocal(event); return saveCaptureSettings(options); });
   ipcMain.handle('shell:presets-save', (event, presets: Preset[]) => {
     assertLocal(event);
     try { writePresets(presetsPath, presets); }
     catch (error) { return { error: (error as Error).message }; }
     state.presets = presets;
+    tasks.warmPreferred();
     publish();
     return { error: null };
   });
-  ipcMain.handle('shell:preset-run', (event, id: string) => { assertLocal(event); return runPreset(id, lastSelection); });
+  ipcMain.handle('shell:preset-run', (event, id: string, options?: LaunchOptions) => { assertLocal(event); return runPreset(id, options?.imageId ? null : lastSelection, options); });
   ipcMain.handle('shell:state', event => { assertLocal(event); return snapshot(); });
   ipcMain.handle('shell:task-select', (event, id: string) => { assertLocal(event); selectTask(id); });
   ipcMain.handle('shell:task-close', (event, id: string) => { assertLocal(event); return tasks.close(id); });
@@ -232,11 +342,16 @@ function installIPC() {
   ipcMain.handle('shell:action', async (event, action: Action) => {
     assertLocal(event);
     switch (action) {
+      case 'dismiss-screenshot-error': state.screenshotError=null;layout();publish();break;
+      case 'screenshot': await startScreenshot(); break;
       case 'open-chat': openChat(); break;
-      case 'new-task': openChat(true); break;
+      case 'new-task': showNewTaskMenu(); break;
+      case 'clipboard-image': await readImage(); break;
+      case 'dismiss-image': removeImage(); break;
+      case 'retry-delivery': await tasks.retryDelivery(); break;
       case 'pin': setPin(); break;
       case 'expand': expand(); break;
-      case 'hide': win.hide(); break;
+      case 'hide': motion.hide(); break;
       case 'settings': openSettings(); break;
       case 'close-settings': state.settingsOpen = false; layout(); publish(); break;
       case 'reload': await tasks.reload(); break;
@@ -253,11 +368,21 @@ function installIPC() {
       default: throw new Error('不支持的窗口操作');
     }
   });
+  ipcMain.handle('shell:screenshot-shortcut', (event, shortcut:string) => {
+    assertLocal(event);
+    if(typeof shortcut!=='string'||(shortcut&&!/^(?:(?:Command|Control|CommandOrControl|Alt|Option|Shift|Super)\+)+(?:[A-Z0-9]|Space|F(?:[1-9]|1[0-9]|2[0-4]))$/i.test(shortcut)))return {error:'请输入带修饰键的快捷键。'};
+    if(shortcut===state.settings.screenshotShortcut&&(!shortcut||globalShortcut.isRegistered(shortcut)))return {error:null};
+    const error=registerScreenshotShortcut(shortcut);if(error)return {error};
+    try{writeSettings(settingsPath,{...state.settings,screenshotShortcut:shortcut});}catch(error){if(shortcut)globalShortcut.unregister(shortcut);return {error:String(error)};}
+    if(state.settings.screenshotShortcut)globalShortcut.unregister(state.settings.screenshotShortcut);
+    state.settings={...state.settings,screenshotShortcut:shortcut};updateTray();publish();return {error:null};
+  });
   ipcMain.handle('shell:shortcut', (event, shortcut: string) => {
     assertLocal(event);
     if (typeof shortcut !== 'string' || (shortcut !== '' && !/^(?:(?:Command|Control|CommandOrControl|Alt|Option|Shift|Super)\+)+(?:[A-Z0-9]|Space|F(?:[1-9]|1[0-9]|2[0-4]))$/i.test(shortcut))) {
       return { error: '请输入带修饰键的快捷键，例如 Control+Option+Space；留空则取消绑定。' };
     }
+    if (shortcut && shortcut === state.settings.screenshotShortcut) return { error: '唤起快捷键不能与截图相同。' };
     if (shortcut === state.settings.shortcut && !state.shortcutError) return { error: null };
     const error = registerShortcut(shortcut);
     if (error) return { error };
@@ -277,24 +402,27 @@ async function boot() {
   mkdirSync(app.getPath('userData'), { recursive: true });
   settingsPath = join(app.getPath('userData'), 'settings.json');
   presetsPath = join(app.getPath('userData'), 'presets.json');
+  images = new Images(join(app.getPath('userData'), 'input-images'));
   state = {
-    pinned: false, expanded: false, settingsOpen: false,
-    shortcutError: null, settings: readSettings(settingsPath),
+    pinned: false, expanded: false, settingsOpen: false, inputImage: null,
+    shortcutError: null, screenshotError: null, settings: readSettings(settingsPath),
     presets: readPresets(presetsPath), capture: { status: 'paused', message: '划词未启动' }, selection: null
   };
   const cursor = screen.getCursorScreenPoint();
   win = new BrowserWindow({
     ...placeNear(cursor, screen.getDisplayNearestPoint(cursor).workArea),
     minWidth: 340, minHeight: 360, frame: false, show: false,
-    backgroundColor: '#FAF9F5', title: '选中即问', fullscreenable: false,
+    backgroundColor: '#FAF9F5', title: 'Lasso', fullscreenable: false,
+    icon: join(app.getAppPath(), 'assets/lasso-icon.png'),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
-  tasks = new TaskManager(win, secureRemote, () => { layout(); publish(); }, confirm);
+  motion = new WindowMotion(win);
+  tasks = new TaskManager(win, secureRemote, () => { layout(); publish(); }, confirm, () => state.settings, images, event => win.webContents.send('agent:changed', event), () => state.presets);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.on('resize', layout);
   win.on('close', event => {
-    if (!quitting) { event.preventDefault(); win.hide(); }
+    if (!quitting) { event.preventDefault(); motion.hide(); }
     else tasks.dispose();
   });
   app.on('browser-window-blur', deferHide);
@@ -303,36 +431,41 @@ async function boot() {
     const area = screen.getDisplayMatching(win.getBounds()).workArea;
     win.setBounds(state.expanded ? area : fitToWorkArea(win.getBounds(), area));
   });
-  const webSession = session.fromPartition(PARTITION);
+  for (const [partition, hosts] of [['persist:chatgpt', ['chatgpt.com', 'www.chatgpt.com']], ['persist:gemini', ['gemini.google.com']]] as const) {
+  const webSession = session.fromPartition(partition);
   const mediaOrigins = new Set<string>();
   webSession.setPermissionCheckHandler((_contents, permission, origin) => {
-    if (!['https://chatgpt.com', 'https://www.chatgpt.com'].includes(origin)) return false;
+    if (!hosts.some(host => origin === 'https://' + host)) return false;
     return permission === 'clipboard-sanitized-write' || (permission === 'media' && mediaOrigins.has(origin));
   });
   webSession.setPermissionRequestHandler(async (contents, permission, callback, details) => {
     const origin = details.requestingUrl || contents.getURL();
-    if (!isHTTPS(origin) || !['chatgpt.com', 'www.chatgpt.com'].includes(new URL(origin).hostname)) return callback(false);
+    if (!isHTTPS(origin) || !hosts.some(host => new URL(origin).hostname === host)) return callback(false);
     if (permission === 'clipboard-sanitized-write') return callback(true);
     if (permission !== 'media') return callback(false);
-    const allowed = await confirm('允许 ChatGPT 使用麦克风或摄像头？', '仅授予当前网页；macOS 可能还会请求系统权限。');
+    const allowed = await confirm('允许当前 AI 网页使用麦克风或摄像头？', '仅授予当前网页；macOS 可能还会请求系统权限。');
     if (allowed) mediaOrigins.add(new URL(origin).origin);
     callback(allowed);
   });
+  }
   installIPC();
-  tray = new Tray(nativeImage.createEmpty());
-  tray.setTitle('✳');
-  tray.setToolTip('选中即问');
+  const appIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets/lasso-icon.png'));
+  if (!appIcon.isEmpty()) app.dock?.setIcon(appIcon);
+  const trayIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets/trayTemplate.png'));
+  trayIcon.setTemplateImage(true);
+  tray = new Tray(trayIcon);
+  tray.setToolTip('Lasso');
   updateTray();
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: '选中即问', submenu: [
+    { label: 'Lasso', submenu: [
       { label: '设置…', accelerator: 'Command+,', click: openSettings },
       { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
-      { type: 'separator' }, { label: '退出选中即问', accelerator: 'Command+Q', click: () => void requestQuit() }
+      { type: 'separator' }, { label: '退出 Lasso', accelerator: 'Command+Q', click: () => void requestQuit() }
     ] },
     { role: 'editMenu' },
     { label: '窗口', submenu: [
       { label: '显示小窗', click: showWindow },
-      { label: '隐藏小窗', accelerator: 'Command+W', click: () => win.hide() },
+      { label: '隐藏小窗', accelerator: 'Command+W', click: () => motion.hide() },
       { label: '放大 / 还原', click: expand }
     ] }
   ]));
@@ -341,14 +474,26 @@ async function boot() {
   await win.loadFile(join(__dirname, 'renderer/index.html'));
   actionBar = new ActionBar(async (id, selection) => { await runPreset(id, selection); }, openSettings);
   capture = new SelectionCapture(selection => {
+    if (screenshots?.active) return;
     lastSelection = selection;
     state.selection = { length: selection.text.length, sourceApp: selection.sourceApp };
     actionBar.show(selection); publish();
-  }, status => { state.capture = status; publish(); }, point => {
+  }, status => {
+    if (state.capture?.status !== status.status) console.info('[selection]', status.status);
+    state.capture = status; publish();
+  }, point => {
     if (!actionBar.contains(point)) { actionBar.hide(); clearSelection(); }
   }, () => { actionBar.hide(); clearSelection(); });
   actionBar.update(state.presets, false);
+  screenshots = new CaptureManager(async image => {
+    const input = images.add(image); images.remove(inputImage); inputImage=input; state.inputImage=images.preview(input);
+    clearSelection(); state.settingsOpen=false; layout(); showWindow(); win.webContents.focus(); publish();
+  }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, () => capture?.suppress());
+  const screenshotError = registerScreenshotShortcut(state.settings.screenshotShortcut);
+  if (screenshotError) console.warn('[screenshot]', screenshotError);
   capture.configure(state.settings);
+  tasks.warmPreferred();
+  if (!state.settingsOpen) tasks.newChat(true, { target: state.settings.lastTarget });
   showWindow();
 }
 if (!hasLock) app.quit();
@@ -357,9 +502,9 @@ else {
   app.on('activate', showWindow);
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   app.on('before-quit', event => { if (!quitting && win) { event.preventDefault(); void requestQuit(); } });
-  app.on('will-quit', () => { tasks?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('will-quit', () => { screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
-    dialog.showErrorBox('选中即问无法启动', String(error));
+    dialog.showErrorBox('Lasso 无法启动', String(error));
     quitting = true;
     app.quit();
   });

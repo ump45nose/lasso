@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <filter id="rough" x="-10%" y="-10%" width="120%" height="120%">
+      <feTurbulence type="fractalNoise" baseFrequency="0.016" numOctaves="2" seed="11"/>
+      <feDisplacementMap in="SourceGraphic" scale="9" xChannelSelector="R" yChannelSelector="G"/>
+    </filter>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+    <clipPath id="tile"><rect x="100" y="100" width="824" height="824" rx="185"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="#262624" filter="url(#shadow)"/>
+  <g clip-path="url(#tile)">
+    <g filter="url(#rough)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+      <path stroke="#D97757" stroke-width="118" d="M276 520 C400 500 540 494 650 482"/>
+      <g stroke="#FAF9F5" stroke-width="40">
+        <path d="M232 380 C360 372 520 376 680 368"/>
+        <path d="M262 518 C380 508 520 504 640 494"/>
+        <path d="M232 660 C330 652 420 658 500 652"/>
+        <path d="M752 470 L822 462"/>
+        <path d="M736 404 L790 360"/>
+        <path d="M748 540 L806 580"/>
+      </g>
+    </g>
+  </g>
+</svg>

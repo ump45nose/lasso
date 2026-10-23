@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { ChevronDown, Plus, X } from 'lucide-react';
-import { taskActivityLabels } from '../shared/contracts';
+import { targetLabels, taskActivityLabels } from '../shared/contracts';
 import type { TaskSummary } from '../shared/contracts';
 
 export function TaskTabs({ tasks, activeId }: { tasks: TaskSummary[]; activeId: string | null }) {
@@ -29,14 +29,14 @@ export function TaskTabs({ tasks, activeId }: { tasks: TaskSummary[]; activeId: 
   }
   return <div className="tabs-row" ref={row}>
     <div className="task-tab-space" role="tablist" aria-label="本次任务">
-      {!tasks.length && <span className="empty-tab-title">选中即问</span>}
+      {!tasks.length && <span className="empty-tab-title">Lasso</span>}
       {visible.map(task => {
-        const status = task.residency === 'released' ? '已释放页面 · 点击恢复' : task.retainedReason || taskActivityLabels[task.activity];
+        const status = task.residency === 'released' ? '已释放 · 点击恢复' : task.retainedReason || taskActivityLabels[task.activity];
         return <div key={task.id} className={'task-tab ' + (task.id === activeId ? 'active' : '')}>
           <button id={'tab-' + task.id} role="tab" aria-selected={task.id === activeId} tabIndex={task.id === activeId ? 0 : -1}
-            className="task-tab-select" title={`${task.title} · ${status}`} onClick={() => void window.desktop.selectTask(task.id)} onKeyDown={event => navigate(event, task.id)}>
+            className="task-tab-select" title={`${targetLabels[task.target]} · ${task.title} · ${status}`} onClick={() => void window.desktop.selectTask(task.id)} onKeyDown={event => navigate(event, task.id)}>
             <span aria-label={status} className={`status-dot ${task.residency === 'released' ? 'released' : task.activity}`} />
-            <span className="tab-title">{task.title}</span>
+            <span className="target-mark" aria-label={targetLabels[task.target]}>{task.target === 'chatgpt' ? '✳' : task.target === 'gemini' ? '✦' : task.target === 'codex' ? 'C' : 'π'}</span><span className="tab-title">{task.title}</span>
           </button>
           <button className="tab-close" aria-label={`关闭 ${task.title}`} title="关闭任务" onClick={() => void window.desktop.closeTask(task.id)}><X size={12} /></button>
         </div>;

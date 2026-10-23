@@ -1,0 +1,3022 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mac「选中即问」AI 小窗 · 交互原型与视觉设计草图</title>
+  <style>
+    :root {
+      /* Claude warm neutrals; softened orange. Serif typography requested for this concept. */
+      --bg-canvas: #FAF9F5;
+      --bg-canvas-deep: #EEEBE3;
+      --bg-surface: #FFFEFB;
+      --bg-elevated: #FFFEFB;
+      --bg-subtle: #F2F0E9;
+      --bg-muted: #E8E6DC;
+
+      --ink-primary: #26251F;
+      --ink-secondary: #555149;
+      --ink-tertiary: #746E63;
+      --ink-faint: #827A6D;
+
+      --border-hairline: rgba(0, 0, 0, 0.09);
+      --border-medium: rgba(0, 0, 0, 0.15);
+      --border-strong: rgba(0, 0, 0, 0.26);
+
+      --accent: #925238;
+      --accent-fill: #C57556;
+      --accent-hover: #7E432E;
+      --accent-soft: #F4E3D7;
+      --accent-subtle: #FBF1E9;
+      --accent-border: rgba(197, 117, 86, 0.28);
+
+      --status-success: #456B50;
+      --status-success-soft: #EAF0E8;
+      --status-draft: #655A83;
+      --status-draft-soft: #F0EDF5;
+      --status-draft-border: rgba(101, 90, 131, 0.22);
+      --accent-amber: #87601E;
+      --accent-amber-soft: #F5EEDD;
+      --accent-amber-border: rgba(135, 96, 30, 0.24);
+
+      --selection-bg: #F4E3D7;
+      --selection-border: rgba(197, 117, 86, 0.25);
+
+      --shadow-window: 0 18px 44px -12px rgba(0, 0, 0, 0.19), 0 3px 9px rgba(0, 0, 0, 0.06);
+      --shadow-popclip: 0 8px 20px -5px rgba(0, 0, 0, 0.24);
+      --shadow-popover: 0 12px 32px -8px rgba(0, 0, 0, 0.22);
+      --shadow-card: none;
+
+      /* Typography */
+      --font-serif: "Iowan Old Style", "Palatino Linotype", "Songti SC", "STSong", "Noto Serif CJK SC", Georgia, serif;
+      --font-mono: "SF Mono", "JetBrains Mono", "Menlo", "Monaco", monospace;
+
+      /* Radii */
+      --radius-xs: 6px;
+      --radius-sm: 8px;
+      --radius-md: 11px;
+      --radius-lg: 14px;
+      --radius-xl: 18px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background-color: var(--bg-canvas);
+      color: var(--ink-primary);
+      font-family: var(--font-serif);
+      font-size: 16px;
+      line-height: 1.7;
+      -webkit-font-smoothing: antialiased;
+      padding-bottom: 80px;
+    }
+
+    svg.icon {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      stroke-width: 1.65;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      flex-shrink: 0;
+    }
+
+    svg.icon-sm {
+      width: 12.5px;
+      height: 12.5px;
+    }
+
+    /* ==========================================================================
+       1. STICKY HEADER & SCENARIO SWITCHER
+       ========================================================================== */
+    .top-bar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(250, 249, 245, 0.96);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border-hairline);
+      padding: 20px 24px 14px;
+    }
+
+    .top-bar-inner {
+      max-width: 1340px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 16px;
+    }
+
+    .brand-group {
+      display: flex;
+      align-items: baseline;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .brand-tag {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: .06em;
+      color: var(--accent);
+    }
+
+    .brand-title {
+      font-family: var(--font-serif);
+      font-size: 30px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      letter-spacing: 0;
+    }
+
+    .brand-subtitle {
+      margin-left: auto;
+      font-size: 12px;
+      color: var(--ink-tertiary);
+    }
+
+    .scenario-nav {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .scenario-tab {
+      appearance: none;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--ink-secondary);
+      font-family: var(--font-serif);
+      font-size: 14px;
+      font-weight: 500;
+      padding: 5px 11px;
+      border-radius: 7px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+
+    .scenario-tab:hover {
+      color: var(--ink-primary);
+      background: rgba(255, 255, 255, 0.55);
+    }
+
+    .scenario-tab.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+      border-color: var(--accent-border);
+    }
+
+    .scenario-tab .num {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      opacity: 0.72;
+    }
+
+    .container {
+      max-width: 1340px;
+      margin: 0 auto;
+      padding: 20px 24px 0;
+    }
+
+    /* ==========================================================================
+       2. STAGE STATUS & INTERACTIVE SIMULATION STRIP
+       ========================================================================== */
+    .stage-control-bar {
+      padding: 4px 0 20px;
+      margin-bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .scenario-explain {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex: 1;
+      min-width: 280px;
+    }
+
+    .scenario-badge-lg {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .scenario-text-group h2 {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      margin-bottom: 2px;
+    }
+
+    .scenario-text-group p {
+      font-size: 12.5px;
+      color: var(--ink-secondary);
+    }
+
+    .quick-sim-actions {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .sim-label {
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      margin-right: 2px;
+    }
+
+    .sim-btn {
+      appearance: none;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-medium);
+      color: var(--ink-primary);
+      font-family: var(--font-serif);
+      font-size: 14px;
+      font-weight: 500;
+      padding: 5px 10px;
+      border-radius: var(--radius-xs);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: all 0.14s ease;
+    }
+
+    .sim-btn:hover {
+      background: var(--bg-elevated);
+      border-color: var(--border-strong);
+    }
+
+    .sim-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent-border);
+      font-weight: 600;
+    }
+
+    /* ==========================================================================
+       3. MACOS DESKTOP STAGE (AUTHENTIC FLOATING SPATIAL RELATIONSHIP)
+       ========================================================================== */
+    .macos-desktop {
+      position: relative;
+      background: var(--bg-canvas-deep);
+      background-image: none;
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      box-shadow: none;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Simulated macOS Top Menu Bar */
+    .macos-menubar {
+      height: 28px;
+      background: rgba(250, 249, 245, 0.94);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border-hairline);
+      padding: 0 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--ink-primary);
+      user-select: none;
+      z-index: 10;
+    }
+
+    .menubar-left, .menubar-right {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .menubar-app-name {
+      font-weight: 600;
+    }
+
+    .menubar-item {
+      color: var(--ink-secondary);
+    }
+
+    .menubar-hotkey-pill {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-medium);
+      padding: 1px 7px;
+      border-radius: 4px;
+      color: var(--ink-primary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .menubar-hotkey-pill:hover {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent-border);
+    }
+
+    /* Spatial Desktop Canvas */
+    .desktop-workspace {
+      position: relative;
+      padding: 24px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 520px;
+      gap: 24px;
+      align-items: start;
+    }
+
+    /* Responsive reflow for narrow canvases (never shrink whole screen to unreadable) */
+    @media (max-width: 1040px) {
+      .desktop-workspace {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 16px;
+      }
+    }
+
+    /* Left: Background App Context (Reading context) */
+    .source-context-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      position: relative;
+    }
+
+    .context-switcher-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      padding: 0 2px;
+      flex-wrap: wrap;
+    }
+
+    .context-scene-pills {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+    }
+
+    .scene-pill {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 99px;
+      background: rgba(250, 249, 245, 0.7);
+      border: 1px solid var(--border-hairline);
+      color: var(--ink-secondary);
+    }
+
+    .scene-pill.active {
+      background: var(--bg-surface);
+      color: var(--ink-primary);
+      font-weight: 600;
+      border-color: var(--border-medium);
+    }
+
+    .source-context-window {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 10px 28px rgba(0, 0, 0, 0.07);
+      overflow: visible;
+      position: relative;
+    }
+
+    .source-titlebar {
+      height: 36px;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-hairline);
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+      padding: 0 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .traffic-lights {
+      display: flex;
+      gap: 7px;
+    }
+
+    .traffic-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: #D4D4D4;
+      border: 1px solid rgba(0, 0, 0, 0.12);
+    }
+
+    .source-filename {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--ink-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      margin: 0 12px;
+    }
+
+    .source-badge {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      background: var(--bg-canvas);
+      padding: 1px 6px;
+      border-radius: 4px;
+      border: 1px solid var(--border-hairline);
+    }
+
+    .source-body {
+      padding: 26px 24px 28px;
+    }
+
+    .source-breadcrumb {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      margin-bottom: 8px;
+    }
+
+    .source-doc-title {
+      font-family: var(--font-serif);
+      font-size: 26px;
+      font-weight: 600;
+      line-height: 1.5;
+      color: var(--ink-primary);
+      margin-bottom: 16px;
+    }
+
+    .source-paragraph {
+      font-size: 13.5px;
+      line-height: 1.7;
+      color: var(--ink-secondary);
+      margin-bottom: 12px;
+    }
+
+    /* Selected Text Zone + PopClip Anchor */
+    .selection-anchor-wrap {
+      position: relative;
+      margin: 14px 0 14px;
+      padding-top: 46px;
+    }
+
+    .selected-text-block {
+      background: var(--selection-bg);
+      border-left: 3px solid var(--accent);
+      border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+      padding: 10px 13px;
+      font-size: 13.8px;
+      line-height: 1.68;
+      color: var(--ink-primary);
+      cursor: pointer;
+      position: relative;
+      box-shadow: 0 0 0 1px var(--selection-border);
+    }
+
+    .selected-text-block .selection-handle {
+      display: inline-block;
+      width: 2px;
+      height: 15px;
+      background: var(--accent);
+      vertical-align: middle;
+      margin: 0 2px;
+    }
+
+    .selection-meta-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--accent);
+      background: var(--bg-surface);
+      border: 1px solid var(--accent-border);
+      padding: 1px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    /* Visual Spatial Connector Badge between Selection & Floating Window */
+    /* POPCLIP-STYLE COMPACT ACTION BAR */
+    .popclip-bar {
+      position: absolute;
+      top: 0;
+      left: 10px;
+      background: var(--bg-surface);
+      color: var(--ink-primary);
+      border: 1px solid var(--border-medium);
+      border-radius: 10px;
+      padding: 4px;
+      display: inline-flex;
+      align-items: center;
+      gap: 2px;
+      box-shadow: var(--shadow-popclip);
+      z-index: 35;
+      user-select: none;
+    }
+
+    .popclip-bar::after {
+      content: "";
+      position: absolute;
+      bottom: -5px;
+      left: 28px;
+      width: 8px;
+      height: 8px;
+      background: var(--bg-surface);
+      border-right: 1px solid var(--border-medium);
+      border-bottom: 1px solid var(--border-medium);
+      transform: rotate(45deg);
+    }
+
+    .popclip-bar.dimmed {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+
+    .popclip-btn {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--ink-primary);
+      font-family: var(--font-serif);
+      font-size: 14px;
+      font-weight: 500;
+      padding: 5px 10px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: background 0.12s ease, color 0.12s ease;
+      white-space: nowrap;
+    }
+
+    .popclip-btn:hover {
+      background: var(--bg-subtle);
+    }
+
+    .popclip-btn.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    .popclip-btn .mode-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent-fill);
+    }
+
+    .popclip-divider {
+      width: 1px;
+      height: 15px;
+      background: var(--border-medium);
+      margin: 0 2px;
+    }
+
+    .popclip-more {
+      padding: 5px 8px;
+      color: var(--ink-tertiary);
+      font-size: 14px;
+    }
+
+    /* PopClip Secondary More Menu (Low-weight entry) */
+    .popclip-more-popover {
+      position: absolute;
+      top: 40px;
+      left: 210px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-popover);
+      padding: 5px;
+      min-width: 205px;
+      z-index: 45;
+      display: none;
+    }
+
+    .popclip-more-popover.visible {
+      display: block;
+    }
+
+    .popclip-more-item {
+      padding: 6px 9px;
+      border-radius: 5px;
+      font-size: 12px;
+      color: var(--ink-primary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .popclip-more-item:hover {
+      background: var(--bg-subtle);
+    }
+
+    .source-code-snippet {
+      background: var(--bg-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+      font-family: var(--font-serif);
+      font-size: 12px;
+      line-height: 1.65;
+      color: var(--ink-secondary);
+      margin-top: 10px;
+      overflow-wrap: anywhere;
+    }
+
+    /* ==========================================================================
+       4. FLOATING AI SMALL WINDOW (480–560pt Reference Width -> 520px)
+       ========================================================================== */
+    .ai-window-stage-slot {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      padding-top: 70px;
+      min-width: 0;
+    }
+
+    .ai-floating-window {
+      width: 100%;
+      max-width: 536px;
+      background: var(--bg-surface);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-window);
+      border: 1px solid var(--border-medium);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: box-shadow 0.2s ease, border-color 0.2s ease;
+      position: relative;
+    }
+
+    .ai-floating-window.is-pinned {
+      box-shadow: var(--shadow-window);
+      border-color: var(--accent);
+    }
+
+    .ai-floating-window.is-expanded {
+      max-width: 640px;
+    }
+
+    .ai-floating-window.is-hidden-state {
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    /* Hidden Window Floating Recovery Banner */
+    .hidden-recovery-pill {
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 50;
+      background: var(--ink-primary);
+      color: var(--bg-surface);
+      padding: 18px;
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-popover);
+      text-align: center;
+      width: min(320px, 100%);
+    }
+
+    .hidden-recovery-pill.visible {
+      display: block;
+    }
+
+    /* Ultra-Thin Window Shell Top Bar (38px height) */
+    .window-shell-bar {
+      min-height: 44px;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-hairline);
+      padding: 5px 8px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      user-select: none;
+      position: relative;
+      z-index: 25;
+    }
+
+    .shell-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .drag-grip {
+      color: var(--ink-faint);
+      font-size: 12px;
+      letter-spacing: -1px;
+      cursor: grab;
+      padding: 0 2px;
+    }
+
+    /* Task Switcher Trigger Button */
+
+
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    .status-dot.done {
+      background: var(--status-success);
+    }
+
+    .status-dot.running {
+      background: var(--accent-amber);
+      box-shadow: 0 0 0 3px rgba(150, 102, 34, 0.2);
+    }
+
+    .status-dot.released {
+      background: transparent;
+      border: 1.5px dashed var(--ink-tertiary);
+    }
+
+    .status-dot.waiting {
+      background: var(--status-draft);
+    }
+
+
+    .shell-icon-btn {
+      appearance: none;
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--ink-secondary);
+      font-family: var(--font-serif);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 4px 7px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all 0.12s ease;
+    }
+
+    .shell-icon-btn:hover {
+      background: rgba(0, 0, 0, 0.06);
+      color: var(--ink-primary);
+    }
+
+    .shell-icon-btn.active-pin {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent-border);
+      font-weight: 600;
+    }
+
+    .shell-right {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
+
+    /* Subtle Feedback Strip directly below thin shell */
+    .shell-feedback-strip {
+      padding: 12px 0;
+      font-size: 12px;
+      color: var(--ink-secondary);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .shell-feedback-strip.highlight-accent {
+      color: var(--accent);
+    }
+
+    .shell-feedback-strip.highlight-draft {
+      color: var(--status-draft);
+    }
+
+    .feedback-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .width-spec-tag {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      white-space: nowrap;
+    }
+
+    /* ==========================================================================
+       5. COMPACT PARALLEL TASK MENU POPOVER
+       ========================================================================== */
+    .task-menu-popover {
+      position: absolute;
+      top: 48px;
+      right: 8px;
+      width: min(360px, calc(100% - 16px));
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md);
+      box-shadow: var(--shadow-popover);
+      z-index: 40;
+      padding: 8px;
+      display: none;
+    }
+
+    .task-menu-popover.visible {
+      display: block;
+    }
+
+    .task-menu-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 8px 6px;
+      border-bottom: 1px solid var(--border-hairline);
+      margin-bottom: 6px;
+    }
+
+    .task-menu-header span {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-secondary);
+    }
+
+    .task-menu-header small {
+      font-size: 12px;
+      color: var(--ink-tertiary);
+    }
+
+    .task-item {
+      padding: 8px 10px;
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+      transition: background 0.12s ease;
+      border: 1px solid transparent;
+      margin-bottom: 3px;
+    }
+
+    .task-item:hover {
+      background: var(--bg-surface);
+    }
+
+    .task-item.active {
+      background: var(--accent-subtle);
+      border-color: var(--accent-border);
+    }
+
+    .task-item-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .task-item-main .status-dot {
+      margin-top: 5px;
+    }
+
+    .task-title-line {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      line-height: 1.35;
+    }
+
+    .task-meta-line {
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      margin-top: 2px;
+    }
+
+    .task-state-badge {
+      font-size: 12px;
+      font-weight: 500;
+      padding: 2px 7px;
+      border-radius: 999px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .task-state-badge.done {
+      background: var(--status-success-soft);
+      color: var(--status-success);
+    }
+
+    .task-state-badge.running {
+      background: var(--accent-amber-soft);
+      color: var(--accent-amber);
+    }
+
+    .task-state-badge.released {
+      background: var(--bg-subtle);
+      color: var(--ink-secondary);
+      border: 1px solid var(--border-medium);
+    }
+
+    .task-state-badge.protected {
+      background: var(--status-draft-soft);
+      color: var(--status-draft);
+    }
+
+    .task-menu-footer {
+      border-top: 1px solid var(--border-hairline);
+      margin-top: 6px;
+      padding: 7px 8px 2px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--ink-tertiary);
+    }
+
+    .task-menu-new-btn {
+      appearance: none;
+      border: none;
+      background: transparent;
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    /* ==========================================================================
+       6. CHATGPT.COM ORIGINAL WEB INTERFACE INSIDE THIN SHELL
+       ========================================================================== */
+    .chatgpt-webview {
+      /* Neutral website mock: our brand styles do not repaint the provider. */
+      --bg-surface: #F5F5F5;
+      --bg-elevated: #FFFFFF;
+      --bg-subtle: #EFEFEF;
+      --ink-primary: #262626;
+      --ink-secondary: #525252;
+      --ink-tertiary: #707070;
+      --accent: #383838;
+      --accent-soft: #EFEFEF;
+      --accent-subtle: #F7F7F7;
+      --accent-border: #D6D6D6;
+      background: #FFFFFF;
+      display: flex;
+      flex-direction: column;
+      min-height: 495px;
+      position: relative;
+    }
+
+    .webpage-native-topbar {
+      min-height: 46px;
+      padding: 10px 16px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+      background: #FFFFFF;
+    }
+
+    .chatgpt-model-picker {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .webpage-origin-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      color: var(--ink-tertiary);
+    }
+
+    /* No-Selection Quick Preset Bar (Visible in Scenario 5) */
+    .no-selection-bar {
+      background: var(--bg-surface);
+      border-bottom: 1px solid var(--border-hairline);
+      padding: 9px 15px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .no-selection-bar.visible {
+      display: flex;
+    }
+
+    .no-sel-chips {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .no-sel-chip {
+      appearance: none;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-medium);
+      color: var(--ink-primary);
+      font-size: 12px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+
+    .no-sel-chip:hover,
+    .no-sel-chip.active {
+      background: var(--accent-soft);
+      color: var(--accent);
+      border-color: var(--accent-border);
+      font-weight: 600;
+    }
+
+    .webpage-chat-body {
+      flex: 1;
+      padding: 16px 18px 12px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .chat-user-bubble {
+      align-self: flex-end;
+      max-width: 92%;
+      background: var(--bg-surface);
+      border-radius: 15px;
+      padding: 12px 14px;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--ink-primary);
+    }
+
+    .chat-user-bubble .quote-snip {
+      margin-top: 6px;
+      padding: 6px 10px;
+      background: var(--bg-subtle);
+      border-left: 2.5px solid var(--accent);
+      border-radius: 4px;
+      font-size: 12.5px;
+      color: var(--ink-secondary);
+    }
+
+    .chat-ai-response {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      font-size: 15px;
+      line-height: 1.66;
+      color: var(--ink-primary);
+    }
+
+    .ai-header-line {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .ai-role-badge {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ai-role-icon {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: var(--ink-primary);
+      color: #FFFFFF;
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .mock-disclaimer-tag {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--ink-tertiary);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-hairline);
+      padding: 1px 6px;
+      border-radius: 4px;
+    }
+
+    .ai-summary-card {
+      padding: 2px 0;
+      font-size: 15px;
+      line-height: 1.75;
+    }
+
+    .ai-summary-card strong {
+      color: var(--accent);
+    }
+
+    .ai-bullet-list {
+      padding-left: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 15px;
+      color: var(--ink-secondary);
+    }
+
+    .ai-bullet-list li strong {
+      color: var(--ink-primary);
+    }
+
+    .edit-first-empty-stage {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 18px 16px;
+      color: var(--ink-secondary);
+    }
+
+    .edit-first-empty-stage h3 {
+      font-family: var(--font-serif);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      margin-bottom: 6px;
+    }
+
+    .edit-first-empty-stage p {
+      font-size: 12.5px;
+      color: var(--ink-tertiary);
+      max-width: 370px;
+    }
+
+    /* Native ChatGPT Webpage Bottom Composer Input Box */
+    .webpage-composer-wrap {
+      padding: 10px 14px 14px;
+      background: #FFFFFF;
+      border-top: 1px solid rgba(0, 0, 0, 0.05);
+    }
+
+    .webpage-composer-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      border-radius: 13px;
+      padding: 10px 12px;
+      transition: all 0.16s ease;
+    }
+
+    .webpage-composer-box.focused-edit {
+      background: #FFFFFF;
+      border-color: #777777;
+      box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.05);
+    }
+
+    .composer-textarea {
+      width: 100%;
+      border: none;
+      background: transparent;
+      font-family: var(--font-serif);
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--ink-primary);
+      resize: vertical;
+      min-height: 56px;
+    }
+
+    .composer-bottom-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 8px;
+      padding-top: 6px;
+      border-top: 1px solid var(--border-hairline);
+    }
+
+    .composer-tools-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .web-tool-pill {
+      font-size: 12px;
+      color: var(--ink-secondary);
+      background: var(--bg-subtle);
+      padding: 3px 8px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .web-send-btn {
+      appearance: none;
+      border: none;
+      background: var(--ink-primary);
+      color: #FFFFFF;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 5px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .web-send-btn:hover {
+      background: var(--ink-secondary);
+    }
+
+    /* ==========================================================================
+       7. SCENARIO 6: PRESETS & SETTINGS LAYER
+       ========================================================================== */
+    .settings-view {
+      display: none;
+      flex-direction: column;
+      background: var(--bg-surface);
+      min-height: 495px;
+    }
+
+    .settings-view.visible {
+      display: flex;
+    }
+
+    .settings-header {
+      padding: 11px 16px;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .settings-header h3 {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink-primary);
+    }
+
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      flex: 1;
+    }
+
+    @media (max-width: 560px) {
+      .settings-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .presets-sidebar {
+      border-right: 1px solid var(--border-hairline);
+      padding: 10px 8px;
+      background: rgba(242, 242, 242, 0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .preset-sidebar-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-tertiary);
+      padding: 2px 8px 4px;
+    }
+
+    .preset-list-item {
+      padding: 7px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12.5px;
+      color: var(--ink-secondary);
+      border: 1px solid transparent;
+    }
+
+    .preset-list-item:hover {
+      background: var(--bg-surface);
+    }
+
+    .preset-list-item.active {
+      background: var(--bg-elevated);
+      color: var(--accent);
+      font-weight: 600;
+      border-color: var(--border-medium);
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    }
+
+    .preset-sub-badge {
+      font-size: 12px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      background: var(--bg-subtle);
+      color: var(--ink-tertiary);
+    }
+
+    .preset-detail-form {
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 11px;
+      background: var(--bg-elevated);
+    }
+
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+
+    .form-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--ink-secondary);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .form-input, .form-textarea {
+      width: 100%;
+      padding: 9px 10px;
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-xs);
+      background: var(--bg-surface);
+      font-family: var(--font-serif);
+      font-size: 15px;
+      color: var(--ink-primary);
+    }
+
+    .form-textarea {
+      font-family: var(--font-serif);
+      font-size: 15px;
+      line-height: 1.65;
+      min-height: 150px;
+      resize: vertical;
+    }
+
+    .segmented-toggle {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      background: var(--bg-subtle);
+      padding: 3px;
+      border-radius: 7px;
+      border: 1px solid var(--border-hairline);
+    }
+
+    .seg-option {
+      appearance: none;
+      border: none;
+      background: transparent;
+      padding: 5px 8px;
+      border-radius: 5px;
+      font-size: 12px;
+      color: var(--ink-secondary);
+      cursor: pointer;
+      text-align: center;
+    }
+
+    .seg-option.active {
+      background: var(--bg-elevated);
+      color: var(--accent);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    }
+
+    .global-target-box {
+      margin-top: 4px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border-hairline);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .global-target-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      font-size: 13px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    /* ==========================================================================
+       8. SECTION II: 6 HIGH-CLARITY SEQUENTIAL STATIC ARTBOARDS (2-COL)
+       ========================================================================== */
+    .section-divider {
+      margin: 42px 0 18px;
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 16px;
+      border-bottom: 1px solid var(--border-medium);
+      padding-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .section-divider h2 {
+      font-family: var(--font-serif);
+      font-size: 22px;
+      font-weight: 600;
+      color: var(--ink-primary);
+    }
+
+    .section-divider p {
+      font-size: 13px;
+      color: var(--ink-tertiary);
+    }
+
+    .artboards-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 24px;
+    }
+
+    @media (max-width: 580px) {
+      .artboards-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
+    .artboard-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: var(--shadow-card);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+      cursor: pointer;
+    }
+
+    .artboard-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 12px 28px -8px rgba(0, 0, 0, 0.12);
+      border-color: var(--accent-border);
+    }
+
+    .artboard-card.current-board {
+      border-color: var(--accent);
+      box-shadow: none;
+    }
+
+    .artboard-header {
+      padding: 12px 16px;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-hairline);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .artboard-title-group {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .artboard-num {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--ink-primary);
+      color: var(--bg-surface);
+      padding: 2px 7px;
+      border-radius: 4px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .artboard-name {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      line-height: 1.35;
+    }
+
+    .artboard-trigger-pill {
+      font-family: var(--font-serif);
+      font-size: 12px;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border: 1px solid var(--accent-border);
+      padding: 2px 8px;
+      border-radius: 999px;
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    .artboard-canvas {
+      padding: 22px;
+      background: var(--bg-canvas-deep);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 14px;
+      min-height: 330px;
+    }
+
+    .mini-shell {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.08);
+    }
+
+    .mini-shell-bar {
+      min-height: 36px;
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-hairline);
+      padding: 7px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--ink-secondary);
+    }
+
+    .mini-shell-body {
+      padding: 16px;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--ink-primary);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .artboard-footer {
+      padding: 10px 16px;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-hairline);
+      font-size: 12px;
+      color: var(--ink-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    /* ==========================================================================
+       9. SECTION III: DESIGN TRADEOFFS & RATIONALE
+       ========================================================================== */
+    .tradeoffs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: 16px;
+      margin-top: 14px;
+    }
+
+    .tradeoff-card {
+      padding: 24px 0;
+      border-top: 1px solid var(--border-hairline);
+    }
+
+    .tradeoff-card h3 {
+      font-family: var(--font-serif);
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--ink-primary);
+      margin-bottom: 6px;
+    }
+
+    .tradeoff-card p {
+      font-size: 13px;
+      color: var(--ink-secondary);
+      line-height: 1.62;
+    }
+
+    /* Design document and product chrome have distinct responsibilities. */
+    button, input, textarea { font-family: inherit; }
+    button:focus-visible, [role="button"]:focus-visible, textarea:focus-visible, input:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 3px;
+    }
+    .source-filename > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .source-titlebar > :last-child, .traffic-lights { flex-shrink: 0; }
+    .source-badge { display: none; }
+    .source-paragraph, .selected-text-block { font-size: 16px; line-height: 1.8; }
+    .source-doc-title { line-height: 1.5; }
+    .context-switcher-strip { margin-bottom: 4px; }
+    .scene-pill { border: 0; padding: 0; background: none; }
+    .context-scene-pills .scene-pill:not(.active) { display: none; }
+    .selection-meta-tag { border: 0; background: transparent; margin-left: 4px; }
+    .selected-text-block { box-shadow: none; border-left-width: 2px; }
+    .source-context-column, .ai-floating-window, .preset-detail-form { min-width: 0; }
+    .shell-left { flex: 1; }
+    .shell-right { flex-shrink: 0; }
+    .shell-icon-btn { padding: 7px; }
+    .shell-icon-btn svg { width: 16px; height: 16px; }
+    .shell-icon-btn span { display: none; }
+    .shell-feedback-strip .feedback-left { align-items: baseline; gap: 10px; }
+    #feedback-icon { flex-shrink: 0; color: var(--ink-tertiary); }
+    .width-spec-tag { font-size: 12px; }
+    .task-item { padding: 10px 8px; }
+    .task-title-line { font-size: 14px; font-weight: 500; }
+    .task-meta-line { font-size: 12px; }
+    .task-menu-header { padding-bottom: 10px; }
+    .task-state-badge { font-size: 12px; }
+    .chatgpt-model-picker { flex-wrap: wrap; font-size: 15px; }
+    .chatgpt-model-picker > span:last-child { font-size: 12px !important; color: #707070 !important; background: transparent !important; padding: 0 !important; }
+    .mock-disclaimer-tag { font-family: var(--font-serif); border: 0; background: transparent; font-size: 12px; }
+    .ai-header-line { flex-wrap: wrap; }
+    .ai-role-badge { font-weight: 500; font-size: 13px; }
+    .settings-header { background: var(--bg-surface); gap: 12px; padding: 16px; }
+    .settings-header h3 { font-size: 16px; }
+    .presets-sidebar { background: var(--bg-canvas); }
+    .preset-list-item { font-size: 13px; padding: 9px 8px; gap: 6px; }
+    .preset-sub-badge { font-size: 12px; white-space: nowrap; }
+    .preset-list-item.active { background: var(--accent-soft); border-color: transparent; box-shadow: none; }
+    .preset-detail-form { gap: 16px; padding: 18px; }
+    .settings-actions { display: flex; justify-content: flex-end; padding-top: 6px; }
+    .form-textarea { min-width: 0; }
+    .seg-option { font-size: 13px; padding: 7px; }
+    .artboard-title-group { min-width: 0; }
+    .artboard-trigger-pill { border: 0; background: transparent; font-family: var(--font-serif); font-size: 12px; }
+    .artboard-header { background: var(--bg-surface); }
+    .artboard-name { font-size: 16px; font-weight: 500; }
+    .artboard-num { background: transparent; color: var(--accent); padding: 0; }
+    .artboard-footer { align-items: baseline; font-size: 13px; }
+    .board-open { color: var(--accent); flex-shrink: 0; }
+    .mini-source { background: var(--bg-surface); border-radius: 8px; padding: 14px; }
+    .mini-actionbar { display: flex; flex-wrap: wrap; width: fit-content; gap: 10px; padding: 7px 10px; border: 1px solid var(--border-medium); border-radius: 7px; background: var(--bg-surface); color: var(--ink-primary); font-size: 14px; margin-bottom: 12px; }
+    .mini-actionbar .chosen { color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 0 5px; }
+    .mini-selection { background: var(--selection-bg); border-left: 2px solid var(--accent); padding: 8px 10px; font-size: 14px; }
+    .mini-nearby { margin-left: 28px; }
+    .mini-task-count { color: var(--ink-tertiary); margin-left: 6px; }
+    .mini-web { background: #FFFFFF; color: #262626; }
+    .mini-web-heading { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+    .mini-web-heading > span { color: #707070; font-size: 12px; }
+    .mini-composer { border: 1px solid #DDDDDD; background: #F7F7F7; border-radius: 12px; padding: 10px 12px; font-size: 14px; color: #666666; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .mini-edit { display: block; color: #262626; }
+    .mini-send { background: #262626; color: #FFFFFF; border-radius: 50%; width: 26px; height: 26px; display: inline-flex; justify-content: center; align-items: center; flex-shrink: 0; }
+    .mini-composer-bottom { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; }
+    .mini-user { align-self: flex-end; background: #F1F1F1; padding: 8px 12px; border-radius: 12px; }
+    .mini-welcome { text-align: center; font-size: 19px; margin: 18px 0; }
+    .mini-tasks { gap: 2px; padding: 8px; }
+    .mini-task-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px; border-radius: 7px; }
+    .mini-task-selected { background: var(--accent-subtle); }
+    .mini-task-row small { display: block; font-size: 12px; color: var(--ink-tertiary); }
+    .mini-shortcuts { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 14px; font-size: 12px; background: var(--bg-canvas); }
+    .mini-preset { color: var(--accent); background: var(--accent-soft); padding: 3px 8px; border-radius: 5px; font-size: 13px; }
+    .mini-setting-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+    .mini-setting-row strong { font-weight: 500; }
+    .mini-template { border: 1px solid var(--border-medium); border-radius: 6px; padding: 12px; font-size: 14px; }
+    .tradeoffs-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 32px; }
+    .tradeoff-card h3 { font-size: 21px; font-weight: 600; line-height: 1.6; }
+    .tradeoff-card p { font-size: 16px; line-height: 1.85; }
+    .desktop-workspace.expanded-view { grid-template-columns: minmax(240px, .7fr) minmax(520px, 1.3fr); }
+    .expanded-view .ai-window-stage-slot { padding-top: 0; }
+    .ai-floating-window.is-expanded { max-width: none; }
+    .expanded-view .chatgpt-webview { min-height: 620px; }
+    .hidden-recovery-pill .web-send-btn { background: var(--bg-surface); color: var(--ink-primary); }
+    @media (max-width: 1100px) {
+      .desktop-workspace, .desktop-workspace.expanded-view { grid-template-columns: minmax(0, 1fr); }
+      .ai-window-stage-slot { padding-top: 0; margin-left: auto; width: min(520px, 100%); }
+      .expanded-view .ai-window-stage-slot { width: 100%; }
+      .source-context-window { max-width: 700px; }
+      .brand-subtitle { margin-left: 0; }
+    }
+    @media (max-width: 760px) {
+      .artboards-grid, .tradeoffs-grid { grid-template-columns: minmax(0, 1fr); }
+      .brand-group { gap: 8px 12px; }
+      .brand-title { font-size: 26px; }
+      .brand-subtitle { width: 100%; }
+      .top-bar { position: static; }
+      .stage-control-bar { padding-top: 4px; }
+      .scenario-explain { flex-wrap: wrap; min-width: 0; }
+      .scenario-text-group { min-width: 0; }
+      .menubar-item { display: none; }
+      .shell-feedback-strip { flex-wrap: wrap; }
+      .popclip-more-popover { left: auto; right: 0; }
+      .artboard-header { flex-wrap: wrap; }
+    }
+    @media (max-width: 560px) {
+      .container { padding: 16px 12px 0; }
+      .top-bar { padding: 18px 12px 12px; }
+      .desktop-workspace { padding: 14px 10px; gap: 18px; }
+      .source-body { padding: 16px 12px; }
+      .source-doc-title { font-size: 23px; }
+      .source-filename { font-size: 11px; }
+      .source-titlebar > :last-child { display: none; }
+      .source-breadcrumb { overflow-wrap: anywhere; }
+      .popclip-bar { left: 0; gap: 0; }
+      .popclip-btn { padding: 6px 8px; font-size: 12px; }
+      .selection-anchor-wrap { padding-top: 50px; }
+      .settings-grid { grid-template-columns: minmax(0, 1fr); }
+      .presets-sidebar { flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--border-hairline); }
+      .preset-sidebar-label { width: 100%; }
+      .preset-list-item { gap: 6px; }
+      .window-shell-bar { gap: 2px; padding: 5px; }
+      .drag-grip { display: none; }
+      .shell-left { gap: 0; }
+      .shell-right { gap: 0; }
+      .shell-icon-btn { padding: 7px 5px; }
+      .task-item { flex-wrap: wrap; gap: 6px; }
+      .task-menu-header { flex-wrap: wrap; gap: 4px; }
+      .artboard-canvas { padding: 14px; min-height: 0; }
+      .mini-nearby { margin-left: 10px; }
+      .mini-task-row { flex-wrap: wrap; }
+      .mini-shell-body { padding: 12px; }
+      .artboard-footer { flex-wrap: wrap; }
+      .form-input, .form-textarea, .composer-textarea { font-size: 16px; }
+      .section-divider { margin-top: 28px; }
+    }
+    .source-reading-note { margin-top: 22px; padding-top: 18px; border-top: 1px solid var(--border-hairline); font-size: 16px; line-height: 1.8; color: var(--ink-secondary); }
+    code, kbd { font-family: var(--font-mono); }
+    .visual-contract { margin-top: 26px; padding-top: 24px; border-top: 1px solid var(--border-medium); }
+    .visual-contract h2 { font: 500 22px var(--font-serif); margin-bottom: 16px; }
+    .palette { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 16px; font: 12px var(--font-serif); }
+    .palette > span { display: inline-flex; gap: 9px; align-items: center; }
+    .palette i { width: 22px; height: 22px; border-radius: 50%; border: 1px solid var(--border-medium); }
+    .visual-contract p { font-size: 16px; line-height: 1.85; color: var(--ink-secondary); max-width: 850px; }
+
+    /* Tabs use the full top row; only overflow goes into the menu. */
+    [hidden] { display: none !important; }
+    .status-dot.idle { background: var(--ink-faint); }
+    .task-state-badge.idle { background: var(--bg-subtle); color: var(--ink-secondary); }
+    #overflow-task-list { max-height: 320px; overflow-y: auto; }
+    .window-shell-bar { min-height: 43px; padding: 5px 7px 0; background: var(--bg-canvas); gap: 0; border-bottom: 1px solid var(--border-hairline); }
+    .shell-left { flex: 1; width: 100%; gap: 4px; }
+    .task-tabs { display: flex; align-items: stretch; gap: 4px; flex: 1; min-width: 0; overflow: hidden; }
+    .task-tab { display: inline-flex; align-items: center; gap: 7px; flex: 0 0 auto; max-width: 148px; padding: 9px 11px; border: 0; border-bottom: 2px solid transparent; border-radius: 7px 7px 0 0; background: transparent; color: var(--ink-secondary); font: 14px/1.2 var(--font-serif); cursor: pointer; white-space: nowrap; }
+    .task-tab .tab-title { overflow: hidden; text-overflow: ellipsis; }
+    .task-tab:hover { background: var(--bg-subtle); }
+    .task-tab[aria-selected="true"] { background: var(--accent-soft); color: var(--accent); border-bottom-color: var(--accent-fill); font-weight: 600; }
+    .task-overflow-btn { flex: 0 0 66px; width: 66px; border: 0; padding: 8px 3px; border-radius: 6px; background: transparent; color: var(--ink-secondary); font: 14px var(--font-serif); cursor: pointer; white-space: nowrap; }
+    .task-overflow-btn:hover, .task-overflow-btn[aria-expanded="true"] { background: var(--accent-soft); color: var(--accent); }
+    #new-task-btn { flex: 0 0 auto; }
+    .window-utility-bar { display: flex; align-items: center; justify-content: space-between; min-height: 33px; padding: 3px 9px 3px 13px; border-bottom: 1px solid var(--border-hairline); background: var(--bg-surface); }
+    .window-caption { display: inline-flex; align-items: center; gap: 7px; font-size: 14px; color: var(--ink-tertiary); }
+    .brand-asterisk { color: var(--accent-fill); font-size: 18px; line-height: 1; }
+    .window-utility-bar .shell-icon-btn { padding: 5px 7px; }
+    .task-menu-popover .task-item { width: 100%; text-align: left; font-family: var(--font-serif); background: transparent; }
+    .task-menu-popover .task-item:hover { background: var(--accent-subtle); }
+    .mini-tab-strip { display: flex; gap: 4px; min-width: 0; flex: 1; overflow: hidden; }
+    .mini-tab { padding: 6px 8px; border-radius: 5px 5px 0 0; border-bottom: 2px solid transparent; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 14px; }
+    .mini-tab.active { background: var(--accent-soft); color: var(--accent); border-bottom-color: var(--accent-fill); }
+    .mini-tab-more { white-space: nowrap; font-size: 13px; }
+    .task-design-label { margin-bottom: 8px; color: var(--ink-tertiary); font-size: 14px; }
+    .mini-overflow { margin: 8px 10px 10px auto; width: min(300px, calc(100% - 20px)); border: 1px solid var(--border-medium); border-radius: 8px; background: var(--bg-surface); }
+    @media (max-width: 560px) {
+      .task-tab { padding: 9px 8px; }
+      .task-overflow-btn { flex-basis: 60px; width: 60px; }
+      .window-shell-bar { padding: 5px 5px 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ========================================================================
+       TOP BAR & 6-SCENARIO SWITCHER
+       ======================================================================== -->
+  <header class="top-bar">
+    <div class="top-bar-inner">
+      <div class="brand-group">
+        <span class="brand-tag">MACOS / CONCEPT 01</span>
+        <h1 class="brand-title">Mac「选中即问」AI 小窗</h1>
+        <span class="brand-subtitle">衬线字体 · 暖白与柔橙</span>
+      </div>
+
+      <nav class="scenario-nav" aria-label="六大核心设计场景切换">
+        <button class="scenario-tab active" data-scenario="1" onclick="switchScenario(1)">
+          <span class="num">01</span> 划词入口
+        </button>
+        <button class="scenario-tab" data-scenario="2" onclick="switchScenario(2)">
+          <span class="num">02</span> 先编辑 (问 AI)
+        </button>
+        <button class="scenario-tab" data-scenario="3" onclick="switchScenario(3)">
+          <span class="num">03</span> 直接发送与追问
+        </button>
+        <button class="scenario-tab" data-scenario="4" onclick="switchScenario(4)">
+          <span class="num">04</span> 并行任务
+        </button>
+        <button class="scenario-tab" data-scenario="5" onclick="switchScenario(5)">
+          <span class="num">05</span> 无选区唤起
+        </button>
+        <button class="scenario-tab" data-scenario="6" onclick="switchScenario(6)">
+          <span class="num">06</span> 预设设置
+        </button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ======================================================================
+         INTERACTIVE SCENARIO BANNER & MICRO-STATE TRIGGERS
+         ====================================================================== -->
+    <section class="stage-control-bar" aria-label="当前场景说明与状态模拟">
+      <div class="scenario-explain">
+        <span class="scenario-badge-lg" id="stage-badge">场景 01 / 06</span>
+        <div class="scenario-text-group">
+          <h2 id="stage-title">划词入口：阅读文章中的「幂等性」就近唤起动作条与小窗</h2>
+          <p id="stage-desc">选中文字上方 8pt 弹出紧凑动作条；点击预设后，520pt 薄外壳小窗在选区右下方避让弹出，内部直接呈现 chatgpt.com 原界面。</p>
+        </div>
+      </div>
+
+      <div class="quick-sim-actions">
+        <span class="sim-label">演示操作</span>
+        <button class="sim-btn" id="sim-pin-btn" onclick="togglePinState()">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/></svg>
+          <span id="sim-pin-label">置顶</span>
+        </button>
+        <button class="sim-btn" id="sim-longtext-btn" onclick="injectLongTextDemo()">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+          <span>填入长文本</span>
+        </button>
+        <button class="sim-btn" id="sim-outside-btn" onclick="simulateOutsideClick()">
+          <svg class="icon icon-sm" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
+          <span>模拟点击窗外</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ======================================================================
+         PART I: INTERACTIVE MACOS DESKTOP STAGE
+         ====================================================================== -->
+    <section class="macos-desktop" id="macos-stage">
+      <!-- Simulated macOS Menu Bar -->
+      <div class="macos-menubar">
+        <div class="menubar-left">
+          <span style="font-weight:700;"></span>
+          <span class="menubar-app-name" id="menubar-active-app">阅读</span>
+          <span class="menubar-item">文件</span>
+          <span class="menubar-item">编辑</span>
+          <span class="menubar-item">选中内容</span>
+          <span class="menubar-item">窗口</span>
+        </div>
+        <div class="menubar-right">
+          <span class="menubar-hotkey-pill" onclick="switchScenario(5)" title="点击模拟全局快捷键 ⌥Space 无选区唤起">
+            <span>✦ AI 小窗</span>
+            <span style="opacity:0.7;">⌥Space</span>
+          </span>
+          <span class="menubar-item">周四 15:32</span>
+        </div>
+      </div>
+
+      <!-- Main Desktop Workspace Grid -->
+      <div class="desktop-workspace">
+
+        <!-- LEFT COLUMN: SOURCE WORK CONTEXT (READING AN ARTICLE) -->
+        <div class="source-context-column">
+          <div class="context-switcher-strip">
+            <span>来源应用 · 场景示意 <span class="selection-meta-tag" id="selection-status-pill">已选中</span></span>
+            <div class="context-scene-pills">
+              <span class="scene-pill active">阅读 · 技术文章</span>
+              <span class="scene-pill">Chrome 技术阅读</span>
+              <span class="scene-pill">钉钉 / 微信沟通</span>
+            </div>
+          </div>
+
+          <div class="source-context-window" id="source-window">
+            <div class="source-titlebar">
+              <div class="traffic-lights">
+                <span class="traffic-dot"></span>
+                <span class="traffic-dot"></span>
+                <span class="traffic-dot"></span>
+              </div>
+              <div class="source-filename">
+                <span>技术随读</span>
+                <span class="source-badge">工作场景示意</span>
+              </div>
+              <span style="font-size:11px;color:var(--ink-tertiary);">只读视图</span>
+            </div>
+
+            <div class="source-body">
+              <div class="source-breadcrumb">随手读懂一个概念</div>
+              <h3 class="source-doc-title">为什么重试不会生成两笔订单？</h3>
+
+              <p class="source-paragraph">
+                在跨机房调用或第三方渠道网关偶发抖动时，上游收单服务会按指数退避策略发起自动重试。为避免超时重发演变为双倍扣款，核心网关必须要求调用方携带业务唯一幂等键。
+              </p>
+
+              <!-- Selected Text & PopClip Action Bar Relationship -->
+              <div class="selection-anchor-wrap">
+                <!-- PopClip Compact Action Bar -->
+                <div class="popclip-bar" id="popclip-bar" role="toolbar" aria-label="划词快捷预设动作条">
+                  <button class="popclip-btn" id="pop-btn-ask" onclick="runPreset('ask')" title="普通预设：配置为「发送前编辑」，直接填入网页输入框">
+                    <span class="mode-dot" title="发送前编辑"></span>
+                    问 AI
+                  </button>
+                  <button class="popclip-btn active" id="pop-btn-explain" onclick="runPreset('explain')" title="预设：直接在新对话发送并生成通俗解释">
+                    解释
+                  </button>
+                  <button class="popclip-btn" id="pop-btn-summary" onclick="runPreset('summary')" title="预设：直接发送总结">
+                    总结
+                  </button>
+                  <button class="popclip-btn" id="pop-btn-translate" onclick="runPreset('translate')" title="预设：直接发送翻译">
+                    翻译
+                  </button>
+                  <span class="popclip-divider"></span>
+                  <button class="popclip-btn popclip-more" id="pop-btn-more" onclick="togglePopclipMoreMenu(event)" title="低权重设置与更多入口（不在动作条放网站下拉框）">
+                    ⋯
+                  </button>
+                </div>
+
+                <!-- Secondary Popover Menu when clicking ⋯ on Action Bar -->
+                <div class="popclip-more-popover" id="popclip-more-popover">
+                  <div class="popclip-more-item" onclick="switchScenario(5)">
+                    <span>整理今天待办</span>
+                    <span style="font-size:10.5px;color:var(--ink-tertiary);">无选区可用</span>
+                  </div>
+                  <div class="popclip-more-item" onclick="switchScenario(6)" style="border-top:1px solid var(--border-hairline);margin-top:3px;padding-top:7px;color:var(--accent);font-weight:600;">
+                    <span>预设设置…</span>
+                    <span style="font-family:var(--font-serif);font-size:10.5px;">⌘,</span>
+                  </div>
+                  <div style="padding:4px 9px 2px;font-size:10.5px;color:var(--ink-tertiary);">
+                    目标：ChatGPT
+                  </div>
+                </div>
+
+                <!-- Highlighted text in the article -->
+                <div class="selected-text-block" id="source-selection" onclick="switchScenario(1)">
+                  <span class="selection-handle"></span>在分布式支付与异步通知链路中，<strong>幂等性（Idempotency）</strong>是指同一笔业务请求被执行一次与重复执行多次，对系统状态产生的副作用完全一致，且调用方每次拿到的结果语义相同。<span class="selection-handle"></span>
+                </div>
+
+
+              </div>
+
+              <p class="source-reading-note">实际设计中，重试与新的操作需要区分开。为同一次请求保留一个唯一标识，是常见的处理方法。</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: FLOATING AI SMALL WINDOW (THIN SHELL + CHATGPT.COM) -->
+        <div class="ai-window-stage-slot">
+
+          <!-- Hidden Window Recovery Banner (Shown when clicking outside while unpinned) -->
+          <div class="hidden-recovery-pill" id="hidden-recovery-banner">
+            <p style="font-size:13.5px;margin-bottom:6px;"><strong>小窗已隐藏 · 后台任务未终止</strong></p>
+            <p style="font-size:11.5px;color:#CCCCCC;margin-bottom:12px;">
+              未置顶时点击窗外自动隐藏；后台「今天待办总结」仍在继续查询生成。
+            </p>
+            <button class="web-send-btn" onclick="restoreHiddenWindow()">
+              重新唤起小窗 (⌥Space)
+            </button>
+          </div>
+
+          <div class="ai-floating-window" id="ai-window">
+            <!-- 1. ULTRA-THIN MACOS WINDOW SHELL BAR (Only: Task Switch, New Chat, Pin, Zoom, Hide) -->
+            <div class="window-shell-bar">
+              <div class="shell-left">
+                <div class="task-tabs" id="task-tabs" role="tablist" aria-label="打开的任务"></div>
+                <button class="task-overflow-btn" id="task-overflow-btn" onclick="toggleTaskMenu()" aria-expanded="false" aria-controls="task-menu-popover" hidden>更多 ▾</button>
+
+                <!-- New Conversation Button -->
+                <button class="shell-icon-btn" id="new-task-btn" onclick="startBlankNewChat()" title="新建空白 ChatGPT 对话（新划词默认新建对话）" aria-label="新建空白 ChatGPT 对话（新划词默认新建对话）">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span>新对话</span>
+                </button>
+              </div>
+
+
+            </div>
+
+            <div class="window-utility-bar">
+              <span class="window-caption"><span class="brand-asterisk" aria-hidden="true">✳</span> 选中即问</span>
+              <div class="shell-right">
+                <button class="shell-icon-btn" id="shell-pin-btn" onclick="togglePinState()" title="置顶窗口：置顶后保持显示且固定位置，避免新划词跳动" aria-label="置顶窗口：置顶后保持显示且固定位置，避免新划词跳动">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24"><path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v1a1 1 0 0 0 1 1 1 1 0 0 1 1 1z"/></svg>
+                  <span id="shell-pin-label">置顶</span>
+                </button>
+                <button class="shell-icon-btn" id="shell-zoom-btn" onclick="toggleExpandWindow()" title="放大继续深聊" aria-label="放大继续深聊">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+                  <span id="shell-zoom-label">放大</span>
+                </button>
+                <button class="shell-icon-btn" onclick="hideWindowKeepBackground()" title="隐藏小窗（后台任务继续运行）" aria-label="隐藏小窗（后台任务继续运行）">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                  <span>隐藏</span>
+                </button>
+                <button class="shell-icon-btn" id="shell-settings-btn" onclick="switchScenario(6)" title="预设与设置" aria-label="预设与设置">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Only tasks that do not fit in the tab strip appear here. -->
+            <div class="task-menu-popover" id="task-menu-popover" role="group" aria-label="更多任务">
+              <div class="task-menu-header"><span>更多任务</span><small id="overflow-count"></small></div>
+              <div id="overflow-task-list"></div>
+            </div>
+
+              <!-- Optional Quick Bar for Scenario 5 (No-Selection Shortcut Invocation) -->
+              <div class="no-selection-bar" id="no-selection-bar">
+                <span style="font-size:11.5px;color:var(--ink-secondary);font-weight:600;">
+                  快捷预设
+                </span>
+                <div class="no-sel-chips">
+                  <button class="no-sel-chip" id="nosel-chip-current" onclick="runNoSelectionPreset('current')">回到当前任务</button>
+                  <button class="no-sel-chip active" id="nosel-chip-todo" onclick="runNoSelectionPreset('todo')">整理今天待办</button>
+                  <button class="no-sel-chip" id="nosel-chip-blank" onclick="runNoSelectionPreset('blank')">+ 新对话</button>
+                </div>
+              </div>
+
+
+            <!-- 4A. EMBEDDED CHATGPT.COM ORIGINAL WEB INTERFACE -->
+            <div class="chatgpt-webview" id="chatgpt-webview" role="tabpanel" aria-label="当前任务内容">
+              <!-- Native Webpage Topbar (Part of chatgpt.com DOM, not duplicated in shell) -->
+              <div class="webpage-native-topbar">
+                <div class="chatgpt-model-picker" title="直接复用网页自身的模型切换与 MCP 能力">
+                  <span>ChatGPT</span>
+                  <span style="font-size:11px;font-weight:500;color:var(--accent);background:var(--accent-soft);padding:1px 7px;border-radius:999px;">
+                    网页区域示意
+                  </span>
+                </div>
+                <div class="webpage-origin-pill">
+                  <svg class="icon icon-sm" viewBox="0 0 24 24" style="width:11px;height:11px;"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  <span>chatgpt.com</span>
+                </div>
+              </div>
+
+              <!-- Webpage Conversation Stream -->
+              <div class="webpage-chat-body" id="webpage-chat-body">
+                <!-- Populated dynamically by scenario controller -->
+              </div>
+
+              <!-- Webpage Native Bottom Composer Input Box -->
+              <div class="webpage-composer-wrap">
+                <div class="webpage-composer-box" id="webpage-composer-box">
+                  <textarea
+                    class="composer-textarea" aria-label="ChatGPT 网页输入框"
+                    id="webpage-input"
+                    rows="2"
+                    placeholder="继续提问…"
+                  ></textarea>
+                  <div class="composer-bottom-bar">
+                    <div class="composer-tools-left">
+                      <span class="web-tool-pill">＋ 附件</span>
+
+                    </div>
+                    <button class="web-send-btn" id="webpage-send-btn" onclick="handleWebpageSend()">
+                      <span>发送</span>
+                      <span>↑</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 4B. SCENARIO 6: PRESETS & GLOBAL SETTINGS VIEW -->
+            <div class="settings-view" id="settings-view">
+              <div class="settings-header">
+                <h3>预设设置</h3>
+                <button class="sim-btn" onclick="switchScenario(1)">返回对话</button>
+              </div>
+
+              <div class="settings-grid">
+                <!-- Left Presets List -->
+                <div class="presets-sidebar">
+                  <div class="preset-sidebar-label">划词动作条预设</div>
+                  <div class="preset-list-item active" id="preset-item-ask" onclick="selectPresetConfig('ask')">
+                    <span>问 AI</span>
+                    <span class="preset-sub-badge">先编辑</span>
+                  </div>
+                  <div class="preset-list-item" id="preset-item-explain" onclick="selectPresetConfig('explain')">
+                    <span>解释</span>
+                    <span class="preset-sub-badge">直接发</span>
+                  </div>
+                  <div class="preset-list-item" id="preset-item-summary" onclick="selectPresetConfig('summary')">
+                    <span>总结</span>
+                    <span class="preset-sub-badge">直接发</span>
+                  </div>
+                  <div class="preset-list-item" id="preset-item-translate" onclick="selectPresetConfig('translate')">
+                    <span>翻译</span>
+                    <span class="preset-sub-badge">直接发</span>
+                  </div>
+                  <div class="preset-sidebar-label" style="margin-top:8px;">无选区可用预设</div>
+                  <div class="preset-list-item" id="preset-item-todo" onclick="selectPresetConfig('todo')">
+                    <span>整理今天待办</span>
+                    <span class="preset-sub-badge">直接发</span>
+                  </div>
+                </div>
+
+                <!-- Right Preset Configuration Details -->
+                <div class="preset-detail-form">
+
+                  <div class="form-row">
+                    <label class="form-label" for="cfg-preset-name">
+                      <span>名称</span>
+
+                    </label>
+                    <input class="form-input" id="cfg-preset-name" type="text" value="问 AI" />
+                  </div>
+
+                  <div class="form-row">
+                    <label class="form-label" id="send-mode-label">
+                      <span>发送方式</span>
+
+                    </label>
+                    <div class="segmented-toggle" role="group" aria-labelledby="send-mode-label">
+                      <button type="button" class="seg-option active" id="seg-edit-first" onclick="setPresetSendMode('edit')">
+                        先编辑
+                      </button>
+                      <button type="button" class="seg-option" id="seg-direct-send" onclick="setPresetSendMode('direct')">
+                        直接发送
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="form-row">
+                    <label class="form-label" for="cfg-prompt-tpl">
+                      <span>提示词模板</span>
+                      <span style="font-family:var(--font-serif);font-size:11px;color:var(--accent);">{{selection}} 代表选中文字</span>
+                    </label>
+                    <textarea class="form-textarea" id="cfg-prompt-tpl">请结合上下文，帮我分析以下选中内容：
+
+「{{selection}}」
+
+我的问题是：</textarea>
+                  </div>
+
+                  <!-- Global Target Configuration (In Settings layer, NOT on action bar) -->
+                  <div class="global-target-box">
+                    <div class="form-label" style="margin-bottom:2px;">
+                      <span>目标与资源</span>
+                    </div>
+                    <div class="global-target-row">
+                      <span style="color:var(--ink-secondary);">目标网站</span>
+                      <span style="font-family:var(--font-serif);font-weight:600;color:var(--ink-primary);">
+                        ChatGPT · chatgpt.com
+                      </span>
+                    </div>
+                    <div class="global-target-row">
+                      <span style="color:var(--ink-secondary);">释放闲置页面</span>
+                      <span style="color:var(--accent);font-weight:500;">
+                        10 分钟后
+                      </span>
+                    </div>
+                  </div>
+                  <div class="settings-actions"><button class="web-send-btn" onclick="savePresetConfig()">保存预设</button></div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+      <!-- Demo feedback lives outside the product window. -->
+            <div class="shell-feedback-strip" id="shell-feedback-strip" role="status">
+              <div class="feedback-left">
+                <span id="feedback-icon">演示反馈</span>
+                <span id="feedback-text">选区右下方就近避让弹出 · 动作条仅放预设与低权重 ⋯ 入口</span>
+              </div>
+              <span class="width-spec-tag" id="window-size-tag">520 pt · 默认宽度</span>
+            </div>
+
+
+    <!-- ======================================================================
+         PART II: 6 ESSENTIAL SCENARIOS — HIGH-CLARITY SEQUENTIAL ARTBOARDS
+         ====================================================================== -->
+    <div class="section-divider">
+      <div>
+        <h2>六个场景，一条轻量流程</h2>
+        <p>选择画板，在上方演示对应交互。</p>
+      </div>
+      <span class="brand-tag">演示内容 · 未连接 AI</span>
+    </div>
+
+    <section class="artboards-grid" aria-label="六大场景静态设计画板">
+      <article class="artboard-card current-board" id="board-1" onclick="switchScenario(1)">
+        <div class="artboard-header"><div class="artboard-title-group"><span class="artboard-num">01</span><h3 class="artboard-name">选中，就近问</h3></div><span class="artboard-trigger-pill">划词入口</span></div>
+        <div class="artboard-canvas">
+          <div class="mini-source">
+            <div class="mini-actionbar"><span>问 AI</span><span class="chosen">解释</span><span>总结</span><span>翻译</span><span>⋯</span></div>
+            <p class="mini-selection">幂等性：同一请求重复执行，不会产生额外的副作用。</p>
+          </div>
+          <div class="mini-shell mini-nearby">
+            <div class="mini-shell-bar"><div class="mini-tab-strip"><span class="mini-tab active">解释幂等性</span><span class="mini-tab">今日待办</span></div><span class="mini-tab-more">更多 2 ▾</span><span>＋</span></div>
+            <div class="mini-shell-body mini-web"><div class="mini-web-heading"><strong>ChatGPT</strong><span>网页区域示意</span></div><p>做一次，与重复做很多次，结果一样。</p><div class="mini-composer">继续提问…<span class="mini-send">↑</span></div></div>
+          </div>
+        </div>
+        <div class="artboard-footer"><span>动作条靠近选区；小窗避开文字和屏幕边缘。</span><span class="board-open">查看 ↗</span></div>
+      </article>
+      <article class="artboard-card" id="board-2" onclick="switchScenario(2)">
+        <div class="artboard-header"><div class="artboard-title-group"><span class="artboard-num">02</span><h3 class="artboard-name">直接在网页里补充</h3></div><span class="artboard-trigger-pill">先编辑</span></div>
+        <div class="artboard-canvas">
+          <div class="mini-shell">
+            <div class="mini-shell-bar"><div class="mini-tab-strip"><span class="mini-tab">解释幂等性</span><span class="mini-tab active">问 AI · 草稿</span></div><span class="mini-tab-more">更多 2 ▾</span></div>
+            <div class="mini-shell-body mini-web"><div class="mini-web-heading"><strong>ChatGPT</strong><span>网页区域示意</span></div><p class="mini-welcome">有什么可以帮忙的？</p><div class="mini-composer mini-edit">请解释以下内容：<br>「幂等性：同一请求重复执行，不会产生额外的副作用。」<br><br>我的问题是：超时后怎么判断是否重试？<div class="mini-composer-bottom"><span>＋</span><span class="mini-send">↑</span></div></div></div>
+          </div>
+        </div>
+        <div class="artboard-footer"><span>预设和完整选区直接填入网页，不经过本地中转框。</span><span class="board-open">查看 ↗</span></div>
+      </article>
+      <article class="artboard-card" id="board-3" onclick="switchScenario(3)">
+        <div class="artboard-header"><div class="artboard-title-group"><span class="artboard-num">03</span><h3 class="artboard-name">看完答案，继续追问</h3></div><span class="artboard-trigger-pill">直接发送</span></div>
+        <div class="artboard-canvas">
+          <div class="mini-shell">
+            <div class="mini-shell-bar"><div class="mini-tab-strip"><span class="mini-tab active">解释幂等性</span><span class="mini-tab">今日待办</span></div><span class="mini-tab-more">更多 2 ▾</span></div>
+            <div class="mini-shell-body mini-web"><div class="mini-web-heading"><strong>ChatGPT</strong><span>网页区域示意</span></div><div class="mini-user">用生活例子解释幂等性。</div><p>就像电梯的关门键。重复按，不会让“关门”这件事叠加发生。</p><p>支付接口也需要这样的约束，避免重试产生重复扣款。</p><div class="mini-composer">那数据库里怎么实现？<span class="mini-send">↑</span></div></div>
+          </div>
+        </div>
+        <div class="artboard-footer"><span>每次划词新建对话；追问沿用网站自己的输入框。</span><span class="board-open">查看 ↗</span></div>
+      </article>
+      <article class="artboard-card" id="board-4" onclick="switchScenario(4)">
+        <div class="artboard-header"><div class="artboard-title-group"><span class="artboard-num">04</span><h3 class="artboard-name">一扇小窗，几件小事</h3></div><span class="artboard-trigger-pill">并行任务</span></div>
+        <div class="artboard-canvas">
+          <div class="mini-shell">
+            <div class="mini-shell-bar"><div class="mini-tab-strip"><span class="mini-tab active">解释幂等性</span><span class="mini-tab">今日待办</span></div><span class="mini-tab-more">更多 2 ▴</span><span>＋</span></div>
+            <div class="mini-overflow">
+              <div class="mini-task-row"><span>产品说明翻译<small>点击恢复</small></span><span class="task-state-badge released">已释放</span></div>
+              <div class="mini-task-row"><span>幂等状态机追问<small>待发送</small></span><span class="task-state-badge protected">有草稿</span></div>
+            </div>
+          </div>
+          <p class="task-design-label">放大后，空间够用就全部显示</p>
+          <div class="mini-shell"><div class="mini-shell-bar"><div class="mini-tab-strip"><span class="mini-tab active">解释幂等性</span><span class="mini-tab">今日待办</span><span class="mini-tab">产品翻译</span><span class="mini-tab">状态机追问</span></div><span>＋</span></div></div>
+        </div>
+        <div class="artboard-footer"><span>当前任务保持可见；只有放不下的任务进入下拉菜单。</span><span class="board-open">查看 ↗</span></div>
+      </article>
+      <article class="artboard-card" id="board-5" onclick="switchScenario(5)">
+        <div class="artboard-header"><div class="artboard-title-group"><span class="artboard-num">05</span><h3 class="artboard-name">没有选区，也能开始</h3></div><span class="artboard-trigger-pill">⌥Space</span></div>
+        <div class="artboard-canvas">
+          <div class="mini-shell">
+            <div class="mini-shell-bar"><div class="mini-tab-strip"><span class="mini-tab">今日待办</span><span class="mini-tab active">新对话</span></div><span class="mini-tab-more">更多 ▾</span><span>＋</span></div>
+            <div class="mini-shortcuts"><span>快捷预设</span><span class="mini-preset">整理今天待办</span></div>
+            <div class="mini-shell-body mini-web"><div class="mini-web-heading"><strong>ChatGPT</strong><span>网页区域示意</span></div><p class="mini-welcome">有什么可以帮忙的？</p><div class="mini-composer">向 ChatGPT 提问…<span class="mini-send">↑</span></div></div>
+          </div>
+        </div>
+        <div class="artboard-footer"><span>快捷键回到当前任务；可新建空白对话或运行预设。</span><span class="board-open">查看 ↗</span></div>
+      </article>
+      <article class="artboard-card" id="board-6" onclick="switchScenario(6)">
+        <div class="artboard-header"><div class="artboard-title-group"><span class="artboard-num">06</span><h3 class="artboard-name">把常用动作设好</h3></div><span class="artboard-trigger-pill">预设设置</span></div>
+        <div class="artboard-canvas">
+          <div class="mini-shell">
+            <div class="mini-shell-bar"><span>预设设置</span><span>返回对话</span></div>
+            <div class="mini-shell-body mini-settings"><div class="mini-setting-row"><span>名称</span><strong>问 AI</strong></div><div class="mini-setting-row"><span>发送方式</span><span class="mini-preset">先编辑</span></div><div class="mini-template">请结合上下文分析：<br>「{{selection}}」<br><br>我的问题是：</div><div class="mini-setting-row"><span>目标网站</span><strong>ChatGPT</strong></div></div>
+          </div>
+        </div>
+        <div class="artboard-footer"><span>“问 AI”也是普通预设；目标网站只在设置层配置。</span><span class="board-open">查看 ↗</span></div>
+      </article>
+    </section>
+
+    <!-- ======================================================================
+         PART III: KEY DESIGN TRADEOFFS & RATIONALE
+         ====================================================================== -->
+    <div class="section-divider">
+      <div>
+        <h2>设计约定</h2>
+      </div>
+    </div>
+
+    <section class="tradeoffs-grid" aria-label="设计约定">
+      <div class="tradeoff-card">
+        <h3>1. 「先编辑」直入网页输入框，不设本地中转层</h3>
+        <p>
+          点击配置为先编辑的「问 AI」时，不弹窗要求用户在本地输入框二次编辑，而是直接唤起小窗并将提示词与完整选区文本通过脚本注入 <code>chatgpt.com</code> 输入框（不走 URL 参数、长文本不截断）。既少一层交互跳转，又能沿用网页自己的附件、搜索及已连接的工具能力。
+        </p>
+      </div>
+
+      <div class="tradeoff-card">
+        <h3>2. 「问 AI」与普通预设同构，目标网站收进设置层</h3>
+        <p>
+          动作条只放常用预设和 <code>⋯</code> 入口。「问 AI」同样可以设置为先编辑或直接发送。首版只有 ChatGPT，目标放在设置中；无选区时可以运行“整理今天待办”等预设。
+        </p>
+      </div>
+
+      <div class="tradeoff-card">
+        <h3>3. 选区就近避让弹出 + 置顶锁定窗口位置</h3>
+        <p>
+          动作条距选区约 8 pt，小窗距选区约 12 pt，实际位置根据屏幕空间避让。默认宽 520 pt。未置顶时点击窗外隐藏，后台任务继续；置顶后保持位置。本稿并排展示来源与小窗，不代表固定右侧布局。
+        </p>
+      </div>
+
+      <div class="tradeoff-card">
+        <h3>4. 标签页优先，放不下再收进“更多”</h3>
+        <p>
+          顶部优先展示任务标签，空间不足的任务进入“更多”。当前任务始终在标签栏中可见；放大窗口后自动展开更多标签。后台页面闲置 10 分钟后，仅在已完成、无草稿且有可恢复链接时释放。生成中、工具执行中、等待用户和状态不明的页面保留。点击已释放任务按原链接恢复，不重发提示词。退出应用后不恢复本次任务列表。
+        </p>
+      </div>
+    </section>
+
+    <section class="visual-contract" aria-label="视觉基线">
+      <h2>视觉基线</h2>
+      <div class="palette"><span><i style="background:#FAF9F5"></i>暖白 #FAF9F5</span><span><i style="background:#26251F"></i>炭灰 #26251F</span><span><i style="background:#C57556"></i>柔橙 #C57556</span></div>
+      <p>配色沿用 Claude 系列的暖白与橙色，橙色调整为更柔和的 #C57556。标题、正文、标签页与控件统一使用衬线字体：中文宋体，西文 Iowan Old Style。代码和快捷键保留等宽。实际嵌入的网站仍由网站管理样式。</p>
+    </section>
+
+  </main>
+
+  <!-- ========================================================================
+       INTERACTIVE PROTOTYPE STATE ENGINE
+       ======================================================================== -->
+  <script>
+    const demoTasks = [
+      { id: 'explain', title: '解释幂等性', mode: 'explain', status: 'done' },
+      { id: 'todo', title: '今天待办总结', mode: 'todo', status: 'running' },
+      { id: 'translate', title: '产品说明翻译', mode: 'translate', status: 'released' },
+      { id: 'draft', title: '幂等状态机追问', mode: 'ask-edit', status: 'waiting' }
+    ];
+    const modeTaskIds = { explain: 'explain', todo: 'todo', translate: 'translate', 'ask-edit': 'draft' };
+    let nextTaskId = 1;
+    let overflowTaskIds = [];
+
+    const state = {
+      currentScenario: 1,
+      isPinned: false,
+      isExpanded: false,
+      isHidden: false,
+      taskMenuOpen: false,
+      popclipMoreOpen: false,
+      presetConfigSelected: 'ask',
+      presetSendMode: 'edit',
+      currentMode: 'explain',
+      activeTaskId: null
+    };
+
+    const scenarioMeta = {
+      1: {
+        badge: '场景 01 / 06',
+        title: '划词入口：阅读文章中的「幂等性」就近唤起动作条与小窗',
+        desc: '选中文字上方 8pt 弹出紧凑动作条；点击预设后，520pt 薄外壳小窗在选区右下方避让弹出，内部直接呈现 chatgpt.com 原界面。'
+      },
+      2: {
+        badge: '场景 02 / 06',
+        title: '先编辑：点击「问 AI」，网页输入框已带入提示词与选中文字',
+        desc: '不设本地中转编辑框。直接进入 chatgpt.com 新对话输入框，已完整填入提示词与选区内容（长文同样不截断），用户补充问题后即可发送。'
+      },
+      3: {
+        badge: '场景 03 / 06',
+        title: '直接发送与追问：点击「解释」，新对话展示通俗解释并保留网页追问框',
+        desc: '每次新划词默认开启新对话（不追加到旧上下文），立即提交并展示通俗解释，底部完整保留 ChatGPT 网页自带的追问输入框。'
+      },
+      4: {
+        badge: '场景 04 / 06',
+        title: '并行任务：单窗切换「已完成」「正在查询」「已释放页面」',
+        desc: '顶部标签切换独立对话，放不下的任务收进“更多”。闲置已完成且无草稿的页面自动回收；点击「产品说明翻译（已释放页面）」按原链接恢复，不重发提示词。'
+      },
+      5: {
+        badge: '场景 05 / 06',
+        title: '无选区唤起：快捷键 ⌥Space 打开，回到当前任务、新建空白提问或跑预设',
+        desc: '不强制先选中文字。无选区按快捷键默认回到当前任务，顶部可一键「+ 新对话」进入空白网页提问，或直接触发「整理今天待办」等无选区预设。'
+      },
+      6: {
+        badge: '场景 06 / 06',
+        title: '预设设置：编辑提示词、指定 ChatGPT 网页、切换「发送前编辑」',
+        desc: '「问 AI」与普通预设共享同一套配置结构；目标网站配置（chatgpt.com）收纳于设置层，不在主动作条放置下拉框。'
+      }
+    };
+
+    function renderChatContent(mode, taskId = modeTaskIds[mode]) {
+      saveCurrentTaskView();
+      const task = demoTasks.find(t => t.id === taskId);
+      state.activeTaskId = taskId;
+      const chatBody = document.getElementById('webpage-chat-body');
+      const composerBox = document.getElementById('webpage-composer-box');
+      const webInput = document.getElementById('webpage-input');
+      state.currentMode = mode;
+
+      composerBox.classList.remove('focused-edit');
+
+      if (mode === 'explain') {
+        webInput.rows = 2;
+        webInput.value = '';
+        webInput.placeholder = '继续提问…';
+
+        chatBody.innerHTML = `
+          <div class="chat-user-bubble">
+            请用通俗易懂的语言解释以下概念，并结合日常开发给一个直观例子：
+            <div class="quote-snip">
+              「在分布式支付与异步通知链路中，幂等性（Idempotency）是指同一笔业务请求被执行一次与重复执行多次，对系统状态产生的副作用完全一致，且调用方每次拿到的结果语义相同。」
+            </div>
+          </div>
+
+          <div class="chat-ai-response">
+            <div class="ai-header-line">
+              <span class="ai-role-badge">
+                <span class="ai-role-icon">✦</span>
+                ChatGPT · 通俗解释
+              </span>
+              <span class="mock-disclaimer-tag">AI 输出示意</span>
+            </div>
+
+            <div class="ai-summary-card">
+              <strong>一句话通俗理解：</strong><br/>
+              就像电梯的<strong>关门键</strong>：按一次，与重复按很多次，最终都只是关门。重复操作不会让结果叠加。
+            </div>
+
+            <ul class="ai-bullet-list">
+              <li><strong>为什么支付必须做幂等？</strong> 移动端或网关超时重试时，请求可能其实已经到达服务端。没有幂等保障，一次超时重试就会变成重复扣款。</li>
+              <li><strong>开发中最简落地做法：</strong> 同一次交易使用相同的 <code>Idempotency-Key</code>；服务端识别已处理的请求，返回原结果，不重复扣款。</li>
+            </ul>
+          </div>
+        `;
+      } else if (mode === 'ask-edit') {
+        composerBox.classList.add('focused-edit');
+        webInput.rows = 5;
+        webInput.value = `请结合上下文，帮我分析以下选中内容：\n\n「在分布式支付与异步通知链路中，幂等性（Idempotency）是指同一笔业务请求被执行一次与重复执行多次，对系统状态产生的副作用完全一致，且调用方每次拿到的结果语义相同。」\n\n我的补充问题是：如果下游支付渠道返回超时（状态未知），这时的重试幂等状态机应该怎么设计？`;
+
+        chatBody.innerHTML = `
+          <div class="edit-first-empty-stage">
+            <h3>有什么可以帮忙的？</h3>
+          </div>
+        `;
+      } else if (mode === 'todo') {
+        webInput.rows = 2;
+        webInput.value = '';
+        webInput.placeholder = '继续提问…';
+
+        chatBody.innerHTML = `
+          <div class="chat-user-bubble">
+            请帮我汇总今天待处理的研发、代码评审与沟通事项，按优先级分组列出。
+          </div>
+
+          <div class="chat-ai-response">
+            <div class="ai-header-line">
+              <span class="ai-role-badge">
+                <span class="ai-role-icon" style="background:var(--accent-amber);">◌</span>
+                ChatGPT · 正在查询并整理…
+              </span>
+              <span class="mock-disclaimer-tag">个人信息与 AI 输出示意</span>
+            </div>
+
+            <div class="ai-summary-card" style="border-color:var(--accent-amber-border);background:var(--accent-amber-soft);">
+              <strong>P0 · 今日核心研发（上午 - 16:00 前）</strong><br/>
+              1. <strong>[研发]</strong> 完成支付网关 <code>Idempotency-Key</code> 状态机降级方案联调<br/>
+              2. <strong>[Chrome]</strong> 评审订单对账服务 PR #418（重点检查并发锁粒度）
+            </div>
+
+            <ul class="ai-bullet-list">
+              <li><strong>P1 · 沟通与协同（钉钉 / 微信示意）：</strong> 16:30 与客户端团队确认 v2.4 接口字段变更；回复测试环境回调证书过期问题。</li>
+              <li style="color:var(--accent-amber);font-weight:500;">▌ 正在整理今晚发版检查清单…</li>
+            </ul>
+          </div>
+        `;
+      } else if (mode === 'translate') {
+        webInput.rows = 2;
+        webInput.value = '';
+        webInput.placeholder = '继续提问…';
+
+        chatBody.innerHTML = `
+
+          <div class="chat-user-bubble">
+            将以下产品更新说明翻译为自然、克制的英文 Release Notes：
+            <div class="quote-snip">「支持在任意应用中划词唤起 AI 小窗，自动释放后台闲置页面。」</div>
+          </div>
+
+          <div class="chat-ai-response">
+            <div class="ai-header-line">
+              <span class="ai-role-badge">
+                <span class="ai-role-icon">✦</span>
+                ChatGPT · 翻译结果
+              </span>
+              <span class="mock-disclaimer-tag">AI 输出示意</span>
+            </div>
+            <div class="ai-summary-card">
+              <strong>Release Note Draft:</strong><br/>
+              "Select text in any macOS app to invoke a lightweight AI companion window near your cursor, with automatic background tab reclamation for idle conversations."
+            </div>
+          </div>
+        `;
+      } else if (mode === 'blank') {
+        webInput.rows = 3;
+        webInput.value = '';
+        webInput.placeholder = '向 ChatGPT 提问…';
+
+        chatBody.innerHTML = `
+          <div class="edit-first-empty-stage">
+            <h3>有什么可以帮忙的？</h3>
+          </div>
+        `;
+      }
+      if (task.view) {
+        chatBody.innerHTML = task.view.html;
+        webInput.value = task.view.input;
+        webInput.rows = task.view.rows;
+      }
+      renderTaskNavigation();
+    }
+
+    function updatePopclipButtons(activeId) {
+      ['pop-btn-ask', 'pop-btn-explain', 'pop-btn-summary', 'pop-btn-translate', 'pop-btn-more'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', id === activeId);
+      });
+    }
+
+    function togglePopclipMoreMenu(e) {
+      if (e) e.stopPropagation();
+      const pop = document.getElementById('popclip-more-popover');
+      state.popclipMoreOpen = !state.popclipMoreOpen;
+      pop.classList.toggle('visible', state.popclipMoreOpen);
+    }
+
+    function switchScenario(num) {
+      state.currentScenario = num;
+      state.isHidden = false;
+      state.popclipMoreOpen = false;
+      document.getElementById('popclip-more-popover').classList.remove('visible');
+      document.getElementById('ai-window').classList.remove('is-hidden-state');
+      document.getElementById('hidden-recovery-banner').classList.remove('visible');
+
+      document.querySelectorAll('.scenario-tab').forEach(btn => {
+        btn.classList.toggle('active', Number(btn.dataset.scenario) === num);
+        btn.setAttribute('aria-pressed', String(Number(btn.dataset.scenario) === num));
+      });
+
+      for (let i = 1; i <= 6; i++) {
+        const b = document.getElementById('board-' + i);
+        if (b) b.classList.toggle('current-board', i === num);
+      }
+
+      const meta = scenarioMeta[num];
+      document.getElementById('stage-badge').textContent = meta.badge;
+      document.getElementById('stage-title').textContent = meta.title;
+      document.getElementById('stage-desc').textContent = meta.desc;
+
+      const webview = document.getElementById('chatgpt-webview');
+      const settingsView = document.getElementById('settings-view');
+      const taskPopover = document.getElementById('task-menu-popover');
+      const popclipBar = document.getElementById('popclip-bar');
+      const sourceSelection = document.getElementById('source-selection');
+      const selectionStatusPill = document.getElementById('selection-status-pill');
+      const feedbackStrip = document.getElementById('shell-feedback-strip');
+      const feedbackText = document.getElementById('feedback-text');
+      const noSelBar = document.getElementById('no-selection-bar');
+
+      webview.style.display = 'flex';
+      settingsView.classList.remove('visible');
+      taskPopover.classList.remove('visible');
+      state.taskMenuOpen = false;
+      document.getElementById('task-overflow-btn').setAttribute('aria-expanded', 'false');
+      popclipBar.classList.remove('dimmed');
+      sourceSelection.style.opacity = '1';
+      selectionStatusPill.textContent = '已选中';
+      feedbackStrip.className = 'shell-feedback-strip';
+      noSelBar.classList.remove('visible');
+
+      if (num === 1) {
+        updatePopclipButtons('pop-btn-explain');
+        renderChatContent('explain');
+        feedbackText.textContent = '选区右下方就近避让弹出 · 动作条仅放预设与低权重 ⋯ 入口';
+      } else if (num === 2) {
+        updatePopclipButtons('pop-btn-ask');
+        renderChatContent('ask-edit');
+        feedbackStrip.className = 'shell-feedback-strip highlight-draft';
+        feedbackText.textContent = '已将提示词与完整选区填入网页输入框 · 含未发送草稿期间页面受保护不回收';
+      } else if (num === 3) {
+        updatePopclipButtons('pop-btn-explain');
+        renderChatContent('explain');
+        feedbackStrip.className = 'shell-feedback-strip highlight-accent';
+        feedbackText.textContent = '点击「解释」直接新建对话并发送 · 底部保留网页原生追问输入框';
+      } else if (num === 4) {
+        updatePopclipButtons('pop-btn-explain');
+        renderChatContent('explain');
+        feedbackText.textContent = '标签页优先展示任务；点“更多”查看溢出任务，放大窗口可显示更多标签。';
+      } else if (num === 5) {
+        updatePopclipButtons('');
+        popclipBar.classList.add('dimmed');
+        sourceSelection.style.opacity = '0.45';
+        selectionStatusPill.textContent = '无选区';
+        renderChatContent(state.currentMode, state.activeTaskId);
+        noSelBar.classList.add('visible');
+        document.querySelectorAll('.no-sel-chip').forEach(b => b.classList.toggle('active', b.id === 'nosel-chip-current'));
+        feedbackStrip.className = 'shell-feedback-strip highlight-accent';
+        feedbackText.textContent = '快捷预设默认回到当前任务，可点「+ 新对话」空白提问或运行「整理今天待办」';
+      } else if (num === 6) {
+        updatePopclipButtons('pop-btn-more');
+        webview.style.display = 'none';
+        settingsView.classList.add('visible');
+        feedbackText.textContent = '预设配置与目标网站（chatgpt.com）位于设置层，不占用主动作条空间';
+      }
+    }
+
+    function saveCurrentTaskView() {
+      if (!state.activeTaskId) return;
+      const task = demoTasks.find(t => t.id === state.activeTaskId);
+      const input = document.getElementById('webpage-input');
+      task.view = { html: document.getElementById('webpage-chat-body').innerHTML, input: input.value, rows: input.rows };
+    }
+
+    function createDemoTask(mode, title) {
+      const task = { id: 'task-' + nextTaskId++, title, mode, status: mode === 'ask-edit' ? 'waiting' : mode === 'blank' ? 'idle' : 'done' };
+      demoTasks.push(task);
+      return task;
+    }
+
+    function closeTaskMenu() {
+      state.taskMenuOpen = false;
+      document.getElementById('task-menu-popover').classList.remove('visible');
+      document.getElementById('task-overflow-btn').setAttribute('aria-expanded', 'false');
+    }
+
+    function toggleTaskMenu() {
+      state.taskMenuOpen = !state.taskMenuOpen;
+      document.getElementById('task-menu-popover').classList.toggle('visible', state.taskMenuOpen);
+      document.getElementById('task-overflow-btn').setAttribute('aria-expanded', String(state.taskMenuOpen));
+    }
+
+    function selectTaskFromMenu(taskId) {
+      const task = demoTasks.find(t => t.id === taskId);
+      const restored = task.status === 'released';
+      if (restored) task.status = 'done';
+      document.getElementById('settings-view').classList.remove('visible');
+      document.getElementById('chatgpt-webview').style.display = 'flex';
+      renderChatContent(task.mode, taskId);
+      closeTaskMenu();
+      document.getElementById('feedback-text').textContent = restored
+        ? '已按原链接恢复“' + task.title + '”，没有重新发送提示词。'
+        : '已切换到“' + task.title + '”。';
+      document.querySelector('.task-tab[aria-selected="true"]').focus({ preventScroll: true });
+    }
+
+    function renderTaskNavigation() {
+      const tabs = document.getElementById('task-tabs');
+      tabs.replaceChildren();
+      for (const task of demoTasks) {
+        const tab = document.createElement('button');
+        tab.className = 'task-tab';
+        tab.dataset.taskId = task.id;
+        tab.id = 'tab-' + task.id;
+        tab.setAttribute('role', 'tab');
+        tab.setAttribute('aria-selected', String(task.id === state.activeTaskId));
+        tab.setAttribute('aria-controls', 'chatgpt-webview');
+        tab.tabIndex = task.id === state.activeTaskId ? 0 : -1;
+        const status = task.view?.input ? '有草稿' : { done: '已完成', running: '运行中', released: '已释放', waiting: '待发送', idle: '未发送' }[task.status];
+        tab.title = task.title + ' · ' + status;
+        tab.setAttribute('aria-label', tab.title);
+        const dot = document.createElement('span');
+        dot.className = 'status-dot ' + (task.view?.input ? 'waiting' : task.status);
+        const title = document.createElement('span');
+        title.className = 'tab-title';
+        title.textContent = task.title;
+        tab.append(dot, title);
+        tab.addEventListener('click', () => selectTaskFromMenu(task.id));
+        tabs.append(tab);
+      }
+      document.getElementById('chatgpt-webview').setAttribute('aria-labelledby', 'tab-' + state.activeTaskId);
+      layoutTaskTabs();
+    }
+
+    function layoutTaskTabs() {
+      const tabs = document.getElementById('task-tabs');
+      const more = document.getElementById('task-overflow-btn');
+      const buttons = [...tabs.children];
+      more.hidden = true;
+      buttons.forEach(button => { button.hidden = false; button.style.maxWidth = ''; });
+      const widths = buttons.map(button => button.getBoundingClientRect().width);
+      const gap = 4;
+      const total = widths.reduce((sum, w) => sum + w, 0) + gap * (buttons.length - 1);
+      let visible = buttons.map((_, i) => i);
+      if (total > tabs.clientWidth) {
+        more.hidden = false;
+        const available = tabs.clientWidth;
+        visible = [];
+        let used = 0;
+        for (let i = 0; i < buttons.length; i++) {
+          const cost = widths[i] + (visible.length ? gap : 0);
+          if (used + cost > available) break;
+          visible.push(i);
+          used += cost;
+        }
+        const active = buttons.findIndex(button => button.dataset.taskId === state.activeTaskId);
+        if (!visible.includes(active)) {
+          while (visible.length && visible.reduce((sum, i) => sum + widths[i], 0) + widths[active] + gap * visible.length > available) visible.pop();
+          visible.push(active);
+          visible.sort((a, b) => a - b);
+        }
+        // At very narrow widths, keep one readable active tab and the overflow control.
+        if (visible.length === 1) buttons[visible[0]].style.maxWidth = available + 'px';
+      }
+      buttons.forEach((button, i) => button.hidden = !visible.includes(i));
+      overflowTaskIds = buttons.filter(button => button.hidden).map(button => button.dataset.taskId);
+      more.hidden = overflowTaskIds.length === 0;
+      more.textContent = '更多 ' + overflowTaskIds.length + ' ▾';
+      more.setAttribute('aria-label', '更多任务，' + overflowTaskIds.length + ' 个未显示');
+      if (!overflowTaskIds.length) closeTaskMenu();
+      document.getElementById('task-menu-popover').style.top = document.querySelector('.window-shell-bar').offsetHeight + 4 + 'px';
+      renderOverflowTasks();
+    }
+
+    function renderOverflowTasks() {
+      const list = document.getElementById('overflow-task-list');
+      list.replaceChildren();
+      document.getElementById('overflow-count').textContent = overflowTaskIds.length + ' 个';
+      for (const id of overflowTaskIds) {
+        const task = demoTasks.find(t => t.id === id);
+        const item = document.createElement('button');
+        item.className = 'task-item';
+        item.dataset.taskId = id;
+        const title = document.createElement('span');
+        title.className = 'task-title-line';
+        title.textContent = task.title;
+        const badge = document.createElement('span');
+        const status = task.view?.input ? 'waiting' : task.status;
+        badge.className = 'task-state-badge ' + (status === 'waiting' ? 'protected' : status);
+        badge.textContent = { done: '已完成', running: '运行中', released: '已释放', waiting: '有草稿', idle: '未发送' }[status];
+        item.append(title, badge);
+        item.addEventListener('click', () => selectTaskFromMenu(id));
+        list.append(item);
+      }
+    }
+
+    function togglePinState() {
+      state.isPinned = !state.isPinned;
+      const win = document.getElementById('ai-window');
+      const shellPinBtn = document.getElementById('shell-pin-btn');
+      const shellPinLabel = document.getElementById('shell-pin-label');
+      const simPinBtn = document.getElementById('sim-pin-btn');
+      const simPinLabel = document.getElementById('sim-pin-label');
+      const feedbackStrip = document.getElementById('shell-feedback-strip');
+      const feedbackText = document.getElementById('feedback-text');
+
+      win.classList.toggle('is-pinned', state.isPinned);
+      shellPinBtn.classList.toggle('active-pin', state.isPinned);
+      shellPinBtn.setAttribute('aria-pressed', String(state.isPinned));
+      simPinBtn.classList.toggle('active', state.isPinned);
+
+      if (state.isPinned) {
+        shellPinLabel.textContent = '已置顶';
+        simPinLabel.textContent = '已置顶';
+        feedbackStrip.className = 'shell-feedback-strip highlight-accent';
+        feedbackText.textContent = '已置顶：点击窗外保持显示，且固定当前窗口位置，避免新划词让小窗跳来跳去';
+      } else {
+        shellPinLabel.textContent = '置顶';
+        simPinLabel.textContent = '置顶';
+        feedbackStrip.className = 'shell-feedback-strip';
+        feedbackText.textContent = '已取消置顶：点击窗外将自动隐藏小窗（后台任务继续运行）';
+      }
+    }
+
+    function toggleExpandWindow() {
+      state.isExpanded = !state.isExpanded;
+      const win = document.getElementById('ai-window');
+      const zoomLabel = document.getElementById('shell-zoom-label');
+      const sizeTag = document.getElementById('window-size-tag');
+
+      win.classList.toggle('is-expanded', state.isExpanded);
+      document.querySelector('.desktop-workspace').classList.toggle('expanded-view', state.isExpanded);
+      zoomLabel.textContent = state.isExpanded ? '还原' : '放大';
+      sizeTag.textContent = state.isExpanded ? '放大视图' : '520 pt · 默认宽度';
+      document.getElementById('shell-zoom-btn').setAttribute('aria-pressed', String(state.isExpanded));
+    }
+
+    function hideWindowKeepBackground() {
+      state.isHidden = true;
+      document.getElementById('ai-window').classList.add('is-hidden-state');
+      document.getElementById('hidden-recovery-banner').classList.add('visible');
+    }
+
+    function restoreHiddenWindow() {
+      state.isHidden = false;
+      document.getElementById('ai-window').classList.remove('is-hidden-state');
+      document.getElementById('hidden-recovery-banner').classList.remove('visible');
+    }
+
+    function simulateOutsideClick() {
+      const feedbackStrip = document.getElementById('shell-feedback-strip');
+      const feedbackText = document.getElementById('feedback-text');
+      if (state.isPinned) {
+        feedbackStrip.className = 'shell-feedback-strip highlight-accent';
+        feedbackText.textContent = '模拟点击窗外：当前处于「已置顶」状态，小窗保持显示且位置不变';
+      } else {
+        hideWindowKeepBackground();
+      }
+    }
+
+    function injectLongTextDemo() {
+      switchScenario(2);
+      const webInput = document.getElementById('webpage-input');
+      webInput.rows = 6;
+      document.getElementById('feedback-text').textContent = '长文本已完整填入网页输入框；发送前可以继续编辑。';
+      webInput.value = `请帮我审阅以下完整技术方案选段，指出潜在的并发与幂等漏洞：\n\n「[长文本完整注入示意 · 第 1 段] 在分布式支付与异步通知链路中，幂等性（Idempotency）是指同一笔业务请求被执行一次与重复执行多次，对系统状态产生的副作用完全一致……\n[第 2 段] 当收单网关向渠道发起扣款请求遭遇 ReadTimeout 时，本地事务不应直接回滚幂等记录，而应将状态置为 UNKNOWN 并锁定该幂等键，交由异步反查任务推进最终态……\n[第 3 段 · 完整保留至末尾无截断] 若反查确认未扣款再允许原单重试。」\n\n我的补充问题是：这套三态状态机在高并发超时场景下会有死锁风险吗？`;
+    }
+
+    function startBlankNewChat() {
+      document.getElementById('chatgpt-webview').style.display = 'flex';
+      document.getElementById('settings-view').classList.remove('visible');
+      document.getElementById('task-menu-popover').classList.remove('visible');
+      state.taskMenuOpen = false;
+      document.getElementById('task-overflow-btn').setAttribute('aria-expanded', 'false');
+      const task = createDemoTask('blank', '新对话');
+      renderChatContent('blank', task.id);
+      document.getElementById('no-selection-bar').classList.add('visible');
+      document.getElementById('feedback-text').textContent = '已新建空白网页对话 · 可直接输入问题或运行不依赖选区的预设';
+    }
+
+    function runNoSelectionPreset(type) {
+      document.getElementById('nosel-chip-current').classList.toggle('active', type === 'current');
+      document.getElementById('nosel-chip-todo').classList.toggle('active', type === 'todo');
+      document.getElementById('nosel-chip-blank').classList.toggle('active', type === 'blank');
+
+      if (type === 'current') {
+        renderChatContent(state.currentMode, state.activeTaskId);
+        document.getElementById('no-selection-bar').classList.add('visible');
+        document.getElementById('feedback-text').textContent = '已回到当前任务；可以新建对话或运行快捷预设。';
+      } else if (type === 'todo') {
+        renderChatContent('todo');
+        document.getElementById('no-selection-bar').classList.add('visible');
+        document.getElementById('feedback-text').textContent = '无选区运行预设「整理今天待办」：无需先选中文字即可发起查询';
+      } else {
+        startBlankNewChat();
+        document.getElementById('no-selection-bar').classList.add('visible');
+        document.getElementById('feedback-text').textContent = '已进入空白网页对话 · 可直接在下方输入任何问题';
+      }
+    }
+
+    function handleWebpageSend() {
+      const input = document.getElementById('webpage-input');
+      const text = input.value.trim();
+      if (!text) return;
+      const task = demoTasks.find(t => t.id === state.activeTaskId);
+      document.querySelector('#webpage-chat-body .edit-first-empty-stage')?.remove();
+      const message = document.createElement('div');
+      message.className = 'chat-user-bubble';
+      message.textContent = text;
+      document.getElementById('webpage-chat-body').append(message);
+      input.value = '';
+      task.status = 'done';
+      saveCurrentTaskView();
+      renderTaskNavigation();
+      document.getElementById('feedback-text').textContent = '发送交互示意：实际产品由网页生成回答。';
+    }
+
+    const presetConfigs = {
+      ask: {
+        name: '问 AI',
+        mode: 'edit',
+        tpl: '请结合上下文，帮我分析以下选中内容：\n\n「{{selection}}」\n\n我的问题是：'
+      },
+      explain: {
+        name: '解释',
+        mode: 'direct',
+        tpl: '请用通俗易懂的语言解释以下概念，并给出一个实际开发中的例子：\n\n「{{selection}}」'
+      },
+      summary: {
+        name: '总结',
+        mode: 'direct',
+        tpl: '请提炼以下内容的核心结论与执行要点（不超过 3 条）：\n\n「{{selection}}」'
+      },
+      translate: {
+        name: '翻译',
+        mode: 'direct',
+        tpl: '请将以下内容中英互译，保持专业自然的技术表达：\n\n「{{selection}}」'
+      },
+      todo: {
+        name: '整理今天待办',
+        mode: 'direct',
+        tpl: '请汇总我今天待处理的研发、评审与沟通事项，按优先级排列（无需选中文字即可运行）。'
+      }
+    };
+
+    function selectPresetConfig(key) {
+      state.presetConfigSelected = key;
+      ['ask', 'explain', 'summary', 'translate', 'todo'].forEach(k => {
+        const item = document.getElementById('preset-item-' + k);
+        if (item) item.classList.toggle('active', k === key);
+      });
+      const cfg = presetConfigs[key];
+      document.getElementById('cfg-preset-name').value = cfg.name;
+      document.getElementById('cfg-prompt-tpl').value = cfg.tpl;
+      setPresetSendMode(cfg.mode);
+    }
+
+    function setPresetSendMode(mode) {
+      state.presetSendMode = mode;
+      document.getElementById('seg-edit-first').classList.toggle('active', mode === 'edit');
+      document.getElementById('seg-direct-send').classList.toggle('active', mode === 'direct');
+      document.getElementById('seg-edit-first').setAttribute('aria-pressed', String(mode === 'edit'));
+      document.getElementById('seg-direct-send').setAttribute('aria-pressed', String(mode === 'direct'));
+    }
+
+    function runPreset(key) {
+      const preset = presetConfigs[key];
+      const selection = document.getElementById('source-selection').textContent.trim();
+      const prompt = preset.tpl.replaceAll('{{selection}}', selection);
+      switchScenario(preset.mode === 'edit' ? 2 : 3);
+      const mode = preset.mode === 'edit' ? 'ask-edit' : key === 'translate' ? 'translate' : 'explain';
+      const task = createDemoTask(mode, preset.name);
+      renderChatContent(mode, task.id);
+      if (preset.mode === 'edit') document.getElementById('webpage-input').value = prompt;
+      else document.querySelector('#webpage-chat-body .chat-user-bubble').textContent = prompt;
+      updatePopclipButtons('pop-btn-' + key);
+    }
+
+    function savePresetConfig() {
+      const key = state.presetConfigSelected;
+      const name = document.getElementById('cfg-preset-name').value.trim();
+      if (!name) {
+        document.getElementById('cfg-preset-name').focus();
+        return;
+      }
+      presetConfigs[key] = {
+        name,
+        mode: state.presetSendMode,
+        tpl: document.getElementById('cfg-prompt-tpl').value
+      };
+      const item = document.getElementById('preset-item-' + key);
+      item.firstElementChild.textContent = name;
+      item.lastElementChild.textContent = state.presetSendMode === 'edit' ? '先编辑' : '直接发';
+      const action = document.getElementById('pop-btn-' + key);
+      if (action) action.textContent = name;
+      document.getElementById('feedback-text').textContent = '预设已保存在本页演示中，刷新后恢复默认。';
+    }
+
+    // Prototype controls are keyboard-operable too.
+    document.querySelectorAll('.task-item, .preset-list-item, .popclip-more-item, .artboard-card, .menubar-hotkey-pill, .selected-text-block').forEach(el => {
+      el.setAttribute('role', 'button');
+      el.setAttribute('tabindex', '0');
+      el.addEventListener('keydown', event => {
+        if ((event.key === 'Enter' || event.key === ' ') && event.target === el) {
+          event.preventDefault();
+          el.click();
+        }
+      });
+    });
+    new ResizeObserver(layoutTaskTabs).observe(document.querySelector('.shell-left'));
+    document.getElementById('task-tabs').addEventListener('keydown', event => {
+      const tabs = [...document.querySelectorAll('.task-tab:not([hidden])')];
+      const index = tabs.indexOf(document.activeElement);
+      if (index < 0) return;
+      let next;
+      if (event.key === 'ArrowRight') next = (index + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') next = (index - 1 + tabs.length) % tabs.length;
+      else if (event.key === 'Home') next = 0;
+      else if (event.key === 'End') next = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      selectTaskFromMenu(tabs[next].dataset.taskId);
+    });
+    document.addEventListener('click', event => {
+      if (!event.target.closest('#task-menu-popover, #task-overflow-btn')) closeTaskMenu();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && state.taskMenuOpen) {
+        closeTaskMenu();
+        document.getElementById('task-overflow-btn').focus();
+      }
+    });
+
+    // Initialize default view (Scenario 1)
+    switchScenario(1);
+    document.fonts.ready.then(layoutTaskTabs);
+  </script>
+</body>
+</html>

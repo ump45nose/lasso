@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Trash2, Check } from 'lucide-react';
+import { ExecutionFields } from './ExecutionFields';
+import { targetLabels } from '../shared/contracts';
 import type { Preset } from '../shared/contracts';
 export function PresetSettings({ presets }: { presets: Preset[] }) {
   const [items, setItems] = useState(() => presets.map(p => ({ ...p })));
@@ -27,8 +29,8 @@ export function PresetSettings({ presets }: { presets: Preset[] }) {
         setItems([...items, p]); setSelected(p.id); setMessage('');
       }}><Plus size={14} /> 新建</button>
     </div>
-    {preset ? <div className="preset-form">
-      <div className="preset-heading"><span className="eyebrow">ChatGPT 网页</span><div className="preset-tools">
+    {preset ? <div className="preset-form" key={preset.id}>
+      <div className="preset-heading"><span className="eyebrow">{targetLabels[preset.target]}</span><div className="preset-tools">
         <button title="前移" aria-label="前移预设" disabled={index === 0} onClick={() => move(-1)}><ArrowUp size={15} /></button>
         <button title="后移" aria-label="后移预设" disabled={index === items.length - 1} onClick={() => move(1)}><ArrowDown size={15} /></button>
         <button title="删除" aria-label="删除预设" onClick={() => { const rest = items.filter(p => p.id !== selected); setItems(rest); setSelected(rest[0]?.id || ''); setMessage(''); }}><Trash2 size={15} /></button>
@@ -38,9 +40,11 @@ export function PresetSettings({ presets }: { presets: Preset[] }) {
       <label htmlFor="preset-template">提示词</label>
       <textarea id="preset-template" rows={7} value={preset.template} onChange={e => update({ template: e.target.value })} spellCheck={false} />
       <p className="hint"><code>{'{{selection}}'}</code> 代表选中文字；没有占位符时，选中文字附在末尾。</p>
+      <label htmlFor="preset-target">目标</label><select id="preset-target" value={preset.target} onChange={e => update({ target: e.target.value as Preset['target'], model: '', effort: '' })}>{Object.entries(targetLabels).map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select>
+      <ExecutionFields key={preset.id} target={preset.target} profile={preset} update={update} />
       <label htmlFor="preset-mode">执行方式</label>
-      <select id="preset-mode" value={preset.mode} onChange={e => update({ mode: e.target.value as Preset['mode'] })}><option value="edit">先填入，在网页里编辑</option><option value="send">填入后直接发送</option></select>
-      <label className="check-label"><input type="checkbox" checked={preset.needsSelection} onChange={e => update({ needsSelection: e.target.checked })} /> 必须有选中文字</label>
+      <select id="preset-mode" value={preset.mode} onChange={e => update({ mode: e.target.value as Preset['mode'] })}><option value="edit">先填入，再编辑</option><option value="send">填入后直接发送</option></select>
+      <label className="check-label"><input type="checkbox" checked={preset.needsSelection} onChange={e => update({ needsSelection: e.target.checked })} /> 需要内容（选中文字或图片）</label>
       <label className="check-label"><input type="checkbox" checked={preset.enabled} onChange={e => update({ enabled: e.target.checked })} /> 启用这个预设</label>
     </div> : <p className="description">新建一个预设，定义常用的提问方式。</p>}
     {error && <p className="error" role="alert">{error}</p>}

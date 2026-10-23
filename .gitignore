@@ -2,3 +2,15 @@ node_modules/
 dist/
 .DS_Store
 *.log
+release/
+*.tsbuildinfo
+coverage/
+.cache/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
