@@ -14,6 +14,7 @@ export class CaptureManager {
   private state: ScreenshotState | null=null;
   private image: NativeImage | null=null;
   private bounds: CaptureRect={x:0,y:0,width:1,height:1};
+  private displayId: number | null=null;
   private windows: WindowRect[]=[];
   private fixed: RegionCandidate[]=[];
   private elements: RegionCandidate[]=[];
@@ -36,8 +37,12 @@ export class CaptureManager {
     ipcMain.on('screenshot:hover',(e,x:number,y:number)=>{assert(e);if(Number.isFinite(x)&&Number.isFinite(y))this.hover(x,y);});
     ipcMain.handle('screenshot:select',(e,r:CaptureRect)=>{assert(e);if(!r||![r.x,r.y,r.width,r.height].every(Number.isFinite))throw Error('无效的选区');const rect=clip(r,{x:0,y:0,width:this.bounds.width,height:this.bounds.height});if(rect&&this.state){this.state.selection=rect;this.state.phase='result';this.publish();}});
     ipcMain.handle('screenshot:action',async(e,a:string)=>{assert(e);try{await this.action(a);return {error:null};}catch(error){return {error:(error as Error).message};}});
-    screen.on('display-removed',()=>this.cancel());
-    screen.on('display-metrics-changed',()=>this.cancel());
+    screen.on('display-removed',(_event,display)=>{if(display.id===this.displayId)this.cancel();});
+    screen.on('display-metrics-changed',(_event,display,metrics)=>{
+      // Showing a capture window can change Dock/menu-bar workArea without
+      // changing captured pixels. Only invalidate the active display's geometry.
+      if(display.id===this.displayId&&metrics.some(metric=>metric==='bounds'||metric==='scaleFactor'||metric==='rotation'))this.cancel();
+    });
   }
   get active(){return this.busy||Boolean(this.win);}
   async start() {
@@ -55,6 +60,7 @@ export class CaptureManager {
         }
       }
       const display=screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+      this.displayId=display.id;
       this.before();
       await new Promise<void>(resolve=>setTimeout(resolve,90));
       if(this.disposed||epoch!==this.epoch)return;
@@ -95,7 +101,7 @@ export class CaptureManager {
       worker.on('error',error=>{console.warn('[screenshot] region worker',error.message);this.colorBusy=false;});
       worker.postMessage({type:'init',bytes:bitmap,width:size.width,height:size.height});
       this.detectScale={x:1/sx,y:1/sy};
-    } catch(error){this.cancel();throw error;}
+    } catch(error){const canceled=this.disposed||epoch!==this.epoch;this.cancel();if(!canceled)throw error;}
     finally{this.busy=false;}
   }
   private detectScale={x:1,y:1};
@@ -104,7 +110,10 @@ export class CaptureManager {
   private hover(x:number,y:number){
     if(!this.state||this.state.phase!=='selecting')return;
     if(Math.hypot(x-this.hoverPoint.x,y-this.hoverPoint.y)<5)return;
-    this.hoverPoint={x,y};this.pending={x,y};this.seq++;this.colors=[];this.elements=[];this.updateCandidates();
+    this.hoverPoint={x,y};this.pending={x,y};this.seq++;
+    // Keep still-hit regions until their replacement is ready, rather than
+    // briefly flashing the whole window on every hover query.
+    this.colors=this.colors.filter(r=>contains(r,x,y));this.elements=this.elements.filter(r=>contains(r,x,y));this.updateCandidates();
     this.scheduleHover();
   }
   private scheduleHover(){if(this.hoverTimer)return;this.hoverTimer=setTimeout(()=>{this.hoverTimer=null;void this.queryHover();},110);}
@@ -139,7 +148,7 @@ export class CaptureManager {
     else if(a==='image'){await this.receive(image);this.cancel();}
     else throw Error('不支持的截图操作');
   }
-  private release(){this.epoch++;this.seq++;this.state=null;this.image=null;this.fixed=[];this.windows=[];this.colors=[];this.edges=[];this.elements=[];this.pending=null;this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;this.win=null;this.after();}
+  private release(){this.epoch++;this.seq++;this.state=null;this.image=null;this.displayId=null;this.fixed=[];this.windows=[];this.colors=[];this.edges=[];this.elements=[];this.pending=null;this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;this.win=null;this.after();}
   cancel(){const win=this.win;this.release();if(win&&!win.isDestroyed())win.destroy();}
   dispose(){this.disposed=true;this.cancel();for(const name of ['screenshot:state','screenshot:select','screenshot:action'])ipcMain.removeHandler(name);ipcMain.removeAllListeners('screenshot:hover');}
 }
