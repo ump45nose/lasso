@@ -57,7 +57,7 @@ function App() {
       </motion.div></AnimatePresence></main>
       <AnimatePresence initial={false}>{state.delivery && <motion.div key="delivery" className="l-foot-wrap" {...collapse}><DeliveryRow delivery={state.delivery} /></motion.div>}</AnimatePresence>
     </motion.div>}</AnimatePresence>
-    <AnimatePresence initial={false}>{state.notice && <motion.div key="notice" className="l-foot-wrap" {...collapse}><NoticeRow message={state.notice} /></motion.div>}</AnimatePresence>
+    <AnimatePresence initial={false}>{(state.notice || state.captureEfficiency.phase !== 'idle') && <motion.div key="notice" className="l-foot-wrap" {...collapse}><NoticeRow message={state.notice} capture={state.captureEfficiency} /></motion.div>}</AnimatePresence>
     <AnimatePresence>{palette.scope && <Palette key={palette.scope} state={state} scope={palette.scope} backdrop={palette.backdrop} />}</AnimatePresence>
   </div>;
 }

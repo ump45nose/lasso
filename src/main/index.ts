@@ -18,6 +18,7 @@ import { TaskManager } from './tasks';
 import { readPresets, writePresets, composePrompt } from './presets';
 import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
+import type { CaptureDelay, EfficiencyCaptureMode } from '../shared/capture-efficiency';
 import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope } from '../shared/contracts';
 
 app.setName('Lasso');
@@ -52,6 +53,7 @@ let smallBounds: Rectangle | null = null;
 let blurTimer: ReturnType<typeof setTimeout>;
 let quitting = false;
 let nativeDialogs = 0;
+let stopCaptureEfficiency: (()=>void) | undefined;
 /** The command palette hides native pages; its frozen page snapshot stays out of ShellState. */
 let palette: PaletteEvent | null = null;
 let state: Omit<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'title' | 'hostname' | 'loading' | 'pageError' | 'delivery' | 'activeTarget'>;
@@ -65,7 +67,7 @@ function layout() {
   if (!win || win.isDestroyed() || !tasks) return;
   const [width, height] = win.getContentSize();
   // Footer rows sit below the page: the app notice, then the active task's delivery progress.
-  const rows = (state.notice ? 1 : 0) + (tasks.snapshot().delivery ? 1 : 0);
+  const rows = (state.notice || state.captureEfficiency.phase!=='idle' ? 1 : 0) + (tasks.snapshot().delivery ? 1 : 0);
   tasks.layout({ x: 0, y: HEADER_HEIGHT, width, height: Math.max(0, height - HEADER_HEIGHT - rows * FOOTER_ROW) }, !state.settingsOpen && !state.inputOpen && !palette);
 }
 async function openPalette(scope: PaletteScope) {
@@ -177,14 +179,21 @@ function selectTask(id: string) {
   tasks.select(id); layout(); showWindow(); publish();
 }
 function updateTray() {
+  const capturePending=Boolean(screenshots&&screenshots.efficiency.state.phase!=='idle');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开小窗', click: showWindow },
     { label: `打开 ${targetLabels[state.settings.lastTarget]}`, click: () => openChat() },
     { label: `贴图（${screenshots?.pins.size || 0}）`, submenu: screenshots?.pins.trayItems() || [] },
     { label: '新任务…', click: () => void openPalette('new') },
     { label: '图片生成…', click: () => { void media.show().catch(error => { state.notice = (error as Error).message; publish(); }); } },
-    { label: captureModeLabels.area, accelerator: state.settings.captureShortcuts.area || undefined, click: () => void startScreenshot('area') },
-    { label: '更多截图方式', submenu: captureModes.filter(mode => mode !== 'area').map(mode => ({ label: captureModeLabels[mode], accelerator: state.settings.captureShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })) },
+    { label: captureModeLabels.area, enabled:!capturePending, accelerator: state.settings.captureShortcuts.area || undefined, click: () => void startScreenshot('area') },
+    { label: '更多截图方式', submenu: [
+      ...captureModes.filter(mode => mode !== 'area').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.captureShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
+      {type:'separator'},
+      {label:'重截上次截图区域',enabled:!capturePending,click:()=>void startScreenshot('repeat')},
+      ...([3,5,10] as const).map(delay=>({label:`${delay}秒延时截图`,enabled:!screenshots?.active,click:()=>void startScreenshot('area',delay)})),
+      ...(capturePending?[{label:'取消延时截图',click:()=>screenshots.efficiency.cancel()}]:[])
+    ] },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
     { label: '运行预设…', click: () => void openPalette('all') },
     { label: '暂停划词', type: 'checkbox', checked: !state.settings.selectionEnabled, click: () => { const result = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback }); if (result.error) dialog.showErrorBox('未能保存划词设置', result.error); } },
@@ -201,9 +210,15 @@ function registerShortcut(shortcut: string): string | null {
     return `${shortcut} 已被占用，请换一组快捷键。`;
   } catch { return '快捷键格式无效，例如 Control+Option+Space。'; }
 }
-async function startScreenshot(mode: CaptureMode) {
+async function startScreenshot(mode: EfficiencyCaptureMode,delay:CaptureDelay=0) {
+  if(screenshots.efficiency.state.phase!=='idle')return;
+  if(screenshots.active){screenshots.focus();return;}
   closePalette(false); state.notice = null; layout(); publish();
-  try { await screenshots.start(mode); } catch(error) {
+  try {
+    if(nativeDialogs)throw Error('请先关闭文件选择窗口');
+    const result=await screenshots.efficiency.start(mode,delay);
+    if('error' in result)throw Error(result.error);
+  } catch(error) {
     console.warn('[screenshot]', (error as Error).message);
     state.notice = '截图未能启动：' + (error as Error).message; layout(); showWindow(); publish();
   }
@@ -421,7 +436,8 @@ function installIPC() {
       default: throw new Error('不支持的窗口操作');
     }
   });
-  ipcMain.handle('shell:screenshot', async (event, mode: CaptureMode) => { assertLocal(event); if (captureModes.includes(mode)) await startScreenshot(mode); });
+  ipcMain.handle('shell:screenshot', async (event, mode: EfficiencyCaptureMode,delay:CaptureDelay=0) => { assertLocal(event); if ((mode==='repeat'||captureModes.includes(mode))&&[0,3,5,10].includes(delay)) await startScreenshot(mode,delay); });
+  ipcMain.handle('shell:screenshot-cancel',event=>{assertLocal(event);screenshots.efficiency.cancel();});
   ipcMain.handle('shell:capture-shortcut', (event, mode:CaptureMode, shortcut:string) => {
     assertLocal(event);
     if(!captureModes.includes(mode))return {error:'未知的截图方式'};
@@ -465,7 +481,8 @@ async function boot() {
   state = {
     pinned: false, expanded: false, settingsOpen: false, inputImage: null, inputText: null, inputOpen: false,
     shortcutError: null, notice: null, settings: readSettings(settingsPath),
-    presets: readPresets(presetsPath), capture: { status: 'paused', message: '划词未启动' }, selection: null
+    presets: readPresets(presetsPath), capture: { status: 'paused', message: '划词未启动' }, selection: null,
+    captureEfficiency:{phase:'idle',mode:null,remaining:0,hasLastArea:false,error:null}
   };
   const cursor = screen.getCursorScreenPoint();
   win = new BrowserWindow({
@@ -559,6 +576,14 @@ async function boot() {
     const size = image.getSize();
     await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
   }, () => state.settings);
+  stopCaptureEfficiency=screenshots.efficiency.subscribe(next=>{
+    const starting=next.phase==='countdown'&&state.captureEfficiency.phase!=='countdown';
+    state.captureEfficiency=next;
+    if(next.error)state.notice=next.error;
+    layout();updateTray();publish();
+    if(starting){actionBar.hide();motion.show(true);}
+    if(next.error)showWindow();
+  });
   for (const mode of captureModes) {
     const error = registerCaptureShortcut(mode, state.settings.captureShortcuts[mode]);
     if (error) console.warn('[screenshot]', mode, error);
@@ -575,7 +600,7 @@ else {
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
   app.on('before-quit', () => { quitting = true; });
-  app.on('will-quit', () => { media?.dispose(); screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('will-quit', () => { stopCaptureEfficiency?.();media?.dispose(); screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));
     quitting = true;

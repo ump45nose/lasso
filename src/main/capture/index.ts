@@ -14,7 +14,10 @@ import { validateAnnotations, type PinnedDocument } from './document';
 import { PinManager } from './pins';
 import { ScrollSession, type ScrollReply } from './scroll-session';
 import { defaultLocalImageCopyPath, saveLocalImageCopy, type LocalImageSource } from './local-images';
+import { CaptureEfficiencyControl, CaptureReselectRequiredError, sameCaptureDisplay } from './efficiency-control';
+import type { CaptureDisplayBinding, SuccessfulCaptureArea } from '../../shared/capture-efficiency';
 type WindowRect = CaptureRect & { pid: number; id: number };
+const bindDisplay=(display:Electron.Display):CaptureDisplayBinding=>({id:display.id,bounds:{...display.bounds},scaleFactor:display.scaleFactor,rotation:display.rotation});
 const run=promisify(execFile);
 /** Shadow margins of a `screencapture -l` image, read from where the window's opaque pixels begin on its middle row and column. */
 function opaqueInset(image:NativeImage){
@@ -32,6 +35,7 @@ export class CaptureManager {
   private image: NativeImage | null=null;
   private bounds: CaptureRect={x:0,y:0,width:1,height:1};
   private displayId: number | null=null;
+  private captureDisplay: CaptureDisplayBinding | null=null;
   private windows: WindowRect[]=[];
   private fixed: RegionCandidate[]=[];
   private elements: RegionCandidate[]=[];
@@ -58,6 +62,13 @@ export class CaptureManager {
   private scrollFinishing=false;
   private scrollEditing=false;
   readonly pins: PinManager;
+  readonly efficiency=new CaptureEfficiencyControl({
+    displays:()=>screen.getAllDisplays().map(bindDisplay),
+    capture:async request=>{
+      await this.start(request.mode==='repeat'?'area':request.mode,request);
+      return request.signal.aborted||!this.win?null:{};
+    }
+  });
   private displayRemoved=(_event:Electron.Event,display:Electron.Display)=>{if(display.id===this.displayId)this.displayChanged();};
   private displayMetrics=(_event:Electron.Event,display:Electron.Display,metrics:string[])=>{if(display.id===this.displayId&&metrics.some(metric=>['bounds','scaleFactor','rotation'].includes(metric)))this.displayChanged();};
   private displayChanged(){
@@ -89,27 +100,37 @@ export class CaptureManager {
     screen.on('display-removed',this.displayRemoved);
     screen.on('display-metrics-changed',this.displayMetrics);
   }
-  get active(){return this.busy||Boolean(this.win);}
-  async start(mode:CaptureMode='area') {
-    if(this.disposed)return;
+  get active(){return this.busy||Boolean(this.win)||this.efficiency.state.phase!=='idle';}
+  focus(){if(this.win&&!this.win.isDestroyed()){this.win.show();this.win.focus();}}
+  private assertCaptureDisplay(){if(!this.captureDisplay||!screen.getAllDisplays().some(display=>sameCaptureDisplay(this.captureDisplay!,bindDisplay(display))))throw new CaptureReselectRequiredError();}
+  async start(mode:CaptureMode='area',request?:{area?:SuccessfulCaptureArea;signal:AbortSignal}) {
+    if(this.disposed||request?.signal.aborted)return;
     if(this.win){this.win.show();this.win.focus();return;}
     if(this.busy)return;
     this.busy=true;
     const epoch=++this.epoch;
+    const abort=()=>{if(epoch===this.epoch)this.cancel(true);};
+    request?.signal.addEventListener('abort',abort,{once:true});
     try {
       if(systemPreferences.getMediaAccessStatus('screen')!=='granted') {
         if(!await this.ax.requestScreen()) {
+          if(request?.signal.aborted||epoch!==this.epoch)return;
           const {response}=await dialog.showMessageBox({type:'info',message:'允许 Lasso 录制屏幕以截图',detail:'开启屏幕录制权限后，再从菜单栏选择「截图」。剪贴板图片和划词仍可使用。',buttons:['打开系统设置','取消'],cancelId:1});
           if(response===0)await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
           return;
         }
       }
-      const display=screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+      if(request?.signal.aborted||epoch!==this.epoch)return;
+      const display=request?.area?screen.getAllDisplays().find(display=>display.id===request.area!.display.id):screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+      if(!display||(request?.area&&!sameCaptureDisplay(request.area.display,bindDisplay(display))))throw new CaptureReselectRequiredError();
+      this.captureDisplay=bindDisplay(display);
       this.displayId=display.id;
       this.before();
       await new Promise<void>(resolve=>setTimeout(resolve,90));
       if(this.disposed||epoch!==this.epoch)return;
       const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:Math.round(display.bounds.width*display.scaleFactor),height:Math.round(display.bounds.height*display.scaleFactor)},fetchWindowIcons:false});
+      if(this.disposed||epoch!==this.epoch)return;
+      this.assertCaptureDisplay();
       const source=sources.find(s=>s.display_id===String(display.id)||s.id.startsWith('screen:'+display.id+':'));
       if(!source||source.thumbnail.isEmpty())console.warn('[screenshot] sources',JSON.stringify({display:display.id,sources:sources.map(s=>({id:s.id,display:s.display_id,size:s.thumbnail.getSize(),empty:s.thumbnail.isEmpty()}))}));
       if(!source||source.thumbnail.isEmpty())throw Error('当前屏幕暂时无法截图，请确认桌面已解锁后重试。');
@@ -126,7 +147,8 @@ export class CaptureManager {
       const windows=this.windows.map(w=>({id:w.id,x:w.x-this.bounds.x,y:w.y-this.bounds.y,width:w.width,height:w.height})).filter(w=>clip(w,{x:0,y:0,width:this.bounds.width,height:this.bounds.height}));
       // The frozen screen is a display-only backdrop; the editing session receives only the pixels it captures.
       this.state={id,editId:randomUUID(),image:'',backdrop:this.image.toDataURL(),width:this.bounds.width,height:this.bounds.height,pixelWidth:pixels.width,pixelHeight:pixels.height,candidates:this.fixed,windows,mode:mode==='window'?'window':'area',phase:'selecting',selection:null,status:'',origin:'screen'};
-      if(mode==='screen')this.select({x:0,y:0,width:this.bounds.width,height:this.bounds.height});
+      if(request?.area)this.select(request.area.rect);
+      else if(mode==='screen')this.select({x:0,y:0,width:this.bounds.width,height:this.bounds.height},false);
       else if(mode==='front'){if(windows[0])await this.captureWindow(windows[0].id,false);else this.state.mode='window';}
       if(this.disposed||epoch!==this.epoch)return;
       const win=new BrowserWindow({...display.bounds,frame:false,show:false,transparent:false,backgroundColor:'#242320',resizable:false,movable:false,fullscreenable:false,hasShadow:false,enableLargerThanScreen:true,webPreferences:{preload:join(__dirname,'capture-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
@@ -134,7 +156,8 @@ export class CaptureManager {
       win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());
       win.on('closed',()=>{if(this.win===win)this.release();});
       await win.loadFile(join(__dirname,'renderer/index.html'),{query:{surface:'screenshot'}});
-      if(this.win!==win||this.disposed)return;
+      if(this.win!==win||this.disposed||epoch!==this.epoch)return;
+      this.assertCaptureDisplay();
       win.setBounds(display.bounds);win.show();win.focus();
       if(this.state?.phase!=='selecting')return;
       // Downsample only the detection image. The exported crop keeps source pixels.
@@ -155,20 +178,23 @@ export class CaptureManager {
       worker.on('exit',workerStopped);
       worker.postMessage({type:'init',bytes:bitmap,width:size.width,height:size.height});
       this.detectScale={x:1/sx,y:1/sy};
-    } catch(error){if(this.disposed||epoch!==this.epoch)return;this.cancel();throw error;}
-    finally{this.busy=false;}
+    } catch(error){if(this.disposed||epoch!==this.epoch)return;this.cancel(true);throw error;}
+    finally{request?.signal.removeEventListener('abort',abort);this.busy=false;}
   }
   private detectScale={x:1,y:1};
   /** The backdrop is sent once with the initial state; the edit image only when it changes. */
   private publish(includeImage=false){if(this.state&&this.win&&!this.win.isDestroyed()){const {image,backdrop,...rest}=this.state;this.win.webContents.send('screenshot:changed',includeImage?{...rest,image,backdrop}:rest);}}
   private stopDetection(){this.seq++;this.pending=null;this.fixed=[];this.windows=[];this.elements=[];this.edges=[];this.colors=[];this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;}
-  private select(r:CaptureRect){
+  private select(r:CaptureRect,remember=true){
     if(!r||![r.x,r.y,r.width,r.height].every(Number.isFinite))throw Error('无效的选区');
     if(this.state?.phase!=='selecting'||!this.image)return;
     const s=this.state,rect=clip(r,{x:0,y:0,width:s.width,height:s.height});if(!rect)return;
+    this.assertCaptureDisplay();
+    const display=this.captureDisplay!;
     const pixels=pixelRect(rect,s.width,s.height,s.pixelWidth,s.pixelHeight);
     // The editing session owns only the chosen pixels, never the full desktop.
     this.edit(nativeImage.createFromBuffer(this.image.crop(pixels).toPNG()),rect);
+    if(remember)this.efficiency.rememberSuccessfulArea({display,rect});
   }
   /** Keep the entire control window outside the capture, so the selected region has no overlay to intercept input. */
   private scrollControlBounds(r:CaptureRect):CaptureRect {
@@ -384,11 +410,11 @@ export class CaptureManager {
   private async action(a:string){
     if(a==='cancel'){this.cancel(this.state?.origin==='clipboard');return;}
     if(!this.state)throw Error('截图已结束');
-    if(a==='screen'){if(this.state.phase==='selecting')this.select({x:0,y:0,width:this.state.width,height:this.state.height});return;}
+    if(a==='screen'){if(this.state.phase==='selecting')this.select({x:0,y:0,width:this.state.width,height:this.state.height},false);return;}
     if(a==='reselect'){this.cancel();try{await this.start();}catch(error){dialog.showErrorBox('重新截图未能启动',(error as Error).message);}return;}
     throw Error('不支持的截图操作');
   }
-  private release(restore=false){this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.displayId=null;this.win=null;this.after(restore);}
+  private release(restore=false){this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.after(restore);}
   cancel(restore=false){const win=this.win;this.release(restore);if(win&&!win.isDestroyed())win.destroy();}
-  dispose(){this.disposed=true;this.cancel();this.pins.dispose();screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:state','screenshot:select','screenshot:action','screenshot:recognize','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:window','screenshot:scroll-start','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:hover','screenshot:invalidate-ocr'])ipcMain.removeAllListeners(name);}
+  dispose(){this.disposed=true;this.efficiency.dispose();this.cancel();this.pins.dispose();screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:state','screenshot:select','screenshot:action','screenshot:recognize','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:window','screenshot:scroll-start','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:hover','screenshot:invalidate-ocr'])ipcMain.removeAllListeners(name);}
 }

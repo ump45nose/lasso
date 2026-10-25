@@ -1,4 +1,5 @@
 import type { CaptureMode } from './capture';
+import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
 export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
 /** Native web views are placed below the title bar and above any footer rows. */
 export const HEADER_HEIGHT = 44;
@@ -94,6 +95,7 @@ export interface ShellState {
   settings: Settings;
   presets: Preset[];
   capture: CaptureStatus;
+  captureEfficiency: CaptureEfficiencyState;
   selection: { length: number; sourceApp: string } | null;
   delivery: DeliveryStatus | null;
 }
@@ -105,7 +107,9 @@ export interface DesktopAPI {
   openLink(url: string): Promise<void>;
   getState(): Promise<ShellState>;
   act(action: Action): Promise<void>;
-  screenshot(mode: CaptureMode): Promise<void>;
+  screenshot(mode: EfficiencyCaptureMode, delay?: CaptureDelay): Promise<void>;
+  cancelScreenshot(): Promise<void>;
+  openLocalImage(): Promise<{ error: string | null }>;
   saveCaptureShortcut(mode: CaptureMode, shortcut: string): Promise<{ error: string | null }>;
   saveShortcut(shortcut: string): Promise<{ error: string | null }>;
   saveCapture(options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>): Promise<{ error: string | null }>;
@@ -114,7 +118,6 @@ export interface DesktopAPI {
   newTask(options: LaunchOptions): Promise<void>;
   saveIntegrations(settings: Pick<Settings, 'local' | 'appPrompts'>): Promise<{ error: string | null }>;
   choosePath(kind: 'directory' | 'executable' | 'application'): Promise<{ path: string; bundleId?: string; name?: string } | null>;
-  openLocalImage(): Promise<{ error: string | null }>;
   readImage(taskId?: string): Promise<{ error: string | null }>;
   removeImage(taskId?: string): Promise<void>;
   editImage(imageId: string): Promise<{error:string|null}>;

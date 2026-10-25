@@ -6,6 +6,7 @@ import { Badge, folderName, isLocal, shortcutLabel, targets } from './targets';
 /** Empty window: start a task without a selection. Paste is handled by the shell. */
 export function Launcher({ state, openPermission }: { state: ShellState; openPermission: () => void }) {
   const { settings } = state;
+  const captureBusy = state.captureEfficiency.phase !== 'idle';
   const presets = state.presets.filter(preset => preset.enabled && !preset.needsSelection);
   return <>
     <div className="l-launch">
@@ -32,9 +33,9 @@ export function Launcher({ state, openPermission }: { state: ShellState; openPer
       </section>}
     </div>
     <footer className="l-launch-foot">
-      <button className="l-ghost dashed" onClick={() => void window.desktop.readImage()}><Image size={14} />粘贴图片<span className="l-kbd">⌘V</span></button>
-      <button className="l-ghost" onClick={() => void window.desktop.screenshot('area')}><ScanLine size={14} />截图</button>
-      <button className="l-ghost" onClick={() => void window.desktop.openLocalImage()}><FolderOpen size={14} />打开图片</button>
+      <button className="l-ghost dashed" disabled={captureBusy} onClick={() => void window.desktop.readImage()}><Image size={14} />粘贴图片<span className="l-kbd">⌘V</span></button>
+      <button className="l-ghost" disabled={captureBusy} onClick={() => void window.desktop.screenshot('area')}><ScanLine size={14} />截图</button>
+      <button className="l-ghost" disabled={captureBusy} onClick={() => void window.desktop.openLocalImage()}><FolderOpen size={14} />打开图片</button>
       <span className="l-hint">{settings.shortcut ? <>随时按 <span className="l-kbd">{shortcutLabel(settings.shortcut)}</span> 唤起</> : '从菜单栏随时打开'}</span>
     </footer>
   </>;

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AppWindow, AppWindowMac, Image, Maximize2, Minimize2, Minus, Monitor, Pin, RotateCw, ScanLine, Search, Settings2 } from 'lucide-react';
+import { AppWindow, AppWindowMac, Image, Maximize2, Minimize2, Minus, Monitor, Pin, RotateCw, ScanLine, Search, Settings2, Timer, X } from 'lucide-react';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import { targetLabels } from '../shared/contracts';
 import type { Action, PaletteScope, Preset, ShellState, Target, TaskSummary } from '../shared/contracts';
@@ -30,6 +30,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
   const list = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
   const { selection, settings } = state;
+  const captureBusy = state.captureEfficiency.phase !== 'idle';
   const rule = selection && settings.appPrompts.find(item => item.enabled && item.bundleId === selection.sourceApp);
   const groups = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -52,9 +53,12 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     }
     if (scope === 'all') {
       const rows: Row[] = ([
-        ...captureModes.map(mode => ({ key: 'shot-' + mode, kind: 'cmd' as const, icon: captureIcons[mode], label: captureModeLabels[mode], hint: settings.captureShortcuts[mode] ? shortcutLabel(settings.captureShortcuts[mode]) : undefined, run: () => window.desktop.screenshot(mode) })),
-        { key: 'clip', kind: 'cmd', icon: <Image size={14} />, label: '使用剪贴板图片', run: () => window.desktop.readImage() },
-        { key: 'open-image', kind: 'cmd', icon: <Image size={14} />, label: '打开本地图片…', run: () => window.desktop.openLocalImage() },
+        ...captureModes.map(mode => ({ key: 'shot-' + mode, kind: 'cmd' as const, icon: captureIcons[mode], label: captureModeLabels[mode], disabled: captureBusy, hint: settings.captureShortcuts[mode] ? shortcutLabel(settings.captureShortcuts[mode]) : undefined, run: () => window.desktop.screenshot(mode) })),
+        { key: 'shot-repeat', kind: 'cmd', icon: <ScanLine size={14} />, label: '重截上次截图区域', disabled: captureBusy, run: () => window.desktop.screenshot('repeat') },
+        ...([3, 5, 10] as const).map(delay => ({ key: 'shot-delay-' + delay, kind: 'cmd' as const, icon: <Timer size={14} />, label: `${delay}秒延时截图`, disabled: captureBusy, run: () => window.desktop.screenshot('area', delay) })),
+        ...(captureBusy ? [{ key: 'shot-cancel', kind: 'cmd' as const, icon: <X size={14} />, label: '取消延时截图', disabled: state.captureEfficiency.phase === 'canceling', run: () => window.desktop.cancelScreenshot() }] : []),
+        { key: 'clip', kind: 'cmd', icon: <Image size={14} />, label: '使用剪贴板图片', disabled: captureBusy, run: () => window.desktop.readImage() },
+        { key: 'open-image', kind: 'cmd', icon: <Image size={14} />, label: '打开本地图片…', disabled: captureBusy, run: () => window.desktop.openLocalImage() },
         { key: 'pin', kind: 'cmd', icon: <Pin size={14} />, label: state.pinned ? '取消置顶' : '置顶小窗', run: act('pin'), keepOpen: true },
         ...(state.hasPage ? [{ key: 'reload', kind: 'cmd' as const, icon: <RotateCw size={14} />, label: isLocal(state.activeTarget) ? '恢复 CLI 会话' : '重新加载网页', run: act('reload') }] : []),
         { key: 'expand', kind: 'cmd', icon: state.expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />, label: state.expanded ? '还原小窗' : '放大到工作区', run: act('expand') },
@@ -64,7 +68,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
       if (rows.length) out.push({ title: '图片与窗口', rows });
     }
     return out;
-  }, [query, scope, state.presets, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.captureShortcuts]);
+  }, [query, scope, state.presets, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.captureShortcuts, captureBusy, state.captureEfficiency.phase]);
   const flat = groups.flatMap(group => group.rows).filter(row => !row.disabled);
   const current = flat[Math.min(index, flat.length - 1)];
   useEffect(() => { setIndex(0); setError(''); }, [query, scope]);
