@@ -29,7 +29,7 @@
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | 0 | 记录计划 | 完成 |
-| 1 | 契约与主进程：布局、notice、imageOpen、投递步骤、⌘K、菜单清理 | 未开始 |
+| 1 | 契约与主进程：布局、notice、imageOpen、投递步骤、⌘K、菜单清理 | 完成 |
 | 2 | 样式基础与字体：tokens / app.css、fontsource、协议、CSP、权限 | 未开始 |
 | 3 | 小窗外壳：TitleBar、Launcher、Footer、Palette | 未开始 |
 | 4 | CLI 对话与图片入口 | 未开始 |

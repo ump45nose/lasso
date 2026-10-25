@@ -45,7 +45,7 @@ export class ActionBar {
     });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'action-bar' } });
   }
-  private snapshot(): ActionBarState { return { presets: this.presets.filter(p => p.enabled).slice(0, 4).map(({ id, name }) => ({ id, name })), busy: this.busy }; }
+  private snapshot(): ActionBarState { return { presets: this.presets.filter(p => p.enabled).slice(0, 4).map(({ id, name, target, mode }) => ({ id, name, target, mode })), busy: this.busy }; }
   update(presets: Preset[], busy: boolean) {
     this.presets = presets; this.busy = busy;
     this.window.webContents.send('bar:changed', this.snapshot());

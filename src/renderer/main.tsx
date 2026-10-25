@@ -58,7 +58,7 @@ function App() {
         <div className="controls">
           <IconButton label="截图" onClick={() => act('screenshot')}><ScanLine /></IconButton>
           <IconButton label="使用剪贴板图片" onClick={() => void window.desktop.readImage().then(r => { if (r.error) setCaptureError(r.error); })}><Copy /></IconButton>
-          <IconButton label="运行预设" onClick={() => act('presets')}><Sparkles /></IconButton>
+          <IconButton label="运行预设" onClick={() => void window.desktop.openPalette('all')}><Sparkles /></IconButton>
           {state.hasPage && !state.settingsOpen && <IconButton label={state.activeTarget === 'codex' || state.activeTarget === 'pi' ? '恢复 CLI 会话' : '重新加载网页'} onClick={() => act('reload')}><RotateCw /></IconButton>}
           <IconButton label={state.pinned ? '取消置顶' : '置顶'} pressed={state.pinned} onClick={() => act('pin')}>{state.pinned ? <PinOff /> : <Pin />}</IconButton>
           <IconButton label={state.expanded ? '还原小窗' : '放大到工作区'} pressed={state.expanded} onClick={() => act('expand')}>{state.expanded ? <Minimize2 /> : <Maximize2 />}</IconButton>
@@ -74,7 +74,7 @@ function App() {
         <button title="关闭提示并取消待发送动作" aria-label="关闭提示并取消待发送动作" onClick={() => act('cancel-delivery')}><X size={14} /></button>
       </div>}
     </header>
-    {state.screenshotError && <div className="screenshot-notice" role="alert">截图未能启动：{state.screenshotError}<button className="text-button" aria-label="关闭截图提示" onClick={()=>act('dismiss-screenshot-error')}>关闭</button></div>}
+    {state.notice && <div className="screenshot-notice" role="alert">{state.notice}<button className="text-button" aria-label="关闭提示" onClick={()=>act('dismiss-notice')}>关闭</button></div>}
     <main onPaste={e => { if (!state.settingsOpen && !state.hasPage && [...e.clipboardData.items].some(i => i.type.startsWith('image/'))) { e.preventDefault(); void window.desktop.readImage().then(r => setCaptureError(r.error || '')); } }}>
       {state.settingsOpen ? <section className="settings">
         <button className="text-button back" onClick={() => act('close-settings')}><ArrowLeft size={15} /> 返回{state.hasPage ? '对话' : '小窗'}</button>
@@ -106,7 +106,7 @@ function App() {
         <div className="setting-section"><span className="eyebrow">窗口</span><div className="setting-row"><span>始终置顶</span><button className={'switch ' + (state.pinned ? 'on' : '')} role="switch" aria-checked={state.pinned} aria-label="始终置顶" onClick={() => act('pin')}><span /></button></div><p className="description">未置顶时，点击窗外隐藏；网页继续保留。</p></div>
         <div className="setting-section"><span className="eyebrow">后台任务</span><div className="setting-row"><span>{state.tasks.filter(task => task.residency === 'resident').length} 个驻留</span><span>{state.tasks.filter(task => task.residency === 'released').length} 个已释放</span></div><p className="description">后台闲置 10 分钟后，仅释放已完成、无草稿且可恢复的任务资源。网页按原链接、本地 CLI 按原会话恢复。</p></div>
         <button className="text-button quit" onClick={() => act('quit')}>退出 Lasso</button></>}</div>
-      </section> : state.inputImage ? <ImageEntry image={state.inputImage} presets={state.presets} /> : state.activeTaskId && (state.activeTarget === 'codex' || state.activeTarget === 'pi') ? <AgentChat key={state.activeTaskId} taskId={state.activeTaskId} /> : state.pageError ? <section className="empty error-page"><RotateCw className="hero-symbol" size={40} strokeWidth={1} /><h1>网页还没打开。</h1><p>{state.pageError}</p><button className="primary" onClick={() => act('reload')}>重新加载</button></section> : !state.hasPage ? <section className="empty">
+      </section> : state.inputImage && state.imageOpen ? <ImageEntry image={state.inputImage} presets={state.presets} /> : state.activeTaskId && (state.activeTarget === 'codex' || state.activeTarget === 'pi') ? <AgentChat key={state.activeTaskId} taskId={state.activeTaskId} /> : state.pageError ? <section className="empty error-page"><RotateCw className="hero-symbol" size={40} strokeWidth={1} /><h1>网页还没打开。</h1><p>{state.pageError}</p><button className="primary" onClick={() => act('reload')}>重新加载</button></section> : !state.hasPage ? <section className="empty">
         <BrandMark className="hero-symbol" size={56} />
         <span className="eyebrow">Lasso</span>
         <h1>随时问一句。</h1>

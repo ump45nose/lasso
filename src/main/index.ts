@@ -12,10 +12,9 @@ import { WindowMotion } from './motion';
 import { ActionBar } from './action-bar';
 import { TaskManager } from './tasks';
 import { readPresets, writePresets, composePrompt } from './presets';
-import { targetLabels, taskActivityLabels } from '../shared/contracts';
-import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer } from '../shared/contracts';
+import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
+import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope } from '../shared/contracts';
 
-const HEADER_HEIGHT = 80;
 app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
 app.setPath('userData', join(app.getPath('appData'), 'mac-ai-prompt'));
@@ -37,6 +36,8 @@ let blurTimer: ReturnType<typeof setTimeout>;
 let quitting = false;
 let quitPromptOpen = false;
 let nativeDialogs = 0;
+/** The command palette hides native pages; its frozen page snapshot stays out of ShellState. */
+let palette: PaletteEvent | null = null;
 let state: Omit<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'title' | 'hostname' | 'loading' | 'pageError' | 'delivery' | 'activeTarget'>;
 function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 
@@ -47,8 +48,24 @@ function publish() {
 function layout() {
   if (!win || win.isDestroyed() || !tasks) return;
   const [width, height] = win.getContentSize();
-  const top = HEADER_HEIGHT + (tasks.snapshot().delivery ? 36 : 0) + (state.screenshotError ? 64 : 0);
-  tasks.layout({ x: 0, y: top, width, height: Math.max(0, height - top) }, !state.settingsOpen && !state.inputImage);
+  // Footer rows sit below the page: the app notice, then the active task's delivery progress.
+  const rows = (state.notice ? 1 : 0) + (tasks.snapshot().delivery ? 1 : 0);
+  tasks.layout({ x: 0, y: HEADER_HEIGHT, width, height: Math.max(0, height - HEADER_HEIGHT - rows * FOOTER_ROW) }, !state.settingsOpen && !state.imageOpen && !palette);
+}
+async function openPalette(scope: PaletteScope) {
+  showWindow();
+  // Capture before hiding so the palette sits on the page the user was looking at.
+  const backdrop = palette ? palette.backdrop : await tasks.capture();
+  palette = { scope, backdrop };
+  layout(); win.webContents.focus();
+  win.webContents.send('shell:palette', palette);
+}
+/** Navigation flows close the palette first and lay out the page themselves. */
+function closePalette(restore = true) {
+  if (!palette) return;
+  palette = null;
+  if (!win.isDestroyed()) win.webContents.send('shell:palette', { scope: null, backdrop: null } satisfies PaletteEvent);
+  if (restore) { layout(); if (!state.settingsOpen && !state.imageOpen) tasks.focus(); }
 }
 function showWindow() {
   if (!win) return;
@@ -59,10 +76,11 @@ function showWindow() {
   motion.show();
   app.focus({ steal: true });
   win.focus();
-  if (!state.settingsOpen && !state.inputImage) tasks.focus();
+  if (!state.settingsOpen && !state.imageOpen && !palette) tasks.focus();
 }
 function openSettings() {
   capture?.configure(state.settings);
+  closePalette(false);
   state.settingsOpen = true;
   layout();
   showWindow();
@@ -140,22 +158,22 @@ function secureRemote(contents: WebContents) {
   });
 }
 function openChat(newTask = false) {
-  state.settingsOpen = false;
+  closePalette(false); state.settingsOpen = false; state.imageOpen = false;
   if (newTask) tasks.newChat(); else tasks.openChat();
   layout(); showWindow(); publish();
 }
 function selectTask(id: string) {
-  state.settingsOpen = false;
+  closePalette(false); state.settingsOpen = false; state.imageOpen = false;
   tasks.select(id); layout(); showWindow(); publish();
 }
 function updateTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开小窗', click: showWindow },
     { label: `打开 ${targetLabels[state.settings.lastTarget]}`, click: () => openChat() },
-    { label: '新对话', click: showNewTaskMenu },
+    { label: '新任务…', click: () => void openPalette('new') },
     { label: '截图', accelerator: state.settings.screenshotShortcut || undefined, click: () => void startScreenshot() },
-    { label: '使用剪贴板图片', click: () => { void readImage().catch(error => dialog.showErrorBox('图片未能读取', error.message)); } },
-    { label: '运行预设…', click: showPresetMenu },
+    { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
+    { label: '运行预设…', click: () => void openPalette('all') },
     { label: '暂停划词', type: 'checkbox', checked: !state.settings.selectionEnabled, click: () => { const result = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback }); if (result.error) dialog.showErrorBox('未能保存划词设置', result.error); } },
     { label: '置顶', type: 'checkbox', checked: state.pinned, click: setPin },
     { type: 'separator' },
@@ -166,15 +184,15 @@ function updateTray() {
 function registerShortcut(shortcut: string): string | null {
   if (!shortcut) return null;
   try {
-    if (globalShortcut.register(shortcut, () => { clearSelection(); capture?.current(); showWindow(); if (lastSelection) showPresetMenu(); })) return null;
+    if (globalShortcut.register(shortcut, () => { clearSelection(); capture?.current(); showWindow(); if (lastSelection) void openPalette('all'); })) return null;
     return `${shortcut} 已被占用，请换一组快捷键。`;
   } catch { return '快捷键格式无效，例如 Control+Option+Space。'; }
 }
 async function startScreenshot() {
-  state.screenshotError=null; layout(); publish();
+  closePalette(false); state.notice = null; layout(); publish();
   try { await screenshots.start(); } catch(error) {
     console.warn('[screenshot]', (error as Error).message);
-    state.screenshotError=(error as Error).message;layout();showWindow();publish();
+    state.notice = '截图未能启动：' + (error as Error).message; layout(); showWindow(); publish();
   }
 }
 function registerScreenshotShortcut(shortcut: string): string | null {
@@ -201,19 +219,6 @@ function saveCaptureSettings(options: Pick<Settings, 'selectionEnabled' | 'clipb
   capture.configure(next); updateTray(); publish();
   return { error: null };
 }
-function showPresetMenu() {
-  const selection = lastSelection;
-  Menu.buildFromTemplate([
-    ...state.presets.filter(p => p.enabled).map(p => ({
-      label: `${p.name}${p.mode === 'edit' ? ' · 先编辑' : ''}`,
-      enabled: !p.needsSelection || Boolean(selection),
-      click: () => void runPreset(p.id, selection)
-    })),
-    { type: 'separator' },
-    { label: '临时选择目标', submenu: Object.entries(targetLabels).map(([target, label]) => ({ label, submenu: state.presets.filter(p => p.enabled).map(p => ({ label: `${p.name}${target !== p.target && (p.model || p.effort) ? ' · 跟随目标默认' : ''}`, enabled: !p.needsSelection || Boolean(selection), click: () => void runPreset(p.id, selection, { target: target as Target }) })) })) },
-    { label: '预设设置…', click: openSettings }
-  ]).popup({ window: win });
-}
 async function runPreset(id: string, selection: SelectionContext | null, options: LaunchOptions = {}) {
   const preset = state.presets.find(p => p.id === id && p.enabled);
   if (!preset) return { error: '这个预设已停用或删除' };
@@ -221,7 +226,7 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   if (options.imageId) selection = null;
   if (preset.needsSelection && !selection?.text && !options.imageId) return { error: '请先选中文字' };
   const text = composePrompt(preset, selection, state.settings.appPrompts);
-  actionBar.hide(); capture.suppress(); clearSelection();
+  actionBar.hide(); capture.suppress(); clearSelection(); closePalette(false);
   if (!options.imageId && inputImage) removeImage();
   if (selection && !state.pinned && !state.expanded) {
     win.setBounds(placeNear(selection.anchor, screen.getDisplayNearestPoint(selection.anchor).workArea));
@@ -229,7 +234,7 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   state.settingsOpen = false;
   rememberTarget(options.target || preset.target);
   const result = tasks.runPreset(preset, text, options);
-  if (options.imageId) { inputImage = null; state.inputImage = null; }
+  if (options.imageId) { inputImage = null; state.inputImage = null; state.imageOpen = false; }
   layout(); showWindow(); publish();
   return result;
 }
@@ -252,31 +257,30 @@ function rememberTarget(target: Target) {
   writeSettings(settingsPath, settings); state.settings = settings; updateTray();
 }
 function launchTask(options: LaunchOptions) {
-  state.settingsOpen = false; clearSelection();
+  closePalette(false); state.settingsOpen = false; state.imageOpen = false; clearSelection();
   if (options.target) rememberTarget(options.target);
   tasks.newChat(true, options); layout(); showWindow(); publish();
 }
-function showNewTaskMenu() {
-  nativeDialogs++;
-  Menu.buildFromTemplate([
-    ...Object.entries(targetLabels).map(([target, label]) => ({ label, click: () => launchTask({ target: target as Target }) })),
-    { type: 'separator' as const },
-    ...(['codex', 'pi'] as const).map(target => ({ label: `${targetLabels[target]} · 选择工作目录…`, click: async () => {
-      const choice = await choosePath('directory'); if (choice) launchTask({ target, cwd: choice.path });
-    } }))
-  ]).popup({ window: win, callback: () => { nativeDialogs--; } });
-}
 async function readImage(taskId?: string) {
-  const image = await images.capture();
-  if (taskId) { try { tasks.agentImage(taskId, image); } catch (error) { images.remove(image); throw error; } }
-  else {
-    images.remove(inputImage); inputImage = image; state.inputImage = images.preview(image);
-    clearSelection(); state.settingsOpen = false; layout(); showWindow(); win.webContents.focus(); publish();
+  if (taskId) {
+    const image = await images.capture();
+    try { tasks.agentImage(taskId, image); } catch (error) { images.remove(image); throw error; }
+    return;
   }
+  let image: ImageInput;
+  try { image = await images.capture(); }
+  catch (error) { state.notice = (error as Error).message; layout(); showWindow(); publish(); throw error; }
+  state.notice = null;
+  openImage(image);
+}
+/** A pending image is a temporary tab; selecting a task keeps it until it runs or is removed. */
+function openImage(image: ImageInput) {
+  images.remove(inputImage); inputImage = image; state.inputImage = images.preview(image); state.imageOpen = true;
+  clearSelection(); closePalette(false); state.settingsOpen = false; layout(); showWindow(); win.webContents.focus(); publish();
 }
 function removeImage(taskId?: string) {
   if (taskId) tasks.agentImage(taskId, null);
-  else { images.remove(inputImage); inputImage = null; state.inputImage = null; layout(); publish(); }
+  else { images.remove(inputImage); inputImage = null; state.inputImage = null; state.imageOpen = false; layout(); if (!state.settingsOpen) tasks.focus(); publish(); }
 }
 
 function installIPC() {
@@ -329,25 +333,17 @@ function installIPC() {
   ipcMain.handle('shell:state', event => { assertLocal(event); return snapshot(); });
   ipcMain.handle('shell:task-select', (event, id: string) => { assertLocal(event); selectTask(id); });
   ipcMain.handle('shell:task-close', (event, id: string) => { assertLocal(event); return tasks.close(id); });
-  ipcMain.handle('shell:task-overflow', (event, visibleIds: string[], x: number) => {
-    assertLocal(event);
-    const overflow = tasks.snapshot().tasks.filter(task => !visibleIds.includes(task.id));
-    if (!overflow.length) return;
-    nativeDialogs++;
-    Menu.buildFromTemplate(overflow.map(task => ({
-      label: `${task.title} · ${task.residency === 'released' ? '已释放页面' : task.retainedReason || taskActivityLabels[task.activity]}`,
-      click: () => selectTask(task.id)
-    }))).popup({ window: win, x: Math.round(x), y: 42, callback: () => { nativeDialogs--; } });
-  });
+  ipcMain.handle('shell:palette-open', (event, scope: PaletteScope) => { assertLocal(event); if (['all', 'tasks', 'new'].includes(scope)) return openPalette(scope); });
+  ipcMain.handle('shell:palette-close', event => { assertLocal(event); closePalette(); });
   ipcMain.handle('shell:action', async (event, action: Action) => {
     assertLocal(event);
     switch (action) {
-      case 'dismiss-screenshot-error': state.screenshotError=null;layout();publish();break;
+      case 'dismiss-notice': state.notice = null; layout(); publish(); break;
       case 'screenshot': await startScreenshot(); break;
       case 'open-chat': openChat(); break;
-      case 'new-task': showNewTaskMenu(); break;
       case 'clipboard-image': await readImage(); break;
       case 'dismiss-image': removeImage(); break;
+      case 'show-image': if (inputImage) { closePalette(false); state.settingsOpen = false; state.imageOpen = true; layout(); win.webContents.focus(); publish(); } break;
       case 'retry-delivery': await tasks.retryDelivery(); break;
       case 'pin': setPin(); break;
       case 'expand': expand(); break;
@@ -356,7 +352,6 @@ function installIPC() {
       case 'close-settings': state.settingsOpen = false; layout(); publish(); break;
       case 'reload': await tasks.reload(); break;
       case 'quit': await requestQuit(); break;
-      case 'presets': showPresetMenu(); break;
       case 'refresh-capture': capture.configure(state.settings); break;
       case 'selection-permission':
         systemPreferences.isTrustedAccessibilityClient(true);
@@ -404,8 +399,8 @@ async function boot() {
   presetsPath = join(app.getPath('userData'), 'presets.json');
   images = new Images(join(app.getPath('userData'), 'input-images'));
   state = {
-    pinned: false, expanded: false, settingsOpen: false, inputImage: null,
-    shortcutError: null, screenshotError: null, settings: readSettings(settingsPath),
+    pinned: false, expanded: false, settingsOpen: false, inputImage: null, imageOpen: false,
+    shortcutError: null, notice: null, settings: readSettings(settingsPath),
     presets: readPresets(presetsPath), capture: { status: 'paused', message: '划词未启动' }, selection: null
   };
   const cursor = screen.getCursorScreenPoint();
@@ -421,6 +416,7 @@ async function boot() {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.on('resize', layout);
+  win.on('hide', () => closePalette());
   win.on('close', event => {
     if (!quitting) { event.preventDefault(); motion.hide(); }
     else tasks.dispose();
@@ -465,6 +461,9 @@ async function boot() {
     { role: 'editMenu' },
     { label: '窗口', submenu: [
       { label: '显示小窗', click: showWindow },
+      { label: '指令面板', accelerator: 'Command+K', click: () => { if (palette) closePalette(); else void openPalette('all'); } },
+      { label: '新任务…', accelerator: 'Command+N', click: () => void openPalette('new') },
+      { type: 'separator' },
       { label: '隐藏小窗', accelerator: 'Command+W', click: () => motion.hide() },
       { label: '放大 / 还原', click: expand }
     ] }
@@ -486,8 +485,7 @@ async function boot() {
   }, () => { actionBar.hide(); clearSelection(); });
   actionBar.update(state.presets, false);
   screenshots = new CaptureManager(async image => {
-    const input = images.add(image); images.remove(inputImage); inputImage=input; state.inputImage=images.preview(input);
-    clearSelection(); state.settingsOpen=false; layout(); showWindow(); win.webContents.focus(); publish();
+    openImage(images.add(image));
   }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, () => capture?.suppress());
   const screenshotError = registerScreenshotShortcut(state.settings.screenshotShortcut);
   if (screenshotError) console.warn('[screenshot]', screenshotError);

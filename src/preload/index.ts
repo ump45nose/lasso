@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { DesktopAPI, ShellState, AgentEvent } from '../shared/contracts';
+import type { DesktopAPI, ShellState, AgentEvent, PaletteEvent } from '../shared/contracts';
 const api: DesktopAPI = {
   openLink: url => ipcRenderer.invoke('shell:external', url),
   getState: () => ipcRenderer.invoke('shell:state'),
@@ -29,7 +29,12 @@ const api: DesktopAPI = {
   },
   selectTask: id => ipcRenderer.invoke('shell:task-select', id),
   closeTask: id => ipcRenderer.invoke('shell:task-close', id),
-  taskOverflow: (visibleIds, x) => ipcRenderer.invoke('shell:task-overflow', visibleIds, x),
+  openPalette: scope => ipcRenderer.invoke('shell:palette-open', scope),
+  closePalette: () => ipcRenderer.invoke('shell:palette-close'),
+  onPalette: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, event: PaletteEvent) => callback(event);
+    ipcRenderer.on('shell:palette', listener); return () => ipcRenderer.removeListener('shell:palette', listener);
+  },
   onState: callback => {
     const listener = (_event: Electron.IpcRendererEvent, state: ShellState) => callback(state);
     ipcRenderer.on('shell:changed', listener);

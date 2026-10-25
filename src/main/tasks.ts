@@ -10,7 +10,7 @@ import { revealPage } from './motion';
 import { Images, type ImageInput } from './images';
 import type { PageSnapshot } from './adapters/chatgpt';
 import { isIdleCandidate, IDLE_RELEASE_MS } from './task-policy';
-import type { DeliveryStatus, Preset, ShellState, TaskActivity, TaskSummary, Target, LaunchOptions, Settings, AgentState, AgentAnswer, AgentEvent, ExecutionCatalog } from '../shared/contracts';
+import type { DeliveryStatus, DeliveryStep, Preset, ShellState, TaskActivity, TaskSummary, Target, LaunchOptions, Settings, AgentState, AgentAnswer, AgentEvent, ExecutionCatalog } from '../shared/contracts';
 
 const homes = { chatgpt: 'https://chatgpt.com/', gemini: 'https://gemini.google.com/app' };
 type WebTarget = keyof typeof homes;
@@ -52,6 +52,7 @@ interface Task {
   observed: PageSnapshot | null;
   navigation: number;
   delivery: DeliveryStatus | null;
+  steps: DeliveryStep[];
   pendingText: string;
   controller: AbortController | null;
   popups: Set<BrowserWindow>;
@@ -248,13 +249,20 @@ export class TaskManager {
     }
   }
   focus() { this.active?.view?.webContents.focus(); }
+  /** Snapshot of the visible page, used as the command palette backdrop. */
+  async capture(): Promise<string | null> {
+    const view = this.active?.visible ? this.active.view : null;
+    if (!view || view.webContents.isDestroyed()) return null;
+    const image = await view.webContents.capturePage().catch(() => null);
+    return image && !image.isEmpty() ? 'data:image/jpeg;base64,' + image.toJPEG(82).toString('base64') : null;
+  }
   private makeTask(title: string, preparing: boolean, options: LaunchOptions): Task {
     const target = options.target || this.settings().lastTarget;
     const task: Task = {
       target, agent: null, image: null, preset: null, filled: false,
       id: randomUUID(), title, url: target === 'gemini' ? homes.gemini : homes.chatgpt, view: null, visible: false, emulated: false, adapter: null, loading: true, preparing, error: null,
       activity: 'unknown', hasDraft: false, restoreUrl: null, savedResponseId: null, resumeUrl: null, lastActivityAt: Date.now(), observed: null,
-      navigation: 0, delivery: null, pendingText: '', controller: null, popups: new Set(), retainedReason: null, retryReleaseAt: 0
+      navigation: 0, delivery: null, steps: [], pendingText: '', controller: null, popups: new Set(), retainedReason: null, retryReleaseAt: 0
     };
     return task;
   }
@@ -376,7 +384,7 @@ export class TaskManager {
     signal.throwIfAborted();
     await task.adapter!.waitReady(signal, login => {
       task.preparing = !login;
-      this.delivery(task, { phase: login ? 'login' : 'waiting', message: login ? '请先在网页中登录，登录后继续' : '正在准备新对话…', canCopy: Boolean(task.pendingText) });
+      this.delivery(task, { phase: login ? 'login' : 'waiting', message: login ? '请先在网页中登录，登录后继续' : '正在准备新对话…', canCopy: Boolean(task.pendingText), step: 'open' });
     });
     // ChatGPT may restore a shared homepage draft into a fresh browser page.
     // Clear only this new page before showing it; never edit another task's document.
@@ -400,7 +408,7 @@ export class TaskManager {
   }
   private async restore(task: Task, url: string) {
     const controller = task.controller = new AbortController();
-    task.resumeUrl = url;
+    task.resumeUrl = url; task.steps = [];
     let timedOut = false;
     const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 30_000);
     this.delivery(task, { phase: 'waiting', message: '正在恢复原对话…', canCopy: false });
@@ -420,15 +428,18 @@ export class TaskManager {
       if (this.tasks.has(task.id)) { await this.observe(task); this.notify(); }
     }
   }
-  private delivery(task: Task, value: DeliveryStatus | null) {
+  private delivery(task: Task, value: Omit<DeliveryStatus, 'steps' | 'step'> & { step?: DeliveryStep } | null) {
     if (!this.tasks.has(task.id)) return;
-    task.delivery = value; this.notify();
+    task.delivery = value && { ...value, steps: task.steps, step: value.step && task.steps.includes(value.step) ? value.step : null };
+    this.notify();
   }
   async runPreset(preset: Preset, text: string, options: LaunchOptions = {}): Promise<{ error: string | null }> {
     const task = this.create(preset.name, true, { ...options, target: options.target || preset.target });
     // A temporary target override uses that target's defaults, never another provider's model ID.
     task.preset = task.target === preset.target ? preset : { ...preset, target: task.target, model: '', effort: '' }; task.pendingText = text;
     task.image = options.imageId ? this.images.get(options.imageId) || null : null;
+    // Steps follow deliverWeb's execution order so progress never runs ahead of the page.
+    task.steps = ['open', ...(task.preset.model || task.preset.effort ? ['model' as const] : []), 'fill', ...(task.image ? ['upload' as const] : []), task.preset.mode === 'send' ? 'send' : 'edit'];
     if (task.agent) {
       task.agent.setDraft(text);
       if (task.image) { task.agent.setImage(task.image); task.image = null; }
@@ -442,14 +453,16 @@ export class TaskManager {
   private async deliverWeb(task: Task, fresh: boolean): Promise<{ error: string | null }> {
     const controller = task.controller = new AbortController();
     const text = task.pendingText;
+    let step: DeliveryStep = 'open';
     try {
       if (fresh) {
-        this.delivery(task, { phase: 'waiting', message: '正在打开新对话…', canCopy: Boolean(text) });
+        this.delivery(task, { phase: 'waiting', message: '正在打开新对话…', canCopy: Boolean(text), step });
         await this.prepareNew(task, controller.signal);
       }
       const adapter = task.adapter!;
       if (!task.filled && (task.preset!.model || task.preset!.effort)) {
-        this.delivery(task, { phase: 'waiting', message: '正在应用预设模型与思考强度…', canCopy: Boolean(text) });
+        step = 'model';
+        this.delivery(task, { phase: 'waiting', message: '正在应用预设模型与思考强度…', canCopy: Boolean(text), step });
         if (task.target === 'chatgpt' && task.preset!.effort && !WebProfile.hasEffortPosition('chatgpt', task.preset!)) {
           // Old presets learn native positions on a hidden page, never by
           // sweeping the visible task's slider back and forth.
@@ -459,26 +472,29 @@ export class TaskManager {
         await adapter.applyProfile(task.preset!, controller.signal);
       }
       if (!task.filled) {
-        this.delivery(task, { phase: 'filling', message: '正在完整填入…', canCopy: Boolean(text) });
+        step = 'fill';
+        this.delivery(task, { phase: 'filling', message: `正在完整填入 ${text.length.toLocaleString()} 字…`, canCopy: Boolean(text), step });
         await adapter.fill(text, controller.signal); task.filled = true;
       }
       task.preparing = false; this.notify();
       if (task.image) {
-        this.delivery(task, { phase: 'filling', message: '正在上传图片…', canCopy: Boolean(text) });
+        step = 'upload';
+        this.delivery(task, { phase: 'filling', message: '正在上传图片…', canCopy: Boolean(text), step });
         await adapter.upload(task.image.path, controller.signal);
       }
       if (task.preset!.mode === 'send') {
         await adapter.verifyProfile(task.preset!, controller.signal);
-        this.delivery(task, { phase: 'sending', message: '正在发送…', canCopy: Boolean(text) });
+        step = 'send';
+        this.delivery(task, { phase: 'sending', message: '正在发送…', canCopy: Boolean(text), step });
         await adapter.submit(text, controller.signal);
         this.images.remove(task.image); task.image = null;
       }
       task.pendingText = '';
-      this.delivery(task, { phase: task.preset!.mode === 'send' ? 'sent' : 'editing', message: task.preset!.mode === 'send' ? '已发送，可继续在网页追问' : '已填入，请在网页中编辑并发送', canCopy: false });
+      this.delivery(task, { phase: task.preset!.mode === 'send' ? 'sent' : 'editing', message: task.preset!.mode === 'send' ? '已发送，可继续在网页追问' : '已填入，请在网页中编辑并发送', canCopy: false, step: task.preset!.mode === 'send' ? 'send' : 'edit' });
       return { error: null };
     } catch (error) {
       if (controller.signal.aborted) return { error: null };
-      this.delivery(task, { phase: 'error', message: (error as Error).message, canCopy: Boolean(text) });
+      this.delivery(task, { phase: 'error', message: (error as Error).message, canCopy: Boolean(text), step });
       return { error: (error as Error).message };
     } finally {
       if (task.controller === controller) task.controller = null; task.preparing = false;
@@ -515,7 +531,7 @@ export class TaskManager {
     if (!this.tasks.has(task.id)) return;
     task.controller?.abort();
     if (task.resumeUrl) { void this.restore(task, task.resumeUrl); return; }
-    task.delivery = task.pendingText ? { phase: 'error', message: '已取消待发送动作，原文仍可复制', canCopy: true } : null;
+    this.delivery(task, task.pendingText ? { phase: 'error', message: '已取消待发送动作，原文仍可复制', canCopy: true } : null);
     if (task.view) void this.navigate(task, task.url).catch(() => {});
   }
   private async observe(task: Task): Promise<boolean> {

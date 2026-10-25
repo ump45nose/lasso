@@ -1,4 +1,7 @@
 export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
+/** Native web views are placed below the title bar and above any footer rows. */
+export const HEADER_HEIGHT = 44;
+export const FOOTER_ROW = 48;
 export type LocalTarget = 'codex' | 'pi';
 export const targetLabels: Record<Target, string> = { chatgpt: 'ChatGPT', gemini: 'Gemini', codex: 'Codex', pi: 'Pi' };
 export interface AppPrompt { bundleId: string; name: string; prompt: string; enabled: boolean }
@@ -14,6 +17,8 @@ export interface AgentRequest { id: string; title: string; detail?: string; kind
 export interface AgentAnswer { cancelled?: boolean; confirmed?: boolean; value?: string; answers?: Record<string, string> }
 export interface AgentState { revision: number; effort: string; efforts: string[]; modelsLoading: boolean; controlsBusy: boolean; modelsError: string | null; taskId: string; target: LocalTarget; cwd: string; messages: ChatMessage[]; requests: AgentRequest[]; models: AgentModel[]; model: string; draft: string; draftRevision: number; image: ImagePreview | null; activity: TaskActivity; error: string | null; resident: boolean; status: string }
 export type AgentEvent = { taskId: string; revision: number; patch: Partial<Omit<AgentState, 'messages'>>; messages: ChatMessage[]; order?: string[] };
+export type FontRole = 'display' | 'text' | 'ui' | 'mono';
+export interface ImportedFont { family: string; file: string }
 export interface Settings {
   /** Empty means no global shortcut. */
   shortcut: string;
@@ -23,6 +28,8 @@ export interface Settings {
   clipboardFallback: boolean;
   appPrompts: AppPrompt[];
   local: Record<LocalTarget, LocalConfig>;
+  fonts: Record<FontRole, string>;
+  importedFonts: ImportedFont[];
 }
 export interface Preset extends ExecutionProfile {
   id: string;
@@ -39,10 +46,14 @@ export interface SelectionContext {
   anchor: { x: number; y: number; width: number; height: number };
 }
 export interface CaptureStatus { status: 'active' | 'paused' | 'permission' | 'error'; message: string }
+export type DeliveryStep = 'open' | 'model' | 'fill' | 'upload' | 'send' | 'edit';
 export interface DeliveryStatus {
   phase: 'waiting' | 'login' | 'filling' | 'editing' | 'sending' | 'sent' | 'error';
   message: string;
   canCopy: boolean;
+  /** Planned preset steps; empty for restore and new-chat preparation. */
+  steps: DeliveryStep[];
+  step: DeliveryStep | null;
 }
 export type TaskActivity = 'idle' | 'loading' | 'running' | 'waiting' | 'draft' | 'complete' | 'unknown' | 'error';
 export interface TaskSummary {
@@ -66,20 +77,24 @@ export interface ShellState {
   hasPage: boolean;
   activeTarget: Target | null;
   inputImage: ImagePreview | null;
+  imageOpen: boolean;
   title: string;
   hostname: string;
   loading: boolean;
   pageError: string | null;
   shortcutError: string | null;
-  screenshotError: string | null;
+  /** App-level failure not owned by a task, such as screenshot or clipboard image errors. */
+  notice: string | null;
   settings: Settings;
   presets: Preset[];
   capture: CaptureStatus;
   selection: { length: number; sourceApp: string } | null;
   delivery: DeliveryStatus | null;
 }
-export type Action = 'dismiss-screenshot-error' | 'screenshot' | 'open-chat' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
-  | 'new-task' | 'presets' | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'clipboard-image' | 'dismiss-image' | 'retry-delivery';
+export type Action = 'dismiss-notice' | 'screenshot' | 'open-chat' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
+  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'clipboard-image' | 'dismiss-image' | 'show-image' | 'retry-delivery';
+export type PaletteScope = 'all' | 'tasks' | 'new';
+export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
   openLink(url: string): Promise<void>;
   getState(): Promise<ShellState>;
@@ -106,10 +121,12 @@ export interface DesktopAPI {
   onAgent(callback: (event: AgentEvent) => void): () => void;
   selectTask(id: string): Promise<void>;
   closeTask(id: string): Promise<void>;
-  taskOverflow(visibleIds: string[], x: number): Promise<void>;
+  openPalette(scope: PaletteScope): Promise<void>;
+  closePalette(): Promise<void>;
+  onPalette(callback: (event: PaletteEvent) => void): () => void;
   onState(callback: (state: ShellState) => void): () => void;
 }
-export interface ActionBarState { presets: Pick<Preset, 'id' | 'name'>[]; busy: boolean }
+export interface ActionBarState { presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; busy: boolean }
 export interface ActionBarAPI {
   getState(): Promise<ActionBarState>;
   runPreset(id: string): Promise<void>;

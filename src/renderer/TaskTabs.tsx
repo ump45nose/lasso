@@ -42,8 +42,8 @@ export function TaskTabs({ tasks, activeId }: { tasks: TaskSummary[]; activeId: 
         </div>;
       })}
     </div>
-    {overflow > 0 && <button className="tab-overflow" aria-label={`另外 ${overflow} 个任务`} title="更多任务" onClick={event => void window.desktop.taskOverflow(visible.map(task => task.id), event.currentTarget.getBoundingClientRect().x)}><ChevronDown size={13} /><span>{overflow}</span></button>}
-    <button className="new-task" aria-label="新对话" title="新对话" onClick={() => void window.desktop.act('new-task')}><Plus size={16} /></button>
+    {overflow > 0 && <button className="tab-overflow" aria-label={`另外 ${overflow} 个任务`} title="更多任务" onClick={() => void window.desktop.openPalette('tasks')}><ChevronDown size={13} /><span>{overflow}</span></button>}
+    <button className="new-task" aria-label="新对话" title="新对话" onClick={() => void window.desktop.openPalette('new')}><Plus size={16} /></button>
     <div className="tab-drag-space" />
   </div>;
 }
