@@ -3,9 +3,10 @@ import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
 import { WindowMotion } from './motion';
 import { fitToWorkArea } from './position';
-import type { ActionBarState, Preset, SelectionContext, Settings } from '../shared/contracts';
+import type { ActionBarState, ActionBarTip, Preset, SelectionContext, Settings } from '../shared/contracts';
 
-const HEIGHT = 40;
+// The window is transparent: the 40px capsule sits between two tip bands, with side room for its CSS shadow.
+const BAR = 40, TIP = 36, SIDE = 16, GAP = 10, HEIGHT = TIP * 2 + BAR;
 
 export class ActionBar {
   readonly window: BrowserWindow;
@@ -16,12 +17,13 @@ export class ActionBar {
   private busy = false;
   constructor(private run: (id: string, selection: SelectionContext) => Promise<void>, private settings: () => void) {
     this.window = new BrowserWindow({
-      width: 340, height: HEIGHT, frame: false, show: false, resizable: false, movable: false,
+      width: 340 + SIDE * 2, height: HEIGHT, frame: false, show: false, resizable: false, movable: false,
       focusable: false, skipTaskbar: true, alwaysOnTop: true, acceptFirstMouse: true,
-      backgroundColor: '#141413', roundedCorners: true,
+      transparent: true, hasShadow: false, backgroundColor: '#00000000',
       webPreferences: { preload: join(__dirname, 'action-bar-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
     });
     this.motion = new WindowMotion(this.window);
+    this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'pop-up-menu');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -37,12 +39,13 @@ export class ActionBar {
       Menu.buildFromTemplate([
         ...this.presets.filter(p => p.enabled).slice(4).map(p => ({ label: p.name, enabled: !this.busy, click: () => { if (selection) void this.run(p.id, selection); } })),
         { type: 'separator' }, { label: '预设设置…', click: () => { this.hide(); this.settings(); } }
-      ]).popup({ window: this.window });
+      ]).popup({ window: this.window, callback: () => { if (!this.window.isDestroyed()) this.window.webContents.send('bar:menu-closed'); } });
     });
+    ipcMain.on('bar:hit', (event, inside: boolean) => { check(event); this.window.setIgnoreMouseEvents(!inside, { forward: true }); });
     ipcMain.on('bar:resize', (event, width: number) => {
       check(event);
       if (typeof width === 'number' && Number.isFinite(width) && width > 0) {
-        this.window.setSize(Math.min(900, Math.ceil(width)), HEIGHT);
+        this.window.setSize(Math.min(900, Math.ceil(width)) + SIDE * 2, HEIGHT);
         if (this.selection) this.position(this.selection);
       }
     });
@@ -54,22 +57,32 @@ export class ActionBar {
     this.window.webContents.send('bar:changed', this.snapshot());
     if (!presets.some(p => p.enabled)) this.hide();
   }
-  private position(selection: SelectionContext) {
+  /** Places the capsule above the selection (below when there is no room) and returns the side free for the tip. */
+  private position(selection: SelectionContext): ActionBarTip {
     const a = selection.anchor;
     const area = screen.getDisplayNearestPoint({ x: a.x, y: a.y }).workArea;
-    const [width, height] = this.window.getSize();
-    this.window.setBounds(fitToWorkArea({ x: a.x, y: a.y - height - 8 >= area.y ? a.y - height - 8 : a.y + a.height + 8, width, height }, area));
+    const [width] = this.window.getSize();
+    const above = a.y - BAR - GAP >= area.y;
+    const barY = above ? a.y - BAR - GAP : a.y + a.height + GAP;
+    // Only the capsule has to stay on screen; the transparent tip bands may hang past the work area.
+    const bounds = fitToWorkArea({ x: a.x - SIDE, y: barY - TIP, width, height: HEIGHT }, { ...area, y: area.y - TIP, height: area.height + TIP * 2 });
+    this.window.setBounds(bounds);
+    const top = bounds.y + TIP;
+    return above ? (top - TIP >= area.y ? 'above' : 'below') : (top + BAR + TIP <= area.y + area.height ? 'below' : 'above');
   }
   show(selection: SelectionContext) {
     this.selection = selection;
     if (!this.presets.some(p => p.enabled) || this.busy) return;
-    this.position(selection);
+    const tip = this.position(selection);
+    this.window.setIgnoreMouseEvents(true, { forward: true });
     this.motion.show(true);
+    this.window.webContents.send('bar:enter', tip);
   }
+  /** Hit-tests the capsule only, so a click on the transparent margin still counts as outside. */
   contains(point: { x: number; y: number }) {
     const b = this.window.getBounds();
-    return this.window.isVisible() && point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height;
+    return this.window.isVisible() && point.x >= b.x + SIDE && point.x <= b.x + b.width - SIDE && point.y >= b.y + TIP && point.y <= b.y + TIP + BAR;
   }
-  hide() { this.selection = null; this.motion.hide(); }
+  hide() { this.selection = null; this.window.setIgnoreMouseEvents(true, { forward: true }); this.motion.hide(); }
   destroy() { this.motion.dispose(); this.window.destroy(); }
 }

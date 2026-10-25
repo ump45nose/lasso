@@ -22,6 +22,10 @@
   --clay-ink: #A4502F;
   --marker: rgba(217, 119, 87, 0.3);
   --clay-halo: rgba(217, 119, 87, 0.22);
+  /* Hover and selection tints: interaction always answers in clay. */
+  --clay-wash: rgba(217, 119, 87, 0.1);
+  --clay-wash-2: rgba(217, 119, 87, 0.17);
+  --clay-line: rgba(217, 119, 87, 0.5);
   /* Semantic */
   --olive: #5C6E45;
   --danger: #B3412E;

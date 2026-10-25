@@ -136,10 +136,18 @@ export interface DesktopAPI {
   onState(callback: (state: ShellState) => void): () => void;
 }
 export interface ActionBarState { presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; busy: boolean; fonts: Pick<Settings, 'fonts' | 'importedFonts'> }
+/** Which side of the capsule has room for the hover tip: away from the selection when the screen allows. */
+export type ActionBarTip = 'above' | 'below';
 export interface ActionBarAPI {
   getState(): Promise<ActionBarState>;
   runPreset(id: string): Promise<void>;
   more(): void;
+  /** Width of the capsule itself; main adds the transparent margins. */
   resize(width: number): void;
+  /** The pointer entered or left the capsule; outside it the window lets clicks through. */
+  hit(inside: boolean): void;
   onState(callback: (state: ActionBarState) => void): () => void;
+  /** Fired on every show so the capsule can replay its entrance. */
+  onEnter(callback: (tip: ActionBarTip) => void): () => void;
+  onMenuClosed(callback: () => void): () => void;
 }
