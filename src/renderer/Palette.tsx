@@ -54,6 +54,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
       const rows: Row[] = ([
         ...captureModes.map(mode => ({ key: 'shot-' + mode, kind: 'cmd' as const, icon: captureIcons[mode], label: captureModeLabels[mode], hint: settings.captureShortcuts[mode] ? shortcutLabel(settings.captureShortcuts[mode]) : undefined, run: () => window.desktop.screenshot(mode) })),
         { key: 'clip', kind: 'cmd', icon: <Image size={14} />, label: '使用剪贴板图片', run: () => window.desktop.readImage() },
+        { key: 'open-image', kind: 'cmd', icon: <Image size={14} />, label: '打开本地图片…', run: () => window.desktop.openLocalImage() },
         { key: 'pin', kind: 'cmd', icon: <Pin size={14} />, label: state.pinned ? '取消置顶' : '置顶小窗', run: act('pin'), keepOpen: true },
         ...(state.hasPage ? [{ key: 'reload', kind: 'cmd' as const, icon: <RotateCw size={14} />, label: isLocal(state.activeTarget) ? '恢复 CLI 会话' : '重新加载网页', run: act('reload') }] : []),
         { key: 'expand', kind: 'cmd', icon: state.expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />, label: state.expanded ? '还原小窗' : '放大到工作区', run: act('expand') },

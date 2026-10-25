@@ -5,6 +5,7 @@ const api: DesktopAPI = {
   getState: () => ipcRenderer.invoke('shell:state'),
   act: action => ipcRenderer.invoke('shell:action', action),
   screenshot: mode => ipcRenderer.invoke('shell:screenshot', mode),
+  openLocalImage: () => ipcRenderer.invoke('shell:local-image-open'),
   saveCaptureShortcut: (mode, shortcut) => ipcRenderer.invoke('shell:capture-shortcut', mode, shortcut),
   saveShortcut: shortcut => ipcRenderer.invoke('shell:shortcut', shortcut),
   saveCapture: options => ipcRenderer.invoke('shell:capture', options),

@@ -114,6 +114,7 @@ export interface DesktopAPI {
   newTask(options: LaunchOptions): Promise<void>;
   saveIntegrations(settings: Pick<Settings, 'local' | 'appPrompts'>): Promise<{ error: string | null }>;
   choosePath(kind: 'directory' | 'executable' | 'application'): Promise<{ path: string; bundleId?: string; name?: string } | null>;
+  openLocalImage(): Promise<{ error: string | null }>;
   readImage(taskId?: string): Promise<{ error: string | null }>;
   removeImage(taskId?: string): Promise<void>;
   editImage(imageId: string): Promise<{error:string|null}>;

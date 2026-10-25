@@ -13,6 +13,7 @@ import { OCRService, type VisionOCR } from './ocr';
 import { validateAnnotations, type PinnedDocument } from './document';
 import { PinManager } from './pins';
 import { ScrollSession, type ScrollReply } from './scroll-session';
+import { defaultLocalImageCopyPath, saveLocalImageCopy, type LocalImageSource } from './local-images';
 type WindowRect = CaptureRect & { pid: number; id: number };
 const run=promisify(execFile);
 /** Shadow margins of a `screencapture -l` image, read from where the window's opaque pixels begin on its middle row and column. */
@@ -52,6 +53,7 @@ export class CaptureManager {
   private exporting=false;
   private grabbing=false;
   private editorKey: string | null=null;
+  private localSource: LocalImageSource | null=null;
   private scroll: ScrollSession | null=null;
   private scrollFinishing=false;
   private scrollEditing=false;
@@ -282,14 +284,14 @@ export class CaptureManager {
     Object.assign(s,{editId:randomUUID(),image:image.toDataURL(),width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,candidates:[],windows:[],selection:{x:0,y:0,...size},placement,phase:'result'});
     this.publish(true);
   }
-  async openImage(image:NativeImage,origin:'clipboard'|'pin'='clipboard',document?:PinnedDocument,pinId?:string,inputId?:string){
+  async openImage(image:NativeImage,origin:'clipboard'|'pin'='clipboard',document?:PinnedDocument,pinId?:string,inputId?:string,context?:{file:LocalImageSource}){
     if(this.disposed)throw Error('截图功能已关闭');
-    const key=pinId?'pin:'+pinId:inputId?'image:'+inputId:null;
+    const key=pinId?'pin:'+pinId:inputId?'image:'+inputId:context?'file:'+context.file.dev+':'+context.file.ino:null;
     if(this.active){this.win?.show();this.win?.focus();if(key&&key===this.editorKey)return;throw Error('请先完成或关闭当前图片编辑');}
     const size=image.getSize();if(image.isEmpty()||size.width*size.height>40_000_000)throw Error('图片为空或尺寸过大');
     this.busy=true;const epoch=++this.epoch;
     try{
-      this.before();this.editorKey=key;this.image=nativeImage.createFromBuffer(image.toPNG());
+      this.before();this.editorKey=key;this.localSource=context?.file??null;this.image=nativeImage.createFromBuffer(image.toPNG());
       const display=screen.getDisplayNearestPoint(screen.getCursorScreenPoint());this.bounds=display.bounds;this.displayId=display.id;
       this.editRevision=0;this.state={id:randomUUID(),editId:randomUUID(),image:this.image.toDataURL(),width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,candidates:[],phase:'result',selection:{x:0,y:0,...size},status:'',origin,pinId,annotations:document?.annotations};
       const win=new BrowserWindow({...display.workArea,frame:false,show:false,backgroundColor:'#E9E6DD',resizable:true,minWidth:760,minHeight:500,fullscreenable:false,title:'Lasso 图片编辑',webPreferences:{preload:join(__dirname,'capture-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
@@ -369,10 +371,12 @@ export class CaptureManager {
       }
       else{
         const ext=format==='jpeg'?'jpg':'png';
-        const {filePath,canceled}=await dialog.showSaveDialog(this.win!,{defaultPath:'Lasso-'+new Date().toISOString().replaceAll(':','-')+'.'+ext,filters:[{name:format==='jpeg'?'JPEG 图片':'PNG 图片',extensions:[ext]}]});
+        const source=this.localSource;
+        const {filePath,canceled}=await dialog.showSaveDialog(this.win!,{title:source?'另存图片副本':'保存图片',defaultPath:source?defaultLocalImageCopyPath(source,format):'Lasso-'+new Date().toISOString().replaceAll(':','-')+'.'+ext,filters:[{name:format==='jpeg'?'JPEG 图片':'PNG 图片',extensions:[ext]}]});
         if(canceled||!filePath)return;
         this.acceptVersion(id,frame.revision);
-        await writeFile(filePath,format==='jpeg'?image.toJPEG(92):image.toPNG());
+        const bytes=format==='jpeg'?image.toJPEG(92):image.toPNG();
+        if(source)await saveLocalImageCopy(source,filePath,bytes);else await writeFile(filePath,bytes);
       }
       if(this.state?.editId===id)this.cancel();
     }finally{this.exporting=false;}
@@ -384,7 +388,7 @@ export class CaptureManager {
     if(a==='reselect'){this.cancel();try{await this.start();}catch(error){dialog.showErrorBox('重新截图未能启动',(error as Error).message);}return;}
     throw Error('不支持的截图操作');
   }
-  private release(restore=false){this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.displayId=null;this.win=null;this.after(restore);}
+  private release(restore=false){this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.displayId=null;this.win=null;this.after(restore);}
   cancel(restore=false){const win=this.win;this.release(restore);if(win&&!win.isDestroyed())win.destroy();}
   dispose(){this.disposed=true;this.cancel();this.pins.dispose();screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:state','screenshot:select','screenshot:action','screenshot:recognize','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:window','screenshot:scroll-start','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:hover','screenshot:invalidate-ocr'])ipcMain.removeAllListeners(name);}
 }

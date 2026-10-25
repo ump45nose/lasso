@@ -208,7 +208,7 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
 
   // Capture surfaces from fixture states over a frame of the main window.
   saved.push(...await main(async ({ nativeImage }) => {
-    const { find, wait, move, center, page, save, path, fixtures, ipcMain, BrowserWindow } = global.uiShots, names = [];
+    const { find, wait, move, center, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs } = global.uiShots, names = [];
     const W = 1280, H = 800, frame = (await find().webContents.capturePage()).resize({ width: W, height: H }), backdrop = frame.toDataURL();
     const sel = { x: 380, y: 170, width: 520, height: 320 }, crop = frame.crop(sel);
     const windows = [{ id: 1, x: 300, y: 120, width: 640, height: 430 }, { id: 2, x: 120, y: 60, width: 900, height: 620 }];
@@ -216,6 +216,9 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
     const longPixels=Buffer.concat([frame.toBitmap(),frame.toBitmap(),frame.toBitmap()]);
     const long=nativeImage.createFromBitmap(longPixels,{width:W,height:H*3});
     const scrolling={status:'running',width:W,height:H*3,segments:3,seams:[H,H*2],message:'在选区内缓慢向下滚动，每次保留至少三分之一重叠'};
+    // A PNG created from the fixture frame uses the same screenshot preload and Editor as local-file editing.
+    const localPath = path.join(app.getPath('temp'), 'ui-shots-local.png'); fs.writeFileSync(localPath, frame.toPNG());
+    const localImage = nativeImage.createFromPath(localPath);
     const states = {
       'overlay-area': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, candidates: [{ ...sel, source: 'element' }, { ...windows[0], source: 'window' }], windows, mode: 'area', phase: 'selecting', origin: 'screen' },
       'overlay-window': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, windows, mode: 'window', phase: 'selecting', origin: 'screen' },
@@ -225,6 +228,10 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       'scroll-review': {...base,image:long.toDataURL(),width:W,height:H*3,pixelWidth:W,pixelHeight:H*3,phase:'review',scroll:{...scrolling,status:'review',message:'已结束采集。检查接缝后进入编辑；可撤回末段。'},origin:'screen'},
       'editor-inline': { ...base, image: crop.toDataURL(), backdrop, placement: sel, width: sel.width, height: sel.height, pixelWidth: sel.width, pixelHeight: sel.height, selection: { x: 0, y: 0, width: sel.width, height: sel.height }, phase: 'result', origin: 'screen' },
       'editor-window': { ...base, image: backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, selection: { x: 0, y: 0, width: W, height: H }, phase: 'result', origin: 'clipboard' },
+      'editor-local-file': { ...base, image: localImage.toDataURL(), width: W, height: H, pixelWidth: W, pixelHeight: H, selection: { x: 0, y: 0, width: W, height: H }, phase: 'result', origin: 'clipboard', annotations: {
+        objects: [{ type: 'Rect', left: 80, top: 60, width: 120, height: 45, originX: 'left', originY: 'top', fill: '#171717', strokeWidth: 0, lassoTool: 'redact' }],
+        crop: { x: 0, y: 0, width: W, height: H }, nextNumber: 1, privacy: [{ x: 80, y: 60, width: 120, height: 45 }]
+      } },
       'editor-picker-hex': { ...base, image: backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, selection: { x: 0, y: 0, width: W, height: H }, phase: 'result', origin: 'clipboard' },
       'editor-picker-rgb': { ...base, image: backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, selection: { x: 0, y: 0, width: W, height: H }, phase: 'result', origin: 'clipboard' },
       'editor-selected-annotation': { ...base, image: backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, selection: { x: 0, y: 0, width: W, height: H }, phase: 'result', origin: 'clipboard', annotations: {
@@ -232,10 +239,11 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         crop: { x: 0, y: 0, width: W, height: H }, nextNumber: 1, privacy: []
       } }
     };
-    let state = null;
+    let state = null, exports = [];
     ipcMain.removeHandler('ui-shots:state'); ipcMain.handle('ui-shots:state', () => state);
+    ipcMain.removeHandler('ui-shots:export'); ipcMain.handle('ui-shots:export', (_event, frame, action, format) => { exports.push({ frame, action, format }); return { error: null }; });
     for (const [name, value] of Object.entries(states)) {
-      state = value;
+      state = value; exports = [];
       const w = new BrowserWindow({ x: 40, y: 40, width: name.startsWith('scroll-')&&name!=='scroll-review'?700:W, height:name.startsWith('scroll-')&&name!=='scroll-review'?118:H, frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
       await w.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'screenshot' } });
       await wait(900);
@@ -257,8 +265,19 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         await wait(450);
         if (picker && !await page(w, `Boolean(document.querySelector('[aria-label="复制颜色"]'))`)) throw Error(name + ': picker controls did not appear');
       }
-      names.push(await save(w, name)); w.destroy();
+      names.push(await save(w, name));
+      if (name === 'editor-local-file') {
+        await page(w, `(() => { const button = document.querySelector('[aria-label="用于生图"]'); if (!button || button.disabled) throw Error('Editor generation entry is unavailable'); button.click(); })()`);
+        for (let pass = 0; pass < 40 && !exports.length; pass++) await wait(100);
+        if (exports.length !== 1 || exports[0].action !== 'media' || exports[0].format !== 'png') throw Error('Local-file editor did not emit exactly one fixture media output');
+        const output = exports[0].frame, png = Buffer.from(output.png);
+        if (png.length < 24 || png.readUInt32BE(16) !== output.crop.width || png.readUInt32BE(20) !== output.crop.height) throw Error('Editor fixture media output did not contain its flattened crop');
+        const pixels = nativeImage.createFromBuffer(png).toBitmap(), pixel = (80 * output.crop.width + 100) * 4;
+        if (![0, 1, 2].every(channel => pixels[pixel + channel] === 23) || pixels[pixel + 3] !== 255) throw Error('Editor fixture media output lost its privacy mask');
+      }
+      w.destroy();
     }
+    ipcMain.removeHandler('ui-shots:state'); ipcMain.removeHandler('ui-shots:export');
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
     const pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [], status: '拖选文字 · 空格拖动贴图', topmost: true, opacity: 1, passthrough: false };
     ipcMain.removeHandler('ui-shots:pin'); ipcMain.handle('ui-shots:pin', () => pin);

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { CaptureManager } from './capture';
+import { readLocalImage } from './capture/local-images';
 import { Images, type ImageInput } from './images';
 import { MediaWindow } from './media-window';
 import { readSettings, writeSettings } from './settings';
@@ -351,6 +352,19 @@ function installIPC() {
   ipcMain.handle('shell:choose-path', (event, kind) => { assertLocal(event); return choosePath(kind); });
   ipcMain.handle('shell:new-task', (event, options: LaunchOptions) => { assertLocal(event); launchTask(options); });
   ipcMain.handle('shell:image', (event, id?: string) => { assertLocal(event); return result(() => readImage(id)); });
+  ipcMain.handle('shell:local-image-open', async event => {
+    assertLocal(event);if(nativeDialogs)return {error:null};nativeDialogs++;
+    try {
+      if (screenshots.active) throw Error('请先完成或关闭当前图片编辑');
+      const choice=await dialog.showOpenDialog(win,{title:'打开图片',properties:['openFile'],filters:[{name:'PNG / JPEG 图片',extensions:['png','jpg','jpeg']}]});
+      if(choice.canceled||!choice.filePaths[0]||quitting)return {error:null};
+      const {image,source}=await readLocalImage(choice.filePaths[0]);
+      if(!quitting)await screenshots.openImage(image,'clipboard',undefined,undefined,undefined,{file:source});
+      return { error: null };
+    }
+    catch (error) { const message = (error as Error).message; state.notice = message; layout(); showWindow(); publish(); return { error: message }; }
+    finally { nativeDialogs--; }
+  });
   ipcMain.handle('shell:image-remove', (event, id?: string) => { assertLocal(event); removeImage(id); });
   ipcMain.handle('shell:image-edit',(event,id:string)=>{assertLocal(event);return result(async()=>{if(!inputImage||inputImage.id!==id)throw Error('图片已被替换，请重新读取');const image=nativeImage.createFromPath(inputImage.path);await screenshots.openImage(image,'clipboard',undefined,undefined,id);});});
   ipcMain.handle('shell:text-remove',event=>{assertLocal(event);state.inputText=null;state.inputOpen=false;layout();if(!state.settingsOpen)tasks.focus();publish();});
