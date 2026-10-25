@@ -4,7 +4,7 @@
 // surfaces are rendered from fixture states with the preloads in this folder.
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = new URL('../..', import.meta.url).pathname;
@@ -12,18 +12,10 @@ const fixtures = join(root, 'scripts/ui-shots');
 const out = join(root, 'outputs/ui-shots');
 const PORT = Number(process.env.LASSO_UI_SHOTS_PORT || 9347);
 mkdirSync(out, { recursive: true });
-// Set every Electron storage path before loading the app, whose profile is relative to appData.
-// The bootstrap and its disposable profile live entirely under this worktree.
-const runtime = join(out, '.runtime');
-mkdirSync(runtime, { recursive: true });
-const boot = join(runtime, 'boot.cjs');
-writeFileSync(boot, `const {app}=require('electron');const {mkdirSync}=require('fs');const {join}=require('path');
-const root=${JSON.stringify(runtime)};
-for(const name of ['appData','userData','sessionData','temp','crashDumps']){const path=join(root,name);mkdirSync(path,{recursive:true});app.setPath(name,path);}
-app.setAppLogsPath(join(root,'logs'));
-require(${JSON.stringify(join(root, 'dist/main.cjs'))});\n`);
+const runtime = mkdtempSync(join(out, '.runtime-'));
+mkdirSync(join(runtime, 'temp'), { recursive: true });
 const electron = createRequire(import.meta.url)('electron');
-const child = spawn(electron, [`--inspect=${PORT}`, boot], { cwd: root, env: { ...process.env, LASSO_PROFILE: 'lasso-ui-shots', TMPDIR:join(runtime,'temp') }, stdio: 'ignore' });
+const child = spawn(electron, [`--inspect=${PORT}`, '.'], { cwd: root, env: { ...process.env, LASSO_PROFILE: 'lasso-ui-shots', LASSO_DATA_ROOT: runtime, TMPDIR: join(runtime, 'temp') }, stdio: 'ignore' });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function inspector() {
@@ -56,17 +48,21 @@ const saved = [];
 try {
   ws = new WebSocket(await inspector());
   await new Promise(resolve => ws.addEventListener('open', resolve));
-  await main(async ({ BrowserWindow, ipcMain }, out, fixtures) => {
+  await main(async ({ app, BrowserWindow, ipcMain }, out, fixtures, runtime) => {
     const fs = process.mainModule.require('fs'), path = process.mainModule.require('path');
+    for (const name of ['userData', 'sessionData', 'temp', 'crashDumps', 'logs']) {
+      const relative = path.relative(runtime, app.getPath(name));
+      if (relative.startsWith('..') || path.isAbsolute(relative)) throw Error('Unisolated test path: ' + name);
+    }
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     const find = surface => BrowserWindow.getAllWindows().find(w => surface ? w.webContents.getURL().includes('surface=' + surface) : !w.webContents.getURL().includes('surface='));
     for (let i = 0; i < 40 && !(find() && find('action-bar')); i++) await wait(250);
     const page = (w, script) => w.webContents.executeJavaScript(script);
     const move = async (w, x, y) => { w.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) }); await wait(450); };
     const center = async (w, selector) => page(w, `(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r ? [r.x + r.width / 2, r.y + r.height / 2] : null; })()`);
-    global.uiShots = { fs, path, wait, find, page, move, center, out, fixtures, ipcMain, BrowserWindow,
+    global.uiShots = { fs, path, wait, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
       save: async (w, name) => { fs.writeFileSync(path.join(out, name + '.png'), (await w.webContents.capturePage()).toPNG()); return name; } };
-  }, out, fixtures);
+  }, out, fixtures, runtime);
 
   // Main window: current view, command palette, settings.
   saved.push(...await main(async () => {
@@ -77,6 +73,89 @@ try {
     await page(m, 'window.desktop.closePalette()'); await wait(300);
     await page(m, "window.desktop.act('settings')"); await wait(700); names.push(await save(m, 'settings'));
     await page(m, "window.desktop.act('close-settings')"); await wait(300);
+    return names;
+  }));
+  // Dedicated image-generation surface: fixtures exercise layout without sending paid requests.
+  saved.push(...await main(async () => {
+    const { find, wait, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs } = global.uiShots, names = [];
+    const appearance = await page(find(), 'window.desktop.getState().then(s => ({fonts:s.settings.fonts, importedFonts:s.settings.importedFonts}))');
+    // Use a bundled test font through the existing isolated lasso-font protocol; no user font is read or copied.
+    const assets = path.join(process.cwd(), 'dist/renderer/assets'), fontDirectory = path.join(app.getPath('userData'), 'fonts');
+    const bundledFont = fs.readdirSync(assets).find(name => name.startsWith('jetbrains-mono-latin-400-normal-') && name.endsWith('.woff2'));
+    fs.mkdirSync(fontDirectory, { recursive: true }); fs.copyFileSync(path.join(assets, bundledFont), path.join(fontDirectory, 'ui-shots-font.woff2'));
+    const importedFamily = 'UI Shots Imported Mono';
+    const importedAppearance = { fonts: Object.fromEntries(['display', 'text', 'ui', 'mono'].map(role => [role, importedFamily])), importedFonts: [{ family: importedFamily, file: 'ui-shots-font.woff2' }] };
+    const image = (await find().webContents.capturePage()).resize({ width: 400, height: 300 }).toDataURL();
+    const ref = { id: 'fixture-reference', width: 1200, height: 900, thumbnail: image };
+    const config = { baseURL: 'http://127.0.0.1:3000/v1', generationModel: 'configured-generation-model', editModel: 'configured-edit-model', hasCredential: true };
+    const original = { id: 'fixture-original', requestId: 'fixture-first', prompt: '一张纸上的暖白建筑草图，细节清晰。', aspect: '3:2', status: 'succeeded', createdAt: '2026-10-25T01:00:00Z', updatedAt: '2026-10-25T01:01:00Z', image: { ...ref, id: 'fixture-original' } };
+    const edited = { ...original, id: 'fixture-edited', requestId: 'fixture-second', prompt: '保留构图，将屋顶改成陶土色。', parentId: original.id, referenceId: original.id, reference: original.image, createdAt: '2026-10-25T01:02:00Z', image: { ...ref, id: 'fixture-edited' } };
+    const failed = { ...edited, id: 'fixture-failed', image: undefined, status: 'failed', error: '图片请求失败（HTTP 503）；未自动重试', createdAt: '2026-10-25T01:03:00Z' };
+    const interrupted = { ...failed, id: 'fixture-interrupted', status: 'interrupted', error: '应用已重启，请求结果未知；不会自动重发。上游可能仍在处理。' };
+    let state, requests = [];
+    ipcMain.handle('ui-shots:media-state', () => state);
+    ipcMain.handle('ui-shots:media-reference', (_event, id) => { state.reference = id ? state.jobs.find(job => job.id === id)?.image || ref : null; return state; });
+    ipcMain.handle('ui-shots:media-generate', (_event, request) => {
+      requests.push(request);
+      if (!state.jobs.some(job => job.requestId === request.requestId)) {
+        const id = 'fixture-generated-' + requests.length;
+        state.jobs.unshift({ ...request, id, status: 'succeeded', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), image: { ...ref, id }, ...(state.reference ? { reference: state.reference } : {}) });
+      }
+      return state;
+    });
+    const states = {
+      'quick-image-input': { jobs: [], reference: null, config },
+      'quick-image-versions': { jobs: [edited, original], reference: original.image, config },
+      'quick-image-failed': { jobs: [failed, edited, original], reference: original.image, config },
+      'quick-image-interrupted': { jobs: [interrupted, edited, original], reference: original.image, config },
+      'quick-image-running': { jobs: [{ ...failed, id: 'fixture-running', status: 'running', error: undefined }], reference: ref, config },
+      'quick-image-settings': { jobs: [], reference: null, config },
+      'quick-image-fonts': { jobs: [], reference: null, config, ...importedAppearance },
+      'quick-image-narrow': { jobs: [edited, original], reference: original.image, config }
+    };
+    for (const [name, value] of Object.entries(states)) {
+      state = { ...structuredClone(appearance), ...structuredClone(value) }; requests = [];
+      const w = new BrowserWindow({ width: name === 'quick-image-narrow' ? 340 : 460, height: 720, frame: false, show: false,
+        webPreferences: { preload: path.join(fixtures, 'media-preload.cjs'), contextIsolation: true, sandbox: true } });
+      await w.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'quick-image' } });
+      await wait(700);
+      if (name === 'quick-image-settings') { await page(w, `document.querySelector('[aria-label="生图连接设置"]').click()`); await wait(400); }
+      if (value.jobs.length) { await page(w, `document.querySelector('.qi-results').scrollIntoView({block:'start'})`); await wait(300); }
+      const overflow = await page(w, 'document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth');
+      if (overflow) throw Error(name + ': horizontal overflow');
+      names.push(await save(w, name));
+      if (name === 'quick-image-fonts') {
+        const loaded = await page(w, `document.fonts.ready.then(() => document.fonts.check('14px "UI Shots Imported Mono"', 'Lasso') && document.documentElement.style.getPropertyValue('--font-ui').includes('UI Shots Imported Mono'))`);
+        if (!loaded) throw Error('Imported generation font was not loaded through lasso-font');
+        w.hide();
+        state.fonts = { ...appearance.fonts, display: 'Newsreader Variable', text: 'Newsreader Variable', ui: 'Newsreader Variable' };
+        w.webContents.send('media:changed', state); await wait(350);
+        if (!await page(w, `document.documentElement.style.getPropertyValue('--font-ui').includes('Newsreader Variable')`)) throw Error('Reopened generation surface did not update its font');
+        names.push(await save(w, 'quick-image-fonts-reopened'));
+      }
+      if (name === 'quick-image-input') {
+        await page(w, `(() => { const el = document.getElementById('qi-prompt'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, '组件模拟：一张纸上的建筑草图'); el.dispatchEvent(new Event('input', {bubbles:true})); })()`); await wait(100);
+        await page(w, `(() => { const button = document.querySelector('.qi-generate-row .primary'); button.click(); button.click(); })()`); await wait(350);
+        await page(w, `document.querySelector('.qi-generate-row .primary').click()`); await wait(100);
+        if (requests.length !== 1) throw Error('Repeated component click submitted another generation');
+        await page(w, `document.querySelector('.qi-input').scrollIntoView({block:'start'})`); await wait(150);
+        names.push(await save(w, 'quick-image-submitted'));
+      }
+      if (name === 'quick-image-versions') {
+        await page(w, `document.querySelector('.qi-body').scrollTop = document.querySelector('.qi-body').scrollHeight`); await wait(200);
+        names.push(await save(w, 'quick-image-output-actions'));
+        await page(w, `document.querySelectorAll('.qi-version')[1].click()`); await wait(350);
+        await page(w, `Array.from(document.querySelectorAll('.qi-result-actions button')).find(b => b.textContent === '基于此版本再改').click()`); await wait(200);
+        if (state.reference.id !== original.id || requests.length) throw Error('Selecting a version must only prepare its reference');
+        await page(w, `document.querySelector('.qi-body').scrollTop = 0`); await wait(150);
+        names.push(await save(w, 'quick-image-selected-reference'));
+        await page(w, `(() => { const el = document.getElementById('qi-prompt'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, '只修改所选原版'); el.dispatchEvent(new Event('input', {bubbles:true})); })()`); await wait(100);
+        await page(w, `document.querySelector('.qi-generate-row .primary').click()`); await wait(200);
+        if (requests.length !== 1 || requests[0].parentId !== original.id || requests[0].referenceId !== original.id) throw Error('Version edit did not use the selected image alone');
+      }
+      w.destroy();
+    }
+    ipcMain.removeHandler('ui-shots:media-state'); ipcMain.removeHandler('ui-shots:media-reference'); ipcMain.removeHandler('ui-shots:media-generate');
     return names;
   }));
 

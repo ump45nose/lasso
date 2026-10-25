@@ -65,7 +65,7 @@ export class CaptureManager {
   }
   private vision: VisionOCR | null=null;
   private ocr=new OCRService(()=>this.vision??=require(join(__dirname,'native/capture-vision.node')), (id,revision)=>this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);
-  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>void, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, changed:()=>void) {
+  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>void, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, changed:()=>void, private receiveMedia?: (image:NativeImage)=>Promise<void>) {
     this.ax=require(join(__dirname,'native/capture-ax.node')) as AX;
     this.pins=new PinManager((doc,id)=>this.openImage(doc.source,'pin',doc,id),receive,receiveText,after,changed);
     const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>Boolean(this.win&&e.sender===this.win.webContents&&e.senderFrame===this.win.webContents.mainFrame);
@@ -352,12 +352,13 @@ export class CaptureManager {
   }
   private async exportFrame(frame:CaptureFrame,action:ExportAction,format:'png'|'jpeg'){
     if(this.exporting)throw Error('正在输出图片');
-    if(!['copy','save','image','pin'].includes(action)||!['png','jpeg'].includes(format))throw Error('不支持的输出操作');
+    if(!['copy','save','image','pin','media'].includes(action)||!['png','jpeg'].includes(format))throw Error('不支持的输出操作');
     const image=this.frameImage(frame),id=frame.id;this.exporting=true;
     try{
       // All destinations use the same flattened pixels; no raw-image fallback.
       if(action==='copy'){await clipboard.write([new ClipboardItem({'image/png':new Blob([new Uint8Array(image.toPNG())],{type:'image/png'})})]);}
       else if(action==='image')await this.receive(image);
+      else if(action==='media') { if(!this.receiveMedia)throw Error('图片生成尚未接入');await this.receiveMedia(image); }
       else if(action==='pin'){
         const source=this.image!;const annotations=validateAnnotations(frame.annotations,source,frame.crop);
         if(this.state?.pinId&&!this.pins.contains(this.state.pinId)){

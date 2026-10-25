@@ -1,0 +1,42 @@
+/* Dedicated generation surface, using the existing small-window components and tokens. */
+.qi-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; padding: 24px 28px; }
+.qi-input { display: flex; flex-direction: column; gap: 12px; }
+.qi-input h2 { margin: 0; font-family: var(--font-display); font-size: 28px; font-weight: 300; line-height: 1.3; }
+.qi-input .l-textarea { min-height: 96px; max-height: 240px; }
+.qi-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.qi-generate-row { justify-content: space-between; }
+.qi-reference-add { align-self: flex-start; }
+.qi-reference { margin: 0; display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 0.5px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.qi-reference > img { display: block; width: 72px; height: 54px; object-fit: contain; border-radius: 6px; background: var(--sunken); }
+.qi-reference figcaption { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12.5px; color: var(--ink-2); }
+.qi-reference figcaption .mono { color: var(--ink-3); font-size: 11px; }
+.qi-progress { margin: 0; color: var(--clay-ink); font-size: 12.5px; line-height: 1.6; }
+.qi-settings { flex-shrink: 0; overflow: hidden; }
+.qi-settings-inner { display: flex; flex-direction: column; gap: 12px; padding-bottom: 18px; border-bottom: 0.5px solid var(--line-strong); }
+.qi-clear-key { align-self: flex-start; margin-left: -8px; color: var(--ink-3); }
+.qi-clear-key[aria-pressed="true"] { color: var(--danger); }
+.qi-notice { margin: 0; overflow-wrap: anywhere; }
+.qi-message { margin: 0; display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; color: var(--olive); }
+.qi-message svg { margin-top: 2px; }
+.qi-results { display: flex; flex-direction: column; gap: 12px; border-top: 0.5px solid var(--line-strong); padding-top: 18px; }
+.qi-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.qi-versions { display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 8px; }
+.qi-version { flex-shrink: 0; width: 96px; padding: 6px; border: 0.5px solid var(--line-strong); border-radius: 9px; background: var(--surface); display: flex; flex-direction: column; align-items: flex-start; gap: 3px; font-size: 12.5px; transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast); }
+.qi-version:hover { background: var(--clay-wash); border-color: var(--clay-line); color: var(--clay-ink); }
+.qi-version[aria-pressed="true"] { background: var(--clay-wash-2); border-color: var(--clay-line); color: var(--clay-ink); }
+.qi-version img, .qi-version-placeholder { width: 82px; height: 56px; border-radius: 5px; object-fit: contain; background: var(--sunken); }
+.qi-version-placeholder { display: grid; place-items: center; color: var(--ink-4); }
+.qi-version small { font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.qi-selected { display: flex; flex-direction: column; gap: 10px; }
+.qi-result-status { font-size: 12.5px; color: var(--ink-3); }
+.qi-result-status.error { color: var(--danger); }
+.qi-delete { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-3); }
+.qi-result-image { display: block; width: 100%; max-height: 300px; object-fit: contain; border-radius: 6px; background: var(--sunken); }
+.qi-prompt-preview { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; line-height: 1.6; color: var(--ink-2); user-select: text; }
+.qi-used-reference { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-3); }
+.qi-used-reference img { width: 40px; height: 32px; object-fit: contain; border-radius: 4px; background: var(--sunken); }
+.qi-result-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 460px) {
+  .qi-body { padding: 20px; }
+  .qi-settings .l-pair { grid-template-columns: 1fr; }
+}

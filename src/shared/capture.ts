@@ -8,7 +8,7 @@ export interface AnnotationSnapshot { objects: Record<string, unknown>[]; crop: 
 export interface CaptureFrame { id: string; revision: number; crop: CaptureRect; png: Uint8Array; annotations?: AnnotationSnapshot }
 export type OCRMode = 'text' | 'code';
 export interface OCRRequest extends CaptureFrame { mode: OCRMode; enhance: boolean; force?: boolean }
-export type ExportAction = 'copy' | 'save' | 'image' | 'pin';
+export type ExportAction = 'copy' | 'save' | 'image' | 'pin' | 'media';
 /** Area drags or picks regions, window picks whole windows, screen takes the display, front takes the frontmost app window. */
 export type CaptureMode = 'area' | 'window' | 'screen' | 'front';
 export const captureModes: CaptureMode[] = ['area', 'window', 'screen', 'front'];

@@ -19,6 +19,7 @@ import { AgentChat } from './AgentChat';
 import { ImageEntry } from './ImageEntry';
 import { TextEntry } from './TextEntry';
 import { Pinned } from './capture/Pinned';
+import { QuickImage } from './media/QuickImage';
 import { isLocal } from './targets';
 import { collapse, rise } from './motion';
 declare global { interface Window { desktop: DesktopAPI } }
@@ -61,4 +62,4 @@ function App() {
   </div>;
 }
 const surface = new URLSearchParams(location.search).get('surface');
-createRoot(document.getElementById('root')!).render(<MotionConfig reducedMotion="user">{surface === 'screenshot' ? <Screenshot /> : surface === 'action-bar' ? <ActionBar /> : surface === 'pin' ? <Pinned /> : <App />}</MotionConfig>);
+createRoot(document.getElementById('root')!).render(<MotionConfig reducedMotion="user">{surface === 'quick-image' ? <QuickImage /> : surface === 'screenshot' ? <Screenshot /> : surface === 'action-bar' ? <ActionBar /> : surface === 'pin' ? <Pinned /> : <App />}</MotionConfig>);

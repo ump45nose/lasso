@@ -1,11 +1,12 @@
 import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle, WebContents } from 'electron';
-import { basename, join } from 'node:path';
+import { basename, isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { CaptureManager } from './capture';
 import { Images, type ImageInput } from './images';
+import { MediaWindow } from './media-window';
 import { readSettings, writeSettings } from './settings';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
 import { fitToWorkArea, placeNear } from './position';
@@ -21,7 +22,15 @@ import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOpti
 app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
 // LASSO_PROFILE gives tools such as scripts/ui-shots a separate profile that can run beside the installed app.
-app.setPath('userData', join(app.getPath('appData'), process.env.LASSO_PROFILE || 'mac-ai-prompt'));
+const isolatedRoot = process.env.LASSO_DATA_ROOT;
+if (isolatedRoot && !isAbsolute(isolatedRoot)) throw Error('LASSO_DATA_ROOT 必须是绝对路径');
+app.setPath('userData', join(isolatedRoot || app.getPath('appData'), process.env.LASSO_PROFILE || 'mac-ai-prompt'));
+if (isolatedRoot) {
+  for (const name of ['sessionData', 'temp', 'crashDumps'] as const) {
+    const directory = join(isolatedRoot, name); mkdirSync(directory, { recursive: true }); app.setPath(name, directory);
+  }
+  app.setAppLogsPath(join(isolatedRoot, 'logs'));
+}
 registerFontScheme();
 const hasLock = app.requestSingleInstanceLock();
 let win: BrowserWindow;
@@ -33,6 +42,7 @@ let presetsPath: string;
 let fontsDir: string;
 let images: Images;
 let screenshots: CaptureManager;
+let media: MediaWindow;
 let inputImage: ImageInput | null = null;
 let capture: SelectionCapture;
 let actionBar: ActionBar;
@@ -171,6 +181,7 @@ function updateTray() {
     { label: `打开 ${targetLabels[state.settings.lastTarget]}`, click: () => openChat() },
     { label: `贴图（${screenshots?.pins.size || 0}）`, submenu: screenshots?.pins.trayItems() || [] },
     { label: '新任务…', click: () => void openPalette('new') },
+    { label: '图片生成…', click: () => { void media.show().catch(error => { state.notice = (error as Error).message; publish(); }); } },
     { label: captureModeLabels.area, accelerator: state.settings.captureShortcuts.area || undefined, click: () => void startScreenshot('area') },
     { label: '更多截图方式', submenu: captureModes.filter(mode => mode !== 'area').map(mode => ({ label: captureModeLabels[mode], accelerator: state.settings.captureShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })) },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
@@ -529,7 +540,11 @@ async function boot() {
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
-  }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray);
+  }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, image => media.receive(image));
+  media = new MediaWindow(join(app.getPath('userData'), 'generated-media'), image => screenshots.openImage(image), async image => {
+    const size = image.getSize();
+    await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
+  }, () => state.settings);
   for (const mode of captureModes) {
     const error = registerCaptureShortcut(mode, state.settings.captureShortcuts[mode]);
     if (error) console.warn('[screenshot]', mode, error);
@@ -546,7 +561,7 @@ else {
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
   app.on('before-quit', () => { quitting = true; });
-  app.on('will-quit', () => { screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('will-quit', () => { media?.dispose(); screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));
     quitting = true;
