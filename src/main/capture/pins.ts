@@ -40,8 +40,9 @@ export class PinManager {
     if(existing){existing.document=document;existing.bytes=bytes;existing.state.revision++;existing.state.image=document.image.toDataURL();Object.assign(existing.state,document.image.getSize(),{lines:[],status:'正在识别文字…'});this.publish(existing);this.resize(existing,1);existing.win.show();existing.win.focus();this.recognize(existing);return;}
     const pinId=randomUUID(),size=document.image.getSize(),area=screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const scale=Math.min(1,Math.min(600,area.width-40)/size.width,Math.min(500,area.height-100)/size.height);
-    const width=Math.max(260,Math.round(size.width*scale)),height=Math.max(140,Math.round(size.height*scale)+36);
-    const win=new BrowserWindow({x:Math.round(area.x+(area.width-width)/2+(this.serial%5)*18),y:Math.round(area.y+(area.height-height)/2+(this.serial++%5)*18),width,height,minWidth:260,minHeight:100,frame:false,show:false,backgroundColor:'#faf7f0',title:`Lasso 贴图 ${this.serial}`,fullscreenable:false,webPreferences:{preload:join(__dirname,'pin-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+    // The image fills the window; the toolbar floats over it on hover, so the minimum only keeps that toolbar usable.
+    const width=Math.max(220,Math.round(size.width*scale)),height=Math.max(100,Math.round(size.height*scale));
+    const win=new BrowserWindow({x:Math.round(area.x+(area.width-width)/2+(this.serial%5)*18),y:Math.round(area.y+(area.height-height)/2+(this.serial++%5)*18),width,height,minWidth:220,minHeight:100,frame:false,show:false,backgroundColor:'#FFFFFF',title:`Lasso 贴图 ${this.serial}`,fullscreenable:false,webPreferences:{preload:join(__dirname,'pin-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
     win.setAlwaysOnTop(true,'floating');win.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true});
     win.on('page-title-updated',event=>event.preventDefault());
     win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',event=>event.preventDefault());
@@ -62,7 +63,7 @@ export class PinManager {
       pin.state.status=pin.state.lines.length?'拖选文字 · 空格拖动贴图':'未识别到文字';this.publish(pin);
     }).catch(()=>{if(this.pins.get(id)===pin&&pin.state.revision===revision){pin.state.status='识字未完成，仍可复制或编辑图片';this.publish(pin);}});
   }
-  private resize(pin:Pin,factor:number){const b=pin.win.getBounds(),area=screen.getDisplayMatching(b).workArea;pin.win.setBounds(fitToWorkArea({...b,width:Math.max(260,Math.round(b.width*factor)),height:Math.max(100,Math.round((b.height-36)*factor)+36)},area));}
+  private resize(pin:Pin,factor:number){const b=pin.win.getBounds(),area=screen.getDisplayMatching(b).workArea;pin.win.setBounds(fitToWorkArea({...b,width:Math.max(220,Math.round(b.width*factor)),height:Math.max(100,Math.round(b.height*factor))},area));}
   private async action(pin:Pin,action:PinAction){
     if(action==='close'){pin.win.close();return;}
     if(action==='hide'){pin.win.hide();this.changed();return;}
