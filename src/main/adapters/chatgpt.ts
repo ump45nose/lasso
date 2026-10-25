@@ -219,7 +219,12 @@ export class ChatGPTAdapter {
         await debuggerAPI.sendCommand('Page.setInterceptFileChooserDialog', { enabled: true });
         const inputs = async (): Promise<number[]> => {
           const { root } = await debuggerAPI.sendCommand('DOM.getDocument');
-          return (await debuggerAPI.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type="file"]' })).nodeIds;
+          const nodeIds: number[] = (await debuggerAPI.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type="file"]' })).nodeIds;
+          if (nodeIds.length === 1 || this.target !== 'chatgpt') return nodeIds;
+          // ChatGPT also mounts camera, video and generic-file inputs. The
+          // non-camera image input is the single reference-photo upload control.
+          const photos: number[] = (await debuggerAPI.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type="file"][accept="image/*"]:not([capture])' })).nodeIds;
+          return photos.length === 1 ? photos : nodeIds;
         };
         let nodeIds = await inputs();
         if (nodeIds.length !== 1) {
