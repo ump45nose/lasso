@@ -18,7 +18,8 @@ export function Screenshot(){
     if(e.key.toLowerCase()==='f'&&!e.metaKey&&!e.ctrlKey){e.preventDefault();void act('screen');}
   };window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[]);
   if(!state)return null;
-  if(state.phase==='result'&&state.selection)return <Suspense fallback={<div className="cap-guide">正在打开截图编辑器…</div>}><Editor key={state.editId} state={state}/></Suspense>;
+  // While the editor chunk loads, keep showing the frozen screen and the chosen rectangle so nothing flashes.
+  if(state.phase==='result'&&state.selection)return <Suspense fallback={<div className="cap"><img className="cap-background" src={state.image} draggable={false} alt=""/>{state.origin==='screen'&&<div className="cap-rect" style={{left:state.selection.x,top:state.selection.y,width:state.selection.width,height:state.selection.height}}/>}</div>}><Editor key={state.editId} state={state}/></Suspense>;
   const candidates=state.candidates.filter(r=>contains(r,point.x,point.y));
   // Keep the actual wheel-selected rectangle, not a list index that can change
   // when asynchronous AX/visual candidates arrive. Ignore incidental hand jitter.

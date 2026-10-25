@@ -154,7 +154,7 @@ export class CaptureManager {
       this.before();this.editorKey=key;this.image=nativeImage.createFromBuffer(image.toPNG());
       const display=screen.getDisplayNearestPoint(screen.getCursorScreenPoint());this.bounds=display.bounds;this.displayId=display.id;
       this.editRevision=0;this.state={id:randomUUID(),editId:randomUUID(),image:this.image.toDataURL(),width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,candidates:[],phase:'result',selection:{x:0,y:0,...size},status:'',origin,pinId,annotations:document?.annotations};
-      const win=new BrowserWindow({...display.workArea,frame:false,show:false,backgroundColor:'#e9e3d9',resizable:true,minWidth:760,minHeight:500,fullscreenable:false,title:'Lasso 图片编辑',webPreferences:{preload:join(__dirname,'capture-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+      const win=new BrowserWindow({...display.workArea,frame:false,show:false,backgroundColor:'#E9E6DD',resizable:true,minWidth:760,minHeight:500,fullscreenable:false,title:'Lasso 图片编辑',webPreferences:{preload:join(__dirname,'capture-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
       this.win=win;win.setAlwaysOnTop(true,'floating');win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());win.on('closed',()=>{if(this.win===win)this.release(origin==='clipboard');});
       await win.loadFile(join(__dirname,'renderer/index.html'),{query:{surface:'screenshot'}});if(epoch!==this.epoch||win.isDestroyed())return;win.show();win.focus();
     }catch(error){if(epoch===this.epoch)this.cancel();throw error;}finally{this.busy=false;}
