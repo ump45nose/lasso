@@ -1,5 +1,6 @@
-import { Canvas, Circle, Ellipse, FabricImage, FabricObject, FabricText, Group, IText, Line, Path, PencilBrush, Rect, util } from 'fabric';
+import { ActiveSelection, Canvas, Circle, Ellipse, FabricImage, FabricObject, FabricText, Group, IText, Line, Path, PencilBrush, Rect, util, type BasicTransformEvent } from 'fabric';
 import type { AnnotationSnapshot, CaptureRect } from '../../shared/capture';
+import { constrainedEnd } from './annotation-geometry';
 
 export type Tool = 'text-select' | 'select' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'pen' | 'highlight' | 'text' | 'number' | 'redact' | 'mosaic' | 'blur' | 'crop' | 'picker';
 export type Style = { color: string; width: number; fontSize: number };
@@ -7,6 +8,11 @@ type Mark = FabricObject & { lassoTool?: Tool };
 type Snapshot = AnnotationSnapshot;
 const box = (a: { x: number; y: number }, b: { x: number; y: number }): CaptureRect => ({ x: Math.round(Math.min(a.x,b.x)), y: Math.round(Math.min(a.y,b.y)), width: Math.round(Math.abs(b.x-a.x)), height: Math.round(Math.abs(b.y-a.y)) });
 export const intersects = (a: CaptureRect,b: CaptureRect) => a.x < b.x+b.width && a.x+a.width > b.x && a.y < b.y+b.height && a.y+a.height > b.y;
+// ActiveSelection stores children in group coordinates; history and clipboard always store image coordinates.
+const serializeMark=(o:FabricObject):Record<string,unknown>=>{
+  const {translateX,translateY,scaleX,scaleY,...transform}=util.qrDecompose(o.calcTransformMatrix());
+  return {...o.toObject(['lassoTool']),...transform,scaleX:Math.abs(scaleX),scaleY:Math.abs(scaleY),left:translateX,top:translateY,originX:'center',originY:'center',flipX:scaleX<0,flipY:scaleY<0};
+};
 
 /** Fabric owns object editing; this adapter owns tools, bounded history and pixels.
  * No eSearch application/tool source is copied into this module. */
@@ -23,15 +29,21 @@ export class AnnotationEditor {
   private draft: Mark | null = null;
   private cropDraft: CaptureRect | null = null;
   private number = 1;
+  private objectClipboard: Record<string, unknown>[] | null = null;
+  private pasteOffset = 0;
+  private pointer: { x: number; y: number } | null = null;
+  private shift = false;
   constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void) {
     this.crop = { x:0,y:0,width:source.width,height:source.height };
-    this.canvas = new Canvas(element, { width:source.width,height:source.height,enableRetinaScaling:false,preserveObjectStacking:true,selection:false,backgroundColor:'#fff',renderOnAddRemove:false });
+    this.canvas = new Canvas(element, { width:source.width,height:source.height,enableRetinaScaling:false,preserveObjectStacking:true,selection:false,altActionKey:undefined,backgroundColor:'#fff',renderOnAddRemove:false });
     this.canvas.backgroundImage = new FabricImage(source,{originX:'left',originY:'top'});
     this.canvas.on('mouse:down',e=>this.down(e.scenePoint,e.target));
-    this.canvas.on('mouse:move',e=>this.move(e.scenePoint));
+    this.canvas.on('mouse:move',e=>{this.shift=e.e.shiftKey;this.move(e.scenePoint);});
     this.canvas.on('mouse:up',()=>this.up());
     this.canvas.on('path:created',({path})=>{(path as Mark).lassoTool=this.tool;this.commit();});
     this.canvas.on('object:modified',()=>this.commit());
+    this.canvas.on('object:scaling',e=>this.constrainTransform(e));
+    this.canvas.on('object:rotating',e=>this.constrainTransform(e));
     this.canvas.on('text:changed',()=>this.invalidate());
     this.canvas.on('text:editing:exited',()=>this.commit());
     this.save(); this.setTool(this.tool); this.canvas.requestRenderAll();
@@ -39,14 +51,16 @@ export class AnnotationEditor {
   get canUndo(){return this.cursor>0&&!this.restoring;}
   get canRedo(){return this.cursor<this.history.length-1&&!this.restoring;}
   get count(){return this.canvas.getObjects().length;}
+  get hasSelection(){return this.canvas.getActiveObjects().length>0;}
+  get hasCopiedObjects(){return Boolean(this.objectClipboard);}
   get contentKey(){return this.history[this.cursor];}
-  snapshot(): Snapshot {return {objects:this.canvas.getObjects().map(o=>o.toObject(['lassoTool'])),crop:{...this.crop},nextNumber:this.number,privacy:this.privacy};}
+  snapshot(): Snapshot {return {objects:this.canvas.getObjects().map(serializeMark),crop:{...this.crop},nextNumber:this.number,privacy:this.privacy};}
   async load(snapshot: Snapshot){
     this.restoring=true;
     try{
       const objects=await util.enlivenObjects<FabricObject>(snapshot.objects);
       if(this.disposed){objects.forEach(o=>o.dispose());return;}
-      this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(o));
+      this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(this.decorate(o,(o as Mark).lassoTool)));
       this.crop={...snapshot.crop};this.number=snapshot.nextNumber;this.history=[];this.cursor=-1;
       this.setTool(this.tool);this.save();this.canvas.requestRenderAll();
     }finally{this.restoring=false;}
@@ -55,12 +69,14 @@ export class AnnotationEditor {
   get privacy(){return this.canvas.getObjects().filter(o=>['redact','mosaic','blur'].includes((o as Mark).lassoTool||'')).map(o=>{const r=o.getBoundingRect();return {x:r.left,y:r.top,width:r.width,height:r.height};});}
   sample(x:number,y:number){
     x=Math.floor(x);y=Math.floor(y);if(x<this.crop.x||y<this.crop.y||x>=this.crop.x+this.crop.width||y>=this.crop.y+this.crop.height)return null;
+    // Fabric draws selection controls on its upper canvas; the lower canvas contains only image pixels.
     const canvas=this.canvas.lowerCanvasEl,ctx=canvas.getContext('2d')!,pixel=ctx.getImageData(x,y,1,1).data;
     const preview=document.createElement('canvas');preview.width=17;preview.height=17;preview.getContext('2d')!.drawImage(canvas,x-8,y-8,17,17,0,0,17,17);
-    return {color:'#'+[pixel[0],pixel[1],pixel[2]].map(v=>v.toString(16).padStart(2,'0')).join(''),image:preview.toDataURL(),x,y};
+    return {color:'#'+[pixel[0],pixel[1],pixel[2]].map(v=>v.toString(16).padStart(2,'0')).join(''),rgb:`rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`,image:preview.toDataURL(),x,y};
   }
-  private decorate(o: Mark, tool: Tool){o.lassoTool=tool;o.set({borderColor:'#bd7658',cornerColor:'#bd7658',cornerStrokeColor:'#fff',transparentCorners:false,cornerSize:10});return o;}
+  private decorate(o: Mark, tool: Tool | undefined){o.lassoTool=tool;o.set({borderColor:'#bd7658',cornerColor:'#bd7658',cornerStrokeColor:'#fff',transparentCorners:false,cornerSize:10});return o;}
   setTool(tool: Tool){
+    if(this.start)this.up();
     if(this.isEditingText)(this.canvas.getActiveObject() as IText).exitEditing();
     this.tool=tool;this.canvas.discardActiveObject();this.canvas.selection=tool==='select';this.canvas.skipTargetFind=tool!=='select';
     this.canvas.isDrawingMode=tool==='pen';
@@ -102,9 +118,13 @@ export class AnnotationEditor {
     }
     this.start=point;
   }
+  setShift(pressed:boolean){this.shift=pressed;if(this.start&&this.pointer)this.move(this.pointer);}
   private move(p:{x:number;y:number}){
     if(!this.start||this.restoring)return;
-    const end=this.point(p),r=box(this.start,end);
+    this.pointer=p;
+    let end=this.point(p);
+    if(this.shift&&['rectangle','ellipse','line','arrow'].includes(this.tool))end=constrainedEnd(this.start,end,this.crop,['line','arrow'].includes(this.tool)?'angle':'square');
+    const r=box(this.start,end);
     if(this.tool==='crop'){this.cropDraft=r;this.preview(r);return;}
     if(Math.hypot(end.x-this.start.x,end.y-this.start.y)<2){if(this.draft){this.canvas.remove(this.draft);this.draft=null;this.canvas.requestRenderAll();}return;}
     if(this.draft)this.canvas.remove(this.draft);
@@ -120,7 +140,7 @@ export class AnnotationEditor {
   }
   private up(){
     if(!this.start){if(this.tool==='select'||this.tool==='pen')this.commit();return;}
-    this.start=null;
+    this.start=null;this.pointer=null;
     if(this.tool==='crop'){const r=this.cropDraft;this.cropDraft=null;this.preview(null);if(r&&r.width>=2&&r.height>=2)this.applyCrop(r);else this.changed();return;}
     if(!this.draft){this.changed();return;}
     let o=this.draft;this.draft=null;
@@ -149,8 +169,48 @@ export class AnnotationEditor {
     this.commit();
   }
   resetCrop(){this.crop={x:0,y:0,width:this.source.width,height:this.source.height};this.commit();}
-  remove(){const objects=this.canvas.getActiveObjects();if(!objects.length)return;this.invalidate();this.canvas.discardActiveObject();this.canvas.remove(...objects);this.commit();this.canvas.requestRenderAll();}
-  nudge(dx:number,dy:number){const objects=this.canvas.getActiveObjects();if(!objects.length)return;this.invalidate();for(const o of objects){o.set({left:o.left+dx,top:o.top+dy});o.setCoords();}this.canvas.requestRenderAll();this.commit();}
+  /** The clipboard belongs to this editor session. It never writes the system image clipboard. */
+  copy(){
+    if(this.restoring||this.disposed||this.isEditingText)return false;
+    const objects=this.canvas.getActiveObjects();if(!objects.length)return false;
+    this.objectClipboard=objects.map(serializeMark);
+    this.pasteOffset=0;return true;
+  }
+  async paste(){
+    if(!this.objectClipboard||this.restoring||this.disposed||this.start||this.isEditingText)return;
+    this.restoring=true;this.invalidate();
+    try{
+      const objects=await util.enlivenObjects<Mark>(this.objectClipboard);
+      if(this.disposed){objects.forEach(o=>o.dispose());return;}
+      this.canvas.discardActiveObject();this.setTool('select');
+      const offset=this.pasteOffset+16,rects=objects.map(o=>o.getBoundingRect());
+      const left=Math.min(...rects.map(r=>r.left)),top=Math.min(...rects.map(r=>r.top)),right=Math.max(...rects.map(r=>r.left+r.width)),bottom=Math.max(...rects.map(r=>r.top+r.height));
+      const dx=Math.max(this.crop.x-left,Math.min(offset,this.crop.x+this.crop.width-right)),dy=Math.max(this.crop.y-top,Math.min(offset,this.crop.y+this.crop.height-bottom));
+      for(const o of objects){this.decorate(o,o.lassoTool);o.set({left:o.left+dx,top:o.top+dy,selectable:true,evented:true});this.canvas.add(o);o.setCoords();}
+      this.canvas.setActiveObject(objects.length===1?objects[0]:new ActiveSelection(objects,{canvas:this.canvas}));
+      this.pasteOffset=offset;this.canvas.requestRenderAll();
+    }finally{this.restoring=false;if(!this.disposed)this.commit();}
+  }
+  async duplicate(){if(this.copy())await this.paste();}
+  private constrainTransform({e,transform,target}:BasicTransformEvent & {target:FabricObject}){
+    if(!e.shiftKey)return;
+    const o=target as Mark,kind=o.lassoTool;
+    const anchor=o.getPositionByOrigin(transform.originX,transform.originY);
+    if((kind==='rectangle'||kind==='ellipse')&&transform.action!=='rotate'){
+      const side=Math.max(o.width*o.scaleX,o.height*o.scaleY);
+      if(o.width&&o.height)o.set({scaleX:side/o.width,scaleY:side/o.height});
+    }else if(kind==='line'||kind==='arrow'){
+      const path=o instanceof Path?o.path:null;
+      const start=path?.[0],end=path?.[1];
+      const dx=o instanceof Line?o.x2-o.x1:start?.[0]==='M'&&end?.[0]==='L'?end[1]-start[1]:0;
+      const dy=o instanceof Line?o.y2-o.y1:start?.[0]==='M'&&end?.[0]==='L'?end[2]-start[2]:0;
+      const angle=o.angle+Math.atan2(dy*o.scaleY*(o.flipY?-1:1),dx*o.scaleX*(o.flipX?-1:1))*180/Math.PI;
+      o.rotate(o.angle+Math.round(angle/45)*45-angle);
+    }else return;
+    o.setPositionByOrigin(anchor,transform.originX,transform.originY);o.setCoords();
+  }
+  remove(){const objects=this.canvas.getActiveObjects();if(!objects.length||this.restoring)return;this.invalidate();this.canvas.discardActiveObject();this.canvas.remove(...objects);this.commit();this.canvas.requestRenderAll();}
+  nudge(dx:number,dy:number){const object=this.canvas.getActiveObject();if(!object||this.restoring)return;this.invalidate();object.set({left:object.left+dx,top:object.top+dy});object.setCoords();this.canvas.requestRenderAll();this.commit();}
   private save(){
     const snapshot=this.snapshot();
     const json=JSON.stringify(snapshot);if(this.history[this.cursor]===json)return;
@@ -166,7 +226,7 @@ export class AnnotationEditor {
       const snap=JSON.parse(this.history[next]) as Snapshot;
       const objects=await util.enlivenObjects<FabricObject>(snap.objects);
       if(this.disposed){objects.forEach(o=>o.dispose());return;}
-      this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(o));this.crop=snap.crop;this.number=snap.nextNumber;this.cursor=next;this.setTool(this.tool);this.canvas.requestRenderAll();
+      this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(this.decorate(o,(o as Mark).lassoTool)));this.crop=snap.crop;this.number=snap.nextNumber;this.cursor=next;this.setTool(this.tool);this.canvas.requestRenderAll();
     }finally{this.restoring=false;if(!this.disposed)this.changed();}
   }
   async pixels(){
@@ -176,5 +236,5 @@ export class AnnotationEditor {
     const blob=await new Promise<Blob>((resolve,reject)=>flat.toBlob(b=>b?resolve(b):reject(Error('图片合成失败')),'image/png'));
     return new Uint8Array(await blob.arrayBuffer());
   }
-  dispose(){this.disposed=true;void this.canvas.dispose();this.history=[];}
+  dispose(){this.disposed=true;this.objectClipboard=null;void this.canvas.dispose();this.history=[];}
 }
