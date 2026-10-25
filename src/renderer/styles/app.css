@@ -308,9 +308,12 @@ svg.lucide { stroke-width: 1.6; flex-shrink: 0; }
 .l-picker-list button:hover, .l-picker-list button[aria-selected="true"] { background: var(--surface); }
 .l-picker-list button small { margin-left: auto; font-family: var(--font-ui); font-size: 11px; color: var(--ink-3); }
 
-/* Selection action bar: the whole non-focusable window is the capsule. */
+/* Selection action bar: the whole non-focusable window is the capsule; the window supplies the rounded corners and WindowMotion the fade. */
 body.ab-body { background: transparent; overflow: hidden; user-select: none; }
-.ab-bar { position: relative; display: inline-flex; align-items: center; gap: 2px; height: 40px; padding: 0 5px 0 10px; border-radius: 12px; background: var(--ink); box-shadow: 0 14px 30px -10px rgba(20, 20, 19, 0.55); white-space: nowrap; font-family: var(--font-ui); animation: ab-in var(--t-fast) var(--ease-out); }
+.ab-bar { position: relative; display: inline-flex; align-items: center; gap: 2px; height: 100vh; padding: 0 5px 0 10px; background: var(--ink); white-space: nowrap; font-family: var(--font-ui); }
+.ab-mark { display: flex; margin-right: 4px; }
+.ab-bar button.pressed:disabled { opacity: 1; }
+.ab-bar button svg { display: block; }
 .ab-bar button { height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; font-size: 14px; color: var(--on-ink); transition: background var(--t-fast); }
 .ab-bar button:hover, .ab-bar button.hot { background: rgba(250, 249, 245, 0.14); }
 .ab-bar button.pressed { background: var(--clay); color: #FFFFFF; }
@@ -327,5 +330,4 @@ body.ab-body { background: transparent; overflow: hidden; user-select: none; }
 @keyframes l-rotate { to { transform: rotate(360deg); } }
 @keyframes l-blink { to { opacity: 0; } }
 @keyframes l-grow { from { transform: scaleX(.3); opacity: 0; } to { transform: none; opacity: 1; } }
-@keyframes ab-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @keyframes ab-progress { from { width: 0; } to { width: 100%; } }

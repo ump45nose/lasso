@@ -5,6 +5,8 @@ import { WindowMotion } from './motion';
 import { fitToWorkArea } from './position';
 import type { ActionBarState, Preset, SelectionContext, Settings } from '../shared/contracts';
 
+const HEIGHT = 40;
+
 export class ActionBar {
   readonly window: BrowserWindow;
   private motion: WindowMotion;
@@ -14,9 +16,9 @@ export class ActionBar {
   private busy = false;
   constructor(private run: (id: string, selection: SelectionContext) => Promise<void>, private settings: () => void) {
     this.window = new BrowserWindow({
-      width: 340, height: 46, frame: false, show: false, resizable: false, movable: false,
+      width: 340, height: HEIGHT, frame: false, show: false, resizable: false, movable: false,
       focusable: false, skipTaskbar: true, alwaysOnTop: true, acceptFirstMouse: true,
-      backgroundColor: '#FFFEFB', roundedCorners: true,
+      backgroundColor: '#141413', roundedCorners: true,
       webPreferences: { preload: join(__dirname, 'action-bar-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
     });
     this.motion = new WindowMotion(this.window);
@@ -40,7 +42,7 @@ export class ActionBar {
     ipcMain.on('bar:resize', (event, width: number) => {
       check(event);
       if (typeof width === 'number' && Number.isFinite(width) && width > 0) {
-        this.window.setSize(Math.min(900, Math.ceil(width)), 46);
+        this.window.setSize(Math.min(900, Math.ceil(width)), HEIGHT);
         if (this.selection) this.position(this.selection);
       }
     });

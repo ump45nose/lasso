@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
+import { Crop, Download, X } from 'lucide-react';
+import { BrandMark } from '../BrandMark';
 import type { CaptureRect, RegionCandidate, ScreenshotAPI, ScreenshotState } from '../../shared/capture';
 import './capture.css';
 declare global { interface Window { screenshot: ScreenshotAPI } }
@@ -26,7 +28,7 @@ export function Screenshot(){
   const level=candidate?Math.max(0,candidates.findIndex(r=>sameRegion(r,candidate))):0;
   const selected=draft||(state.phase==='result'?state.selection:candidate);
   const rectStyle=selected?{left:selected.x,top:selected.y,width:selected.width,height:selected.height}:undefined;
-  function down(e:React.PointerEvent){if((e.target as HTMLElement).closest('button,.capture-toolbar'))return;e.preventDefault();const handle=(e.target as HTMLElement).dataset.handle||'';if(state!.phase==='result'&&!handle)return;gesture.current={x:e.clientX,y:e.clientY,original:state!.selection,handle,dragged:false};e.currentTarget.setPointerCapture(e.pointerId);}
+  function down(e:React.PointerEvent){if((e.target as HTMLElement).closest('button,.cap-tools'))return;e.preventDefault();const handle=(e.target as HTMLElement).dataset.handle||'';if(state!.phase==='result'&&!handle)return;gesture.current={x:e.clientX,y:e.clientY,original:state!.selection,handle,dragged:false};e.currentTarget.setPointerCapture(e.pointerId);}
   function move(e:React.PointerEvent){
     const x=Math.max(0,Math.min(state!.width,e.clientX)),y=Math.max(0,Math.min(state!.height,e.clientY));setPoint({x,y});
     const g=gesture.current;if(!g){if(state!.phase==='selecting'){if(choice&&(Math.hypot(x-choice.x,y-choice.y)>=5||!contains(choice.region,x,y)))setChoice(null);window.screenshot.hover(x,y);}return;}
@@ -35,16 +37,22 @@ export function Screenshot(){
     }else if(g.dragged)setDraft({x:Math.min(g.x,x),y:Math.min(g.y,y),width:Math.abs(x-g.x),height:Math.abs(y-g.y)});
   }
   function up(){const g=gesture.current;if(!g)return;const r=draft||candidate;gesture.current=null;setDraft(null);if(r&&r.width>=2&&r.height>=2)void window.screenshot.select(r);}
-  const toolbarTop=selected?Math.min(state.height-58,selected.y+selected.height+12):20;
-  return <div className="capture-surface" onPointerDown={down} onPointerMove={move} onPointerUp={up} onWheel={e=>{if(state.phase==='selecting'&&candidates.length){const next=(level+(e.deltaY>0?1:-1)+candidates.length)%candidates.length;setChoice({region:candidates[next],...point});}}}>
-    <img className="capture-background" src={state.image} draggable={false} alt="冻结的屏幕"/>
-    {selected?<div className="capture-region" style={rectStyle}>
-      <span className="capture-size" style={selected.y<32?{top:5,bottom:'auto'}:undefined}>{Math.round(selected.width)} × {Math.round(selected.height)}{state.phase==='selecting'&&candidate?` · ${labels[candidate.source]} ${Math.min(level+1,candidates.length)}/${candidates.length}`:''}</span>
-      {state.phase==='result'&&<><div className="capture-drag" data-handle="move"/>{['nw','n','ne','e','se','s','sw','w'].map(h=><i key={h} className={'capture-handle '+h} data-handle={h}/>)}</>}
-    </div>:<div className="capture-dim"/>}
-    {state.phase==='result'&&selected?<div className="capture-toolbar" style={{top:toolbarTop,left:Math.max(12,Math.min(state.width-450,selected.x))}}>
-      <button onClick={()=>void act('reselect')}>重新选区</button><button onClick={()=>void act('save')}>保存</button><button onClick={()=>void act('image')}>AI 预设</button><button className="capture-primary" onClick={()=>void act('copy')}>复制 ⌘C</button><button aria-label="取消截图" onClick={()=>void act('cancel')}>×</button>
-    </div>:<div className="capture-guide"><strong>截图</strong><span>悬停选区域 · 滚轮切换 · 拖动框选 · F 全屏</span><button onClick={()=>void act('cancel')}>取消 Esc</button></div>}
-    {error&&<div className="capture-error" role="alert">{error}</div>}
+  // The toolbar sits 12px under the selection, or above it when the screen edge is too close.
+  const toolbarTop=selected?(selected.y+selected.height+68<state.height?selected.y+selected.height+12:Math.max(12,selected.y-56)):20;
+  const source=draft?'手动框选':state.phase==='selecting'&&candidate?labels[candidate.source]:'';
+  return <div className="cap" onPointerDown={down} onPointerMove={move} onPointerUp={up} onWheel={e=>{if(state.phase==='selecting'&&candidates.length){const next=(level+(e.deltaY>0?1:-1)+candidates.length)%candidates.length;setChoice({region:candidates[next],...point});}}}>
+    <img className="cap-background" src={state.image} draggable={false} alt="冻结的屏幕"/>
+    {selected?<div className={'cap-rect'+(draft?' live':'')} style={rectStyle}>
+      <span className={'cap-size'+(selected.y<36?' inside':'')}><span className="mono">{Math.round(selected.width)} × {Math.round(selected.height)}</span>{source&&<span className="cap-source">{source}</span>}
+        {state.phase==='selecting'&&!draft&&candidates.length>1&&<span className="cap-levels" aria-label={`第 ${level+1} 层，共 ${candidates.length} 层`}>{candidates.map((_,i)=><i key={i} className={i===level?'on':''}/>)}</span>}</span>
+      {state.phase==='result'&&!draft&&<><div className="cap-drag" data-handle="move"/>{['nw','n','ne','e','se','s','sw','w'].map(h=><i key={h} className={'cap-handle '+h} data-handle={h}/>)}</>}
+    </div>:<div className="cap-dim"/>}
+    {state.phase==='result'&&selected&&!draft&&<div className="cap-tools" role="toolbar" aria-label="截图操作" style={{top:toolbarTop,left:Math.max(12,Math.min(state.width-440,selected.x))}}>
+      <button onClick={()=>void act('reselect')}><Crop size={14}/>重新选区</button><button onClick={()=>void act('save')}><Download size={14}/>保存</button><button onClick={()=>void act('image')}><BrandMark size={15}/>问 AI</button>
+      <span className="cap-sep"/><button className="primary" onClick={()=>void act('copy')}>复制<span className="mono cap-key">⌘C</span></button><button aria-label="取消截图" title="取消截图 Esc" onClick={()=>void act('cancel')}><X size={14}/></button>
+    </div>}
+    <div className="cap-guide">{state.phase==='result'?<><span><b>方向键</b> 微调</span><span><b>⇧</b> 10 点</span><span><b>↵</b> 复制</span><span><b>⌘S</b> 保存</span><span><b>Esc</b> 取消</span></>
+      :<><span>悬停选区域</span><span><b>滚轮</b> 切换层级</span><span><b>拖动</b> 框选</span><span><b>F</b> 全屏</span><button onClick={()=>void act('cancel')}><b>Esc</b> 取消</button></>}</div>
+    {error&&<div className="cap-toast error" role="alert">{error}</div>}
   </div>;
 }
