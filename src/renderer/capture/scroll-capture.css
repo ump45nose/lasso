@@ -1,0 +1,45 @@
+/* Scroll capture keeps the existing ink control capsule and warm desk editor language. */
+.scroll-controls, .scroll-review { position: fixed; inset: 0; overflow: hidden; font-family: var(--font-ui); font-size: 13px; user-select: none; }
+.scroll-controls svg, .scroll-review svg { width: 15px; height: 15px; stroke-width: 1.6; flex-shrink: 0; }
+.scroll-controls { padding: 12px 14px; background: var(--ink); color: var(--on-ink); }
+.scroll-controls-row { display: flex; align-items: center; gap: 9px; min-height: 28px; }
+.scroll-controls strong { font-weight: 500; white-space: nowrap; }
+.scroll-indicator { width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: var(--clay); }
+.scroll-indicator.paused { background: var(--oat); }
+.scroll-measure { color: var(--oat); font-size: 11px; white-space: nowrap; }
+.scroll-controls-actions { display: flex; align-items: center; gap: 5px; margin-left: auto; }
+.scroll-controls .l-btn { background: transparent; border-color: rgba(250, 249, 245, 0.22); color: var(--on-ink); }
+.scroll-controls .l-btn:hover:not(:disabled) { background: var(--clay); border-color: var(--clay); color: var(--on-ink); }
+.scroll-controls .l-btn:active:not(:disabled) { background: var(--clay-press); }
+.scroll-controls-message { margin: 9px 0 0; color: var(--oat); font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.scroll-controls-message.error { color: var(--clay); }
+.scroll-review { display: flex; flex-direction: column; background: var(--desk); color: var(--ink); }
+.scroll-review-header { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 18px; flex-shrink: 0; -webkit-app-region: drag; }
+.scroll-review-header strong { font-family: var(--font-display); font-size: 15px; font-weight: 500; }
+.scroll-review-header .mono { color: var(--ink-3); font-size: 11.5px; }
+.scroll-review-body { display: flex; flex: 1; min-height: 0; border-top: 0.5px solid var(--line); border-bottom: 0.5px solid var(--line); }
+.scroll-overview { display: flex; flex-direction: column; gap: 8px; width: 174px; flex-shrink: 0; padding: 14px; background: var(--bg); border-right: 0.5px solid var(--line); }
+.scroll-label { display: flex; align-items: center; justify-content: space-between; color: var(--ink-3); font-size: 12.5px; }
+.scroll-label .mono { font-size: 11px; }
+.scroll-thumbnail { display: flex; align-items: center; justify-content: center; flex: 1; min-height: 80px; overflow: hidden; padding: 8px; border-radius: 8px; background: var(--sand); }
+.scroll-thumbnail img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.scroll-seams { flex-shrink: 0; max-height: 34%; min-height: 32px; overflow: auto; }
+.scroll-seams button { display: flex; align-items: center; gap: 5px; width: 100%; height: 29px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font-size: 12.5px; }
+.scroll-seams button .mono { margin-left: auto; color: var(--ink-4); font-size: 10px; }
+.scroll-seams button:hover, .scroll-seams button[aria-pressed="true"] { background: var(--clay-wash); color: var(--clay-ink); }
+.scroll-seams button[aria-pressed="true"] { background: var(--clay-wash-2); }
+.scroll-seams p { margin: 4px 0; color: var(--ink-4); font-size: 12.5px; }
+.scroll-detail { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.scroll-detail-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 44px; padding: 0 18px; flex-shrink: 0; color: var(--ink-3); font-size: 12.5px; }
+.scroll-detail-tools .l-seg button { height: 25px; padding: 0 9px; font-size: 12.5px; }
+.scroll-detail-viewport { flex: 1; min-height: 0; overflow: auto; padding: 24px 32px; overscroll-behavior: contain; }
+.scroll-detail-image { position: relative; margin: 0 auto; flex-shrink: 0; box-shadow: var(--shadow-window); }
+.scroll-detail-image > img { display: block; width: 100%; height: 100%; }
+.scroll-seam-line { position: absolute; left: 0; right: 0; height: 1px; background: var(--clay-line); pointer-events: none; }
+.scroll-seam-line.selected { height: 2px; background: var(--clay); }
+.scroll-seam-line span { position: absolute; top: 3px; right: 4px; padding: 1px 5px; border-radius: 4px; background: var(--ink); color: var(--on-ink); font-size: 10px; font-style: normal; }
+.scroll-review-footer { display: flex; flex-direction: column; gap: 10px; padding: 10px 18px 14px; flex-shrink: 0; }
+.scroll-review-note { min-height: 19px; color: var(--ink-3); font-size: 12.5px; }
+.scroll-review-note[role="alert"] { color: var(--danger); }
+.scroll-review-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.scroll-review-actions .l-btn:first-child { margin-right: auto; }

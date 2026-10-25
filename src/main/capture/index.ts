@@ -6,12 +6,13 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import type { CaptureFrame, CaptureMode, CaptureRect, ExportAction, OCRRequest, OCRResult, RegionCandidate, ScreenshotState } from '../../shared/capture';
+import type { CaptureFrame, CaptureMode, CaptureRect, ExportAction, OCRRequest, OCRResult, RegionCandidate, ScreenshotState, ScrollCaptureAction } from '../../shared/capture';
 import { pixelRect } from '../../shared/capture';
 import { clip, contains, rank } from './candidates';
 import { OCRService, type VisionOCR } from './ocr';
 import { validateAnnotations, type PinnedDocument } from './document';
 import { PinManager } from './pins';
+import { ScrollSession, type ScrollReply } from './scroll-session';
 type WindowRect = CaptureRect & { pid: number; id: number };
 const run=promisify(execFile);
 /** Shadow margins of a `screencapture -l` image, read from where the window's opaque pixels begin on its middle row and column. */
@@ -51,11 +52,15 @@ export class CaptureManager {
   private exporting=false;
   private grabbing=false;
   private editorKey: string | null=null;
+  private scroll: ScrollSession | null=null;
+  private scrollFinishing=false;
+  private scrollEditing=false;
   readonly pins: PinManager;
   private displayRemoved=(_event:Electron.Event,display:Electron.Display)=>{if(display.id===this.displayId)this.displayChanged();};
   private displayMetrics=(_event:Electron.Event,display:Electron.Display,metrics:string[])=>{if(display.id===this.displayId&&metrics.some(metric=>['bounds','scaleFactor','rotation'].includes(metric)))this.displayChanged();};
   private displayChanged(){
     if(this.state?.phase==='selecting'){this.cancel();return;}
+    if(this.state?.phase==='scrolling'){const session=this.scroll;void this.finishScroll('显示配置已变化，采集已结束；已匹配结果保留。').catch(error=>{if(this.scroll!==session)return;if(!session?.metadata.segments)this.cancel(true);else this.scrollError(error);});return;}
     if(this.win&&!this.win.isDestroyed()){const display=screen.getDisplayMatching(this.win.getBounds());this.displayId=display.id;this.win.setBounds(display.workArea);}
   }
   private vision: VisionOCR | null=null;
@@ -72,6 +77,8 @@ export class CaptureManager {
     ipcMain.handle('screenshot:select',(e,r:CaptureRect)=>{assert(e);this.select(r);});
     ipcMain.handle('screenshot:window',async(e,id:number,shadow:boolean)=>{assert(e);try{await this.captureWindow(id,shadow===true);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('screenshot:action',async(e,a:string)=>{assert(e);try{await this.action(a);return {error:null};}catch(error){return {error:(error as Error).message};}});
+    ipcMain.handle('screenshot:scroll-start',async(e,r:CaptureRect)=>{assert(e);try{await this.startScroll(r);return {error:null};}catch(error){return {error:(error as Error).message};}});
+    ipcMain.handle('screenshot:scroll-action',async(e,a:ScrollCaptureAction)=>{assert(e);try{await this.scrollAction(a);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('screenshot:recognize',(e,frame:OCRRequest)=>{assert(e);return this.recognize(frame);});
     ipcMain.on('screenshot:invalidate-ocr',(e,request:{id:string;revision:number})=>{if(!owns(e)||!request||this.state?.phase!=='result'||request.id!==this.state.editId||!Number.isSafeInteger(request.revision)||request.revision<this.editRevision)return;this.editRevision=request.revision;this.ocr.invalidate(request.id,request.revision);});
     ipcMain.handle('screenshot:export',async(e,frame:CaptureFrame,action:ExportAction,format:'png'|'jpeg')=>{assert(e);try{await this.exportFrame(frame,action,format);return {error:null};}catch(error){return {error:(error as Error).message};}});
@@ -151,7 +158,7 @@ export class CaptureManager {
   }
   private detectScale={x:1,y:1};
   /** The backdrop is sent once with the initial state; the edit image only when it changes. */
-  private publish(includeImage=false){if(this.state&&this.win&&!this.win.isDestroyed()){const {image,backdrop,...rest}=this.state;this.win.webContents.send('screenshot:changed',includeImage?{...rest,image}:rest);}}
+  private publish(includeImage=false){if(this.state&&this.win&&!this.win.isDestroyed()){const {image,backdrop,...rest}=this.state;this.win.webContents.send('screenshot:changed',includeImage?{...rest,image,backdrop}:rest);}}
   private stopDetection(){this.seq++;this.pending=null;this.fixed=[];this.windows=[];this.elements=[];this.edges=[];this.colors=[];this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;}
   private select(r:CaptureRect){
     if(!r||![r.x,r.y,r.width,r.height].every(Number.isFinite))throw Error('无效的选区');
@@ -160,6 +167,98 @@ export class CaptureManager {
     const pixels=pixelRect(rect,s.width,s.height,s.pixelWidth,s.pixelHeight);
     // The editing session owns only the chosen pixels, never the full desktop.
     this.edit(nativeImage.createFromBuffer(this.image.crop(pixels).toPNG()),rect);
+  }
+  /** Keep the entire control window outside the capture, so the selected region has no overlay to intercept input. */
+  private scrollControlBounds(r:CaptureRect):CaptureRect {
+    const b=this.bounds,h=118,w=Math.min(700,b.width),gap=8;
+    const x=Math.round(Math.max(0,Math.min(b.width-w,r.x+(r.width-w)/2)));
+    if(r.y>=h+gap)return {x:b.x+x,y:b.y+Math.round(r.y-h-gap),width:w,height:h};
+    if(b.height-r.y-r.height>=h+gap)return {x:b.x+x,y:b.y+Math.ceil(r.y+r.height+gap),width:w,height:h};
+    if(r.x>=w+gap)return {x:b.x+Math.floor(r.x-w-gap),y:b.y+Math.max(0,Math.min(b.height-h,Math.round(r.y))),width:w,height:h};
+    if(b.width-r.x-r.width>=w+gap)return {x:b.x+Math.ceil(r.x+r.width+gap),y:b.y+Math.max(0,Math.min(b.height-h,Math.round(r.y))),width:w,height:h};
+    throw Error('请缩小选区，在上方或下方留出 126 像素放置控制条；控制条不会进入截图。');
+  }
+  private async startScroll(r:CaptureRect){
+    const s=this.state,win=this.win;
+    if(s?.phase!=='selecting'||!this.image||!win||this.scroll)throw Error('请先选择滚动区域');
+    if(!r||![r.x,r.y,r.width,r.height].every(Number.isFinite))throw Error('无效的滚动选区');
+    const rect=clip(r,{x:0,y:0,width:s.width,height:s.height});
+    if(!rect||rect.width<64||rect.height<96)throw Error('滚动选区至少需要 64 × 96 像素');
+    const pixels=pixelRect(rect,s.width,s.height,s.pixelWidth,s.pixelHeight);
+    if(pixels.height>16384||pixels.width*pixels.height>20_000_000)throw Error('选区超过 16384 像素高度或 2000 万像素，请缩小选区');
+    const controls=this.scrollControlBounds(rect),displayId=this.displayId,epoch=this.epoch;
+    const displayConfig=screen.getAllDisplays().find(display=>display.id===displayId);
+    if(!displayConfig)throw Error('屏幕已断开，请重新截图');
+    const {scaleFactor,rotation}=displayConfig;
+    const unchanged=()=>{const display=screen.getAllDisplays().find(display=>display.id===displayId);return display&&display.bounds.x===this.bounds.x&&display.bounds.y===this.bounds.y&&display.bounds.width===s.width&&display.bounds.height===s.height&&display.scaleFactor===scaleFactor&&display.rotation===rotation;};
+    this.stopDetection();this.ocr.reset();this.image=null;
+    Object.assign(s,{phase:'scrolling',image:'',backdrop:undefined,placement:undefined,candidates:[],windows:[],selection:null,scroll:{status:'running',width:pixels.width,height:0,segments:0,seams:[],message:'正在采集首帧…'}});
+    // Hiding the focused overlay returns focus to the underlying app. The controls never take focus back.
+    win.hide();win.setFocusable(false);win.setBounds(controls);win.setBackgroundColor('#141413');this.publish(true);win.showInactive();
+    const session=new ScrollSession(async()=>{
+      if(!unchanged())throw Error('屏幕配置已变化');
+      const sources=await desktopCapturer.getSources({types:['screen'],thumbnailSize:{width:s.pixelWidth,height:s.pixelHeight},fetchWindowIcons:false});
+      if(this.scroll!==session||epoch!==this.epoch)throw Error('滚动截图会话已取消');
+      if(!unchanged())throw Error('屏幕配置已变化，已匹配结果保留');
+      const source=sources.find(source=>source.display_id===String(displayId)||source.id.startsWith('screen:'+displayId+':'));
+      if(!source||source.thumbnail.isEmpty())throw Error('屏幕采集失败，请暂停后重试');
+      const size=source.thumbnail.getSize();if(size.width!==s.pixelWidth||size.height!==s.pixelHeight)throw Error('屏幕像素尺寸已变化');
+      const image=nativeImage.createFromBuffer(source.thumbnail.toPNG()).crop(pixels);
+      return {width:pixels.width,height:pixels.height,data:new Uint8Array(image.toBitmap())};
+    },()=>{
+      if(this.scroll!==session||this.state!==s||s.phase!=='scrolling')return;
+      const m=session.metadata;s.scroll={status:session.status==='running'?'running':'paused',width:m.width||pixels.width,height:m.height,segments:m.segments,seams:m.seams,message:session.message};this.publish();
+    },()=>{if(this.scroll===session)void this.finishScroll(session.message).catch(error=>this.scrollError(error));});
+    this.scroll=session;
+    await new Promise<void>(resolve=>setTimeout(resolve,180));
+    if(this.scroll===session&&epoch===this.epoch)await session.start();
+  }
+  private scrollError(error:unknown){
+    if(this.state?.scroll){this.state.scroll.message=(error as Error).message;this.state.scroll.status='paused';this.publish();}
+  }
+  private setScrollPreview(reply:ScrollReply,message:string){
+    if(!reply.data||!reply.width||!reply.height)throw Error('尚无已匹配画面，可继续采集或取消');
+    const image=nativeImage.createFromBitmap(Buffer.from(reply.data),{width:reply.width,height:reply.height,scaleFactor:1});
+    if(image.isEmpty())throw Error('滚动图片合成失败，已匹配结果仍保留');
+    this.image=image;
+    // Review uses full pixels within the existing file budget; an oversized file remains recoverable through undo.
+    const png=image.toPNG(),tooLarge=png.byteLength>64*1024*1024,s=this.state!;
+    const preview=tooLarge?image.resize({width:Math.min(1000,reply.width)}).toDataURL():'data:image/png;base64,'+png.toString('base64');
+    if(tooLarge)message='合成 PNG 超过 64 MiB，当前仅显示预览；'+(reply.segments>1?'请撤回末段后进入编辑。':'请取消后缩小选区重试。')+'原图未缩小。';
+    Object.assign(s,{phase:'review',backdrop:undefined,image:preview,scroll:{status:'review',width:reply.width,height:reply.height,segments:reply.segments,seams:reply.seams,message}});
+    this.publish(true);
+  }
+  private async finishScroll(message='已结束采集。检查接缝后进入编辑；可撤回末段。'){
+    const session=this.scroll,s=this.state;if(!session||s?.phase!=='scrolling'||this.scrollFinishing)return;
+    this.scrollFinishing=true;
+    try{
+      const reply=await session.finish();if(this.scroll!==session||this.state!==s)return;
+      this.setScrollPreview(reply,message);
+      const win=this.win!;win.hide();win.setFocusable(true);win.setResizable(true);win.setMinimumSize(760,500);
+      const area=screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+      win.setBounds(area);win.setBackgroundColor('#E9E6DD');win.setAlwaysOnTop(true,'floating');win.show();win.focus();
+    }catch(error){if(this.scroll===session){session.status='paused';this.scrollError(error);}throw error;}
+    finally{if(this.scroll===session)this.scrollFinishing=false;}
+  }
+  private async scrollAction(action:ScrollCaptureAction){
+    if(action==='cancel'){this.cancel(true);return;}
+    const session=this.scroll,s=this.state;if(!session||!s?.scroll)throw Error('滚动截图已结束');
+    if(this.scrollFinishing||this.scrollEditing)throw Error('正在处理滚动结果');
+    if(action==='pause'&&s.phase==='scrolling'){await session.pause();return;}
+    if(action==='resume'&&s.phase==='scrolling'){session.resume();return;}
+    if(action==='finish'&&s.phase==='scrolling'){await this.finishScroll();return;}
+    if(action==='undo'&&s.phase==='review'){
+      this.scrollFinishing=true;try{const reply=await session.undo();if(this.scroll===session)this.setScrollPreview(reply,'已撤回末段，请重新检查接缝。');}finally{if(this.scroll===session)this.scrollFinishing=false;}return;
+    }
+    if(action==='edit'&&s.phase==='review'&&this.image){
+      this.scrollEditing=true;
+      try{
+        const png=this.image.toPNG();if(png.byteLength>64*1024*1024)throw Error('合成 PNG 超过 64 MiB，'+(s.scroll.segments>1?'请撤回末段后再进入编辑。':'请取消后缩小选区重试。')+'图片未缩小。');
+        const size=this.image.getSize();session.dispose();this.scroll=null;this.editRevision=0;this.ocr.reset();
+        Object.assign(s,{phase:'result',editId:randomUUID(),image:this.image.toDataURL(),backdrop:undefined,placement:undefined,width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,selection:{x:0,y:0,...size},scroll:undefined,origin:'clipboard'});this.publish(true);
+      }finally{this.scrollEditing=false;}return;
+    }
+    throw Error('当前状态不支持此滚动操作');
   }
   /** Captures the whole window, including parts covered by other windows; with a shadow, the placement grows by its margins. */
   private async captureWindow(id:number,shadow:boolean){
@@ -284,7 +383,7 @@ export class CaptureManager {
     if(a==='reselect'){this.cancel();try{await this.start();}catch(error){dialog.showErrorBox('重新截图未能启动',(error as Error).message);}return;}
     throw Error('不支持的截图操作');
   }
-  private release(restore=false){this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.displayId=null;this.win=null;this.after(restore);}
+  private release(restore=false){this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.displayId=null;this.win=null;this.after(restore);}
   cancel(restore=false){const win=this.win;this.release(restore);if(win&&!win.isDestroyed())win.destroy();}
-  dispose(){this.disposed=true;this.cancel();this.pins.dispose();screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:state','screenshot:select','screenshot:action','screenshot:recognize','screenshot:export','screenshot:copy-text','screenshot:send-text'])ipcMain.removeHandler(name);for(const name of ['screenshot:hover','screenshot:invalidate-ocr'])ipcMain.removeAllListeners(name);}
+  dispose(){this.disposed=true;this.cancel();this.pins.dispose();screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:state','screenshot:select','screenshot:action','screenshot:recognize','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:window','screenshot:scroll-start','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:hover','screenshot:invalidate-ocr'])ipcMain.removeAllListeners(name);}
 }

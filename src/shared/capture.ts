@@ -15,7 +15,9 @@ export const captureModes: CaptureMode[] = ['area', 'window', 'screen', 'front']
 export const captureModeLabels: Record<CaptureMode, string> = { area: '区域截图', window: '窗口截图', screen: '全屏截图', front: '前台窗口截图' };
 /** An on-screen window in overlay coordinates, front to back. */
 export interface CaptureWindow extends CaptureRect { id: number }
-export interface ScreenshotState { id: string; editId: string; image: string; backdrop?: string; placement?: CaptureRect; mode?: 'area' | 'window'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result'; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
+export interface ScrollCaptureState { status: 'running' | 'paused' | 'review'; width: number; height: number; segments: number; seams: number[]; message: string }
+export type ScrollCaptureAction = 'pause' | 'resume' | 'finish' | 'cancel' | 'undo' | 'edit';
+export interface ScreenshotState { id: string; editId: string; image: string; backdrop?: string; placement?: CaptureRect; mode?: 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
 export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean }
 export type PinAction = 'edit' | 'image' | 'copy' | 'close' | 'hide' | 'topmost' | 'opacity' | 'zoom-in' | 'zoom-out' | 'passthrough';
 /** Pin opacity steps; the options row cycles through them. */
@@ -35,6 +37,8 @@ export interface ScreenshotAPI {
   onState(callback: (state: ScreenshotState) => void): () => void;
   hover(x: number, y: number): void;
   select(rect: CaptureRect): Promise<void>;
+  startScroll(rect: CaptureRect): Promise<{error: string | null}>;
+  scrollAction(action: ScrollCaptureAction): Promise<{error: string | null}>;
   action(action: 'cancel' | 'reselect' | 'screen'): Promise<{ error: string | null }>;
   captureWindow(id: number, shadow: boolean): Promise<{ error: string | null }>;
   recognize(request: OCRRequest): Promise<OCRResult>;
