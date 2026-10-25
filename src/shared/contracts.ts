@@ -124,9 +124,12 @@ export interface DesktopAPI {
   openPalette(scope: PaletteScope): Promise<void>;
   closePalette(): Promise<void>;
   onPalette(callback: (event: PaletteEvent) => void): () => void;
+  saveFonts(fonts: Settings['fonts']): Promise<{ error: string | null }>;
+  importFont(): Promise<{ font: ImportedFont | null; error: string | null }>;
+  removeFont(file: string): Promise<{ error: string | null }>;
   onState(callback: (state: ShellState) => void): () => void;
 }
-export interface ActionBarState { presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; busy: boolean }
+export interface ActionBarState { presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; busy: boolean; fonts: Pick<Settings, 'fonts' | 'importedFonts'> }
 export interface ActionBarAPI {
   getState(): Promise<ActionBarState>;
   runPreset(id: string): Promise<void>;

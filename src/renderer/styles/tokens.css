@@ -1,0 +1,59 @@
+/* Lasso design tokens · 纸上的套索. Source of truth: docs/design/v2/lasso.css. */
+:root {
+  color-scheme: light;
+  /* Ground and paper */
+  --bg: #FAF9F5;
+  --surface: #FFFFFF;
+  --sunken: #F5F4ED;
+  --sand: #F0EEE6;
+  --oat: #E3DACC;
+  --desk: #E9E6DD;
+  /* Ink (warm grays) */
+  --ink: #141413;
+  --ink-2: #3D3D3A;
+  --ink-3: #5E5D59;
+  --ink-4: #73726C;
+  --ink-5: #9C9A92;
+  --line: rgba(31, 30, 29, 0.12);
+  --line-strong: rgba(31, 30, 29, 0.22);
+  --line-heavy: rgba(31, 30, 29, 0.32);
+  /* The one accent */
+  --clay: #D97757;
+  --clay-ink: #A4502F;
+  --marker: rgba(217, 119, 87, 0.3);
+  --clay-halo: rgba(217, 119, 87, 0.22);
+  /* Semantic */
+  --olive: #5C6E45;
+  --danger: #B3412E;
+  --danger-wash: #F8E7E1;
+  --on-ink: #FAF9F5;
+  /* Type: every role defaults to serif; code stays monospace. fonts.ts overrides these from settings. */
+  --serif-fallback: 'Newsreader Variable', 'Songti SC', 'STSong', Georgia, serif;
+  --mono-fallback: 'SF Mono', Menlo, monospace;
+  --font-display: 'Anthropic Serif Text', 'Anthropic Serif', var(--serif-fallback);
+  --font-text: 'Anthropic Serif Text', 'Anthropic Serif', var(--serif-fallback);
+  --font-ui: 'Anthropic Serif Text', 'Anthropic Serif', var(--serif-fallback);
+  --font-mono: 'JetBrains Mono', var(--mono-fallback);
+  /* Elevation */
+  --shadow-tab: 0 1px 2px rgba(20, 20, 19, 0.06);
+  --shadow-card: 0 8px 24px -14px rgba(20, 20, 19, 0.3);
+  --shadow-window: 0 28px 60px -24px rgba(20, 20, 19, 0.4), 0 2px 8px rgba(20, 20, 19, 0.08);
+  --shadow-float: 0 30px 70px -20px rgba(20, 20, 19, 0.38), 0 4px 14px rgba(20, 20, 19, 0.08);
+  /* Motion */
+  --ease-out: cubic-bezier(.22, .68, 0, 1);
+  --t-fast: 120ms;
+  --t-base: 180ms;
+  --t-slow: 280ms;
+}
+
+* { box-sizing: border-box; }
+html, body { background: var(--bg); color: var(--ink); }
+body { margin: 0; font-family: var(--font-ui); font-size: 14px; line-height: 1.5; font-synthesis: none; -webkit-font-smoothing: antialiased; }
+button, input, textarea, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .45; }
+:focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
+code, .mono { font-family: var(--font-mono); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}

@@ -2,7 +2,12 @@ import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ArrowLeft, ArrowUpRight, Check, Maximize2, Minimize2, Minus, Pin, PinOff, RotateCw, Settings2, X, LoaderCircle, Sparkles, Copy, ScanLine } from 'lucide-react';
 import type { DesktopAPI, ShellState, Action } from '../shared/contracts';
+import '@fontsource-variable/newsreader/opsz.css';
+import '@fontsource/jetbrains-mono/400.css';
 import './style.css';
+import './styles/tokens.css';
+import './styles/app.css';
+import { useFonts } from './fonts';
 import { Screenshot } from './capture/Screenshot';
 import { BrandMark } from './BrandMark';
 import { ActionBar } from './ActionBar';
@@ -23,6 +28,7 @@ function App() {
   const [saved, setSaved] = useState(false);
   const [settingsTab, setSettingsTab] = useState<'presets' | 'general' | 'local' | 'apps'>('presets');
   const [captureError, setCaptureError] = useState('');
+  useFonts(state?.settings);
   useEffect(() => {
     const unsubscribe = window.desktop.onState(setState);
     void window.desktop.getState().then(setState);

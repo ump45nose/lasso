@@ -13,7 +13,7 @@
 3. **投递步骤**：`DeliveryStatus` 增加 `steps` 与 `step`（open / model / fill / upload / send / edit），顺序跟随实际执行：打开 →（模型）→ 填入 →（图片）→ 发送 / 交给你。恢复与准备新对话不带步骤。
 4. **应用提示与图片标签**：`screenshotError` 改为 `notice`，剪贴板图片读取失败也写入。新增 `imageOpen` 与 action `show-image`，图片作为临时标签。
 5. **字体**：`settings.fonts`（display / text / ui / mono，默认 Anthropic Serif Text ×3 + JetBrains Mono）与 `importedFonts`。导入文件复制到 `userData/fonts/`，经特权协议 `lasso-font://` 提供；CSP 增加 `font-src`；defaultSession 只放行本地窗口的 `local-fonts`。内置 Newsreader 与 JetBrains Mono（fontsource，Vite 打包），中文后备系统宋体。
-6. **样式**：`styles/tokens.css` + `styles/app.css`（移植 `docs/design/v2/lasso.css` 的 `l-*` / `ab-*`），`capture/capture.css` 重写，删除旧 `style.css`。
+6. **样式**：`styles/tokens.css` + `styles/app.css`（移植 `docs/design/v2/lasso.css` 的 `l-*` / `ab-*`），`capture/capture.css` 重写。旧 `style.css` 在全部组件改用新类名后删除。
 7. **与详细设计的差异**：截图 Esc 保持「取消」；不做双击标题栏放大（入口在 ⌘K 与「窗口」菜单）；动作条悬停提示用原生 `title`；「交付中」由动作条渲染层本地显示，靠现有淡出让位；审批后不新增记录行；本地 CLI 设置不显示「已找到」。
 
 ## 验收
@@ -30,7 +30,7 @@
 | --- | --- | --- |
 | 0 | 记录计划 | 完成 |
 | 1 | 契约与主进程：布局、notice、imageOpen、投递步骤、⌘K、菜单清理 | 完成 |
-| 2 | 样式基础与字体：tokens / app.css、fontsource、协议、CSP、权限 | 未开始 |
+| 2 | 样式基础与字体：tokens / app.css、fontsource、协议、CSP、权限 | 完成（旧 style.css 在组件重写完后于阶段 7 删除） |
 | 3 | 小窗外壳：TitleBar、Launcher、Footer、Palette | 未开始 |
 | 4 | CLI 对话与图片入口 | 未开始 |
 | 5 | 设置：预设、应用背景、本地 CLI、通用、外观 | 未开始 |

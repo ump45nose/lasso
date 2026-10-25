@@ -3,13 +3,14 @@ import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
 import { WindowMotion } from './motion';
 import { fitToWorkArea } from './position';
-import type { ActionBarState, Preset, SelectionContext } from '../shared/contracts';
+import type { ActionBarState, Preset, SelectionContext, Settings } from '../shared/contracts';
 
 export class ActionBar {
   readonly window: BrowserWindow;
   private motion: WindowMotion;
   private selection: SelectionContext | null = null;
   private presets: Preset[] = [];
+  private fonts: ActionBarState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
   private busy = false;
   constructor(private run: (id: string, selection: SelectionContext) => Promise<void>, private settings: () => void) {
     this.window = new BrowserWindow({
@@ -45,9 +46,9 @@ export class ActionBar {
     });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'action-bar' } });
   }
-  private snapshot(): ActionBarState { return { presets: this.presets.filter(p => p.enabled).slice(0, 4).map(({ id, name, target, mode }) => ({ id, name, target, mode })), busy: this.busy }; }
-  update(presets: Preset[], busy: boolean) {
-    this.presets = presets; this.busy = busy;
+  private snapshot(): ActionBarState { return { presets: this.presets.filter(p => p.enabled).slice(0, 4).map(({ id, name, target, mode }) => ({ id, name, target, mode })), busy: this.busy, fonts: this.fonts }; }
+  update(presets: Preset[], busy: boolean, settings: Settings) {
+    this.presets = presets; this.busy = busy; this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
     this.window.webContents.send('bar:changed', this.snapshot());
     if (!presets.some(p => p.enabled)) this.hide();
   }

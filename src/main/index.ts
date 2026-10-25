@@ -6,6 +6,7 @@ import { mkdirSync, statSync } from 'node:fs';
 import { CaptureManager } from './capture';
 import { Images, type ImageInput } from './images';
 import { readSettings, writeSettings } from './settings';
+import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
 import { fitToWorkArea, placeNear } from './position';
 import { SelectionCapture } from './selection';
 import { WindowMotion } from './motion';
@@ -18,6 +19,7 @@ import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOpti
 app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
 app.setPath('userData', join(app.getPath('appData'), 'mac-ai-prompt'));
+registerFontScheme();
 const hasLock = app.requestSingleInstanceLock();
 let win: BrowserWindow;
 let motion: WindowMotion;
@@ -25,6 +27,7 @@ let tasks: TaskManager;
 let tray: Tray;
 let settingsPath: string;
 let presetsPath: string;
+let fontsDir: string;
 let images: Images;
 let screenshots: CaptureManager;
 let inputImage: ImageInput | null = null;
@@ -43,7 +46,7 @@ function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send('shell:changed', snapshot());
-  actionBar?.update(state.presets, false);
+  actionBar?.update(state.presets, false, state.settings);
 }
 function layout() {
   if (!win || win.isDestroyed() || !tasks) return;
@@ -302,6 +305,27 @@ function installIPC() {
       writeSettings(settingsPath, next); state.settings = next; publish();
     });
   });
+  const saveSettings = (next: Settings) => { writeSettings(settingsPath, next); state.settings = next; publish(); };
+  ipcMain.handle('shell:fonts', (event, fonts: Settings['fonts']) => {
+    assertLocal(event);
+    return result(() => { validateFonts(fonts); saveSettings({ ...state.settings, fonts: { display: fonts.display.trim(), text: fonts.text.trim(), ui: fonts.ui.trim(), mono: fonts.mono.trim() } }); });
+  });
+  ipcMain.handle('shell:font-import', async event => {
+    assertLocal(event);
+    nativeDialogs++;
+    try {
+      const choice = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: '字体', extensions: fontExtensions }] });
+      if (choice.canceled || !choice.filePaths[0]) return { font: null, error: null };
+      const font = importFont(fontsDir, choice.filePaths[0]);
+      saveSettings({ ...state.settings, importedFonts: [...state.settings.importedFonts, font] });
+      return { font, error: null };
+    } catch (error) { return { font: null, error: (error as Error).message }; }
+    finally { nativeDialogs--; }
+  });
+  ipcMain.handle('shell:font-remove', (event, file: string) => {
+    assertLocal(event);
+    return result(() => { removeFont(fontsDir, file); saveSettings({ ...state.settings, importedFonts: state.settings.importedFonts.filter(font => font.file !== file) }); });
+  });
   ipcMain.handle('shell:choose-path', (event, kind) => { assertLocal(event); return choosePath(kind); });
   ipcMain.handle('shell:new-task', (event, options: LaunchOptions) => { assertLocal(event); launchTask(options); });
   ipcMain.handle('shell:image', (event, id?: string) => { assertLocal(event); return result(() => readImage(id)); });
@@ -397,6 +421,8 @@ async function boot() {
   mkdirSync(app.getPath('userData'), { recursive: true });
   settingsPath = join(app.getPath('userData'), 'settings.json');
   presetsPath = join(app.getPath('userData'), 'presets.json');
+  fontsDir = join(app.getPath('userData'), 'fonts');
+  serveFonts(fontsDir);
   images = new Images(join(app.getPath('userData'), 'input-images'));
   state = {
     pinned: false, expanded: false, settingsOpen: false, inputImage: null, imageOpen: false,
@@ -427,6 +453,9 @@ async function boot() {
     const area = screen.getDisplayMatching(win.getBounds()).workArea;
     win.setBounds(state.expanded ? area : fitToWorkArea(win.getBounds(), area));
   });
+  // Local windows need no browser permissions except listing installed fonts for the font picker.
+  session.defaultSession.setPermissionCheckHandler((contents, permission) => permission === 'local-fonts' && contents === win.webContents);
+  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => callback(permission === 'local-fonts' && contents === win.webContents));
   for (const [partition, hosts] of [['persist:chatgpt', ['chatgpt.com', 'www.chatgpt.com']], ['persist:gemini', ['gemini.google.com']]] as const) {
   const webSession = session.fromPartition(partition);
   const mediaOrigins = new Set<string>();
@@ -483,7 +512,7 @@ async function boot() {
   }, point => {
     if (!actionBar.contains(point)) { actionBar.hide(); clearSelection(); }
   }, () => { actionBar.hide(); clearSelection(); });
-  actionBar.update(state.presets, false);
+  actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
   }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, () => capture?.suppress());

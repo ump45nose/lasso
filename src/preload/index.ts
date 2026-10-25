@@ -27,6 +27,9 @@ const api: DesktopAPI = {
     const listener = (_event: Electron.IpcRendererEvent, event: AgentEvent) => callback(event);
     ipcRenderer.on('agent:changed', listener); return () => ipcRenderer.removeListener('agent:changed', listener);
   },
+  saveFonts: fonts => ipcRenderer.invoke('shell:fonts', fonts),
+  importFont: () => ipcRenderer.invoke('shell:font-import'),
+  removeFont: file => ipcRenderer.invoke('shell:font-remove', file),
   selectTask: id => ipcRenderer.invoke('shell:task-select', id),
   closeTask: id => ipcRenderer.invoke('shell:task-close', id),
   openPalette: scope => ipcRenderer.invoke('shell:palette-open', scope),
