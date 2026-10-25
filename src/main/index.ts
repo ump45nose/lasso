@@ -534,7 +534,8 @@ else {
   app.on('second-instance', showWindow);
   app.on('activate', showWindow);
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
-  app.on('before-quit', event => { if (!quitting && win) { event.preventDefault(); requestQuit(); } });
+  // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
+  app.on('before-quit', () => { quitting = true; });
   app.on('will-quit', () => { screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));
