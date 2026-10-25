@@ -945,7 +945,7 @@ function ActionBarDemo({ presets }) {
       <ul className="doc-rules">
         <li>独立的不可聚焦窗口，<strong>不抢源应用焦点</strong>；只放启用的前 4 个预设，其余在「···」系统菜单。</li>
         <li>默认在选区上方 12px；上方空间不足时放到选区下方，并避开屏幕边缘。</li>
-        <li>悬停用系统提示（title）显示目标与执行方式，窗口只有 40px 高，放不下自定义浮层；点击后按钮变柔橙 120ms，胶囊原位显示「正在交给…」，随窗口淡出让位给小窗。</li>
+        <li>窗口透明，胶囊上下各留 36px 提示带，胶囊外的区域鼠标可穿透。悬停时实色陶土块在按钮间滑动，350ms 后在远离选区的一侧浮出提示卡（目标 · 执行方式）；按下时陶土块加深，胶囊原位显示「正在交给…」，标志描线循环，随窗口淡出让位给小窗。</li>
         <li>点击动作条外、选区消失或开始截图时立即隐藏；没有启用的预设时不出现。</li>
       </ul>
       <div className="measure"><span>40</span><span>高度 · 圆角 12</span><span>30</span><span>按钮高 · 内边 10</span><span>120ms</span><span>出现：淡入 + 上移 4px</span><span>150ms</span><span>隐藏：淡出（WindowMotion）</span></div>
