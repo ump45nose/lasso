@@ -1,8 +1,8 @@
-import { BrowserWindow, clipboard, ClipboardItem, ipcMain, Menu, screen } from 'electron';
+import { BrowserWindow, clipboard, ClipboardItem, ipcMain, screen } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
-import type { PinAction, PinState } from '../../shared/capture';
+import { pinOpacities, type PinAction, type PinState } from '../../shared/capture';
 import type { PinnedDocument } from './document';
 import { OCRService, type VisionOCR } from './ocr';
 import { fitToWorkArea } from '../position';
@@ -67,7 +67,10 @@ export class PinManager {
   private async action(pin:Pin,action:PinAction){
     if(action==='close'){pin.win.close();return;}
     if(action==='hide'){pin.win.hide();this.changed();return;}
-    if(action==='menu'){this.menu(pin);return;}
+    if(action==='topmost'){pin.state.topmost=!pin.state.topmost;pin.win.setAlwaysOnTop(pin.state.topmost,'floating');this.publish(pin);return;}
+    if(action==='opacity'){pin.state.opacity=pinOpacities[(pinOpacities.indexOf(pin.state.opacity)+1)%pinOpacities.length];pin.win.setOpacity(pin.state.opacity);this.publish(pin);return;}
+    if(action==='zoom-in'||action==='zoom-out'){this.resize(pin,action==='zoom-in'?1.2:1/1.2);return;}
+    if(action==='passthrough'){pin.state.passthrough=true;pin.win.setIgnoreMouseEvents(true,{forward:true});this.publish(pin);this.changed();return;}
     this.suppress();
     if(action==='edit'){await this.edit(pin.document,pin.state.id);return;}
     if(action==='image'){await this.image(pin.document.image);return;}
@@ -75,14 +78,6 @@ export class PinManager {
     throw Error('不支持的贴图操作');
   }
   private restore(pin:Pin){pin.state.passthrough=false;pin.win.setIgnoreMouseEvents(false);pin.win.show();pin.win.focus();this.publish(pin);this.changed();}
-  private menu(pin:Pin){Menu.buildFromTemplate([
-    {label:'置顶',type:'checkbox',checked:pin.state.topmost,click:()=>{pin.state.topmost=!pin.state.topmost;pin.win.setAlwaysOnTop(pin.state.topmost,'floating');this.publish(pin);}},
-    {label:'透明度',submenu:[1,.85,.65,.4].map(opacity=>({label:Math.round(opacity*100)+'%',type:'radio' as const,checked:pin.state.opacity===opacity,click:()=>{pin.state.opacity=opacity;pin.win.setOpacity(opacity);this.publish(pin);}}))},
-    {label:'放大',click:()=>this.resize(pin,1.2)},{label:'缩小',click:()=>this.resize(pin,1/1.2)},
-    {label:'鼠标穿透（从菜单栏恢复）',type:'checkbox',checked:pin.state.passthrough,click:()=>{pin.state.passthrough=!pin.state.passthrough;pin.win.setIgnoreMouseEvents(pin.state.passthrough,{forward:true});this.publish(pin);this.changed();}},
-    {label:'临时隐藏',click:()=>{pin.win.hide();this.changed();}},
-    {label:'关闭贴图',click:()=>pin.win.close()}
-  ]).popup({window:pin.win});}
   trayItems():Electron.MenuItemConstructorOptions[]{return [
     {label:'恢复全部贴图 / 退出穿透',enabled:this.size>0,click:()=>{for(const pin of this.pins.values())this.restore(pin);}},
     {label:'隐藏全部贴图',enabled:this.size>0,click:()=>{for(const pin of this.pins.values())pin.win.hide();this.changed();}},

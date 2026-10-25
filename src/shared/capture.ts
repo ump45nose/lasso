@@ -17,7 +17,9 @@ export const captureModeLabels: Record<CaptureMode, string> = { area: '区域截
 export interface CaptureWindow extends CaptureRect { id: number }
 export interface ScreenshotState { id: string; editId: string; image: string; backdrop?: string; placement?: CaptureRect; mode?: 'area' | 'window'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result'; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
 export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean }
-export type PinAction = 'menu' | 'edit' | 'image' | 'copy' | 'close' | 'hide';
+export type PinAction = 'edit' | 'image' | 'copy' | 'close' | 'hide' | 'topmost' | 'opacity' | 'zoom-in' | 'zoom-out' | 'passthrough';
+/** Pin opacity steps; the options row cycles through them. */
+export const pinOpacities = [1, 0.85, 0.65, 0.4];
 export interface PinAPI {
   state(): Promise<PinState>;
   onState(callback: (state: PinState) => void): () => void;

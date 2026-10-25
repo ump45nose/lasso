@@ -16,5 +16,9 @@
 .pin-bar button:hover { background: var(--clay); color: #FFFFFF; }
 .pin-bar button:active { transform: scale(.94); }
 .pin-bar button.pin-text { background: rgba(217, 119, 87, 0.28); }
+.pin-bar button.on, .pin-bar button[aria-pressed="true"] { color: var(--clay); }
+.pin-bar button.on:hover, .pin-bar button[aria-pressed="true"]:hover { color: #FFFFFF; }
+.pin-options { top: 48px; padding: 0 3px; }
+.pin-opacity .mono { font-size: 11.5px; }
 .pin-status { position: absolute; z-index: 2; left: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 8px; border-radius: 6px; background: rgba(20, 20, 19, 0.78); color: var(--on-ink); font-size: 11px; pointer-events: none; }
 .pin-status.error { background: var(--danger); }
