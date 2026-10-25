@@ -38,7 +38,6 @@ let lastSelection: SelectionContext | null = null;
 let smallBounds: Rectangle | null = null;
 let blurTimer: ReturnType<typeof setTimeout>;
 let quitting = false;
-let quitPromptOpen = false;
 let nativeDialogs = 0;
 /** The command palette hides native pages; its frozen page snapshot stays out of ShellState. */
 let palette: PaletteEvent | null = null;
@@ -127,13 +126,7 @@ async function confirm(message: string, detail: string) {
     return response === 1;
   } finally { nativeDialogs--; }
 }
-async function requestQuit() {
-  if (quitPromptOpen) return;
-  quitPromptOpen = true;
-  if ((tasks.size || screenshots?.pins.size) && !await confirm('退出 Lasso？', `本次 ${tasks.size} 个任务会关闭，正在进行的任务和未发送内容不会在下次启动时恢复。${screenshots?.pins.size ? ` ${screenshots.pins.size} 张贴图也不会恢复，请先保存需要保留的图片。` : ''}`)) {
-    quitPromptOpen = false;
-    return;
-  }
+function requestQuit() {
   quitting = true;
   app.quit();
 }
@@ -183,7 +176,7 @@ function updateTray() {
     { label: '置顶', type: 'checkbox', checked: state.pinned, click: setPin },
     { type: 'separator' },
     { label: '设置…', click: openSettings },
-    { label: '退出 Lasso', click: () => void requestQuit() }
+    { label: '退出 Lasso', click: requestQuit }
   ]));
 }
 function registerShortcut(shortcut: string): string | null {
@@ -387,7 +380,7 @@ function installIPC() {
       case 'settings': openSettings(); break;
       case 'close-settings': state.settingsOpen = false; layout(); publish(); break;
       case 'reload': await tasks.reload(); break;
-      case 'quit': await requestQuit(); break;
+      case 'quit': requestQuit(); break;
       case 'refresh-capture': capture.configure(state.settings); break;
       case 'selection-permission':
         systemPreferences.isTrustedAccessibilityClient(true);
@@ -450,7 +443,7 @@ async function boot() {
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
   motion = new WindowMotion(win);
-  tasks = new TaskManager(win, secureRemote, () => { layout(); publish(); }, confirm, () => state.settings, images, event => win.webContents.send('agent:changed', event), () => state.presets);
+  tasks = new TaskManager(win, secureRemote, () => { layout(); publish(); }, () => state.settings, images, event => win.webContents.send('agent:changed', event), () => state.presets);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.on('resize', layout);
@@ -497,7 +490,7 @@ async function boot() {
     { label: 'Lasso', submenu: [
       { label: '设置…', accelerator: 'Command+,', click: openSettings },
       { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
-      { type: 'separator' }, { label: '退出 Lasso', accelerator: 'Command+Q', click: () => void requestQuit() }
+      { type: 'separator' }, { label: '退出 Lasso', accelerator: 'Command+Q', click: requestQuit }
     ] },
     { role: 'editMenu' },
     { label: '窗口', submenu: [
@@ -541,7 +534,7 @@ else {
   app.on('second-instance', showWindow);
   app.on('activate', showWindow);
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
-  app.on('before-quit', event => { if (!quitting && win) { event.preventDefault(); void requestQuit(); } });
+  app.on('before-quit', event => { if (!quitting && win) { event.preventDefault(); requestQuit(); } });
   app.on('will-quit', () => { screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));

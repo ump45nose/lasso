@@ -80,13 +80,11 @@ export class TaskManager {
   private activeId: string | null = null;
   private polling = false;
   private probe: { taskId: string; view: WebContentsView; controller: AbortController } | null = null;
-  private closing = new Set<string>();
   private timer: ReturnType<typeof setInterval>;
   constructor(
     private window: BrowserWindow,
     private secure: (contents: WebContents) => void,
     private changed: () => void,
-    private confirm: (message: string, detail: string) => Promise<boolean>,
     private settings: () => Settings,
     private images: Images,
     private agentChanged: (event: AgentEvent) => void,
@@ -527,8 +525,7 @@ export class TaskManager {
   async reload() {
     const task = this.active;
     if (task?.agent) { try { await task.agent.start(); } catch {} return; }
-    if (!task || !await this.confirm('重新加载这个任务？', '该任务未发送的输入可能丢失，正在生成的回答可能中断。其他任务不受影响。')) return;
-    if (!this.tasks.has(task.id)) return;
+    if (!task) return;
     task.controller?.abort();
     if (task.resumeUrl) { void this.restore(task, task.resumeUrl); return; }
     this.delivery(task, task.pendingText ? { phase: 'error', message: '已取消待发送动作，原文仍可复制', canCopy: true } : null);
@@ -649,28 +646,19 @@ export class TaskManager {
     task.view = null; task.visible = false; task.adapter = null;
     if (view) { this.window.contentView.removeChildView(view); view.webContents.close(); }
   }
-  async close(id: string) {
+  close(id: string) {
     const task = this.tasks.get(id);
-    if (!task || this.closing.has(id)) return;
-    this.closing.add(id);
-    try {
-      if (task.agent && !['idle', 'complete'].includes(task.agent.state.activity) && !await this.confirm(`关闭「${task.title}」？`, '当前任务可能仍在运行或含有草稿，关闭会停止任务。')) return;
-      if (task.view) {
-        await this.observe(task);
-        const safe = !task.controller && !task.pendingText && !task.hasDraft && task.popups.size === 0 && ['idle', 'complete'].includes(this.status(task));
-        if (!safe && !await this.confirm(`关闭「${task.title}」？`, '这个任务可能仍在运行、等待操作或含有草稿。关闭后不能恢复未保存内容，其他任务不受影响。')) return;
-      }
-      const ids = [...this.tasks.keys()];
-      const index = ids.indexOf(id);
-      this.tasks.delete(id); this.deliveredAgents.delete(id); task.agent?.dispose(); this.images.remove(task.image); this.destroyPage(task);
-      if (![...this.tasks.values()].some(t => t.target === 'codex')) this.runtime.close();
-      if (this.activeId === id) {
-        this.activeId = null;
-        const next = ids[index + 1] || ids[index - 1];
-        if (next) this.select(next);
-      }
-      this.notify();
-    } finally { this.closing.delete(id); }
+    if (!task) return;
+    const ids = [...this.tasks.keys()];
+    const index = ids.indexOf(id);
+    this.tasks.delete(id); this.deliveredAgents.delete(id); task.agent?.dispose(); this.images.remove(task.image); this.destroyPage(task);
+    if (![...this.tasks.values()].some(t => t.target === 'codex')) this.runtime.close();
+    if (this.activeId === id) {
+      this.activeId = null;
+      const next = ids[index + 1] || ids[index - 1];
+      if (next) this.select(next);
+    }
+    this.notify();
   }
   dispose() {
     this.disposed = true;
