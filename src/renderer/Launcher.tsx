@@ -19,7 +19,7 @@ export function Launcher({ state, openPermission }: { state: ShellState; openPer
         <div className="l-targets">
           {targets.map(target => <button key={target} className="l-target" onClick={() => void window.desktop.newTask({ target })}>
             <span className="l-target-name"><Badge target={target} />{targetLabels[target]}{target === settings.lastTarget && <em>上次使用</em>}</span>
-            <small className={isLocal(target) ? 'mono' : ''}>{isLocal(target) ? '本地 CLI · ' + (folderName(settings.local[target].cwd) || '~') : '网页 · 在小窗内登录'}</small>
+            <small>{isLocal(target) ? <>本地 CLI · <span className="mono">{folderName(settings.local[target].cwd) || '~'}</span></> : '网页 · 在小窗内登录'}</small>
           </button>)}
         </div>
       </section>
