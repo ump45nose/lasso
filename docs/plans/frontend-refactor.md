@@ -31,7 +31,7 @@
 | 0 | 记录计划 | 完成 |
 | 1 | 契约与主进程：布局、notice、imageOpen、投递步骤、⌘K、菜单清理 | 完成 |
 | 2 | 样式基础与字体：tokens / app.css、fontsource、协议、CSP、权限 | 完成（旧 style.css 在组件重写完后于阶段 7 删除） |
-| 3 | 小窗外壳：TitleBar、Launcher、Footer、Palette | 未开始 |
+| 3 | 小窗外壳：TitleBar、Launcher、Footer、Palette、设置外壳与通用页 | 完成（TaskTabs 已删除；预设、应用背景、本地 CLI 页暂用旧样式，阶段 5 重写） |
 | 4 | CLI 对话与图片入口 | 未开始 |
 | 5 | 设置：预设、应用背景、本地 CLI、通用、外观 | 未开始 |
 | 6 | 动作条与截图 | 未开始 |
