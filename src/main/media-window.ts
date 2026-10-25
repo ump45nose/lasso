@@ -1,8 +1,9 @@
-import { BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, safeStorage, screen } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, safeStorage, screen } from 'electron';
 import type { IpcMainInvokeEvent, NativeImage } from 'electron';
 import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { MediaService } from './media-service';
+import { readLocalImage } from './capture/local-images';
 import type { MediaConfigInput, MediaFontSettings, MediaGenerateRequest, MediaOutputAction, MediaState } from '../shared/media';
 import { fitToWorkArea } from './position';
 
@@ -11,9 +12,11 @@ export class MediaWindow {
   readonly service: MediaService;
   private win: BrowserWindow | null = null;
   private quitting = false;
+  private beforeQuit = () => { this.quitting = true; };
   private outputting = false;
   private channels: string[] = [];
-  constructor(directory: string, private edit: (image: NativeImage) => Promise<void>, private pin: (image: NativeImage) => Promise<void>, private fontSettings: () => Readonly<MediaFontSettings>) {
+  constructor(directory: string, private edit: (image: NativeImage) => Promise<void>, private pin: (image: NativeImage) => Promise<void>, private fontSettings: () => Readonly<MediaFontSettings>, deliverWeb?: NonNullable<ConstructorParameters<typeof MediaService>[1]['deliverWeb']>) {
+    app.on('before-quit', this.beforeQuit);
     this.service = new MediaService(directory, {
       secrets: { available: () => safeStorage.isEncryptionAvailable(), encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value) },
       normalizeImage: bytes => {
@@ -21,7 +24,7 @@ export class MediaWindow {
         if (image.isEmpty() || size.width < 1 || size.height < 1 || size.width * size.height > 40_000_000) throw Error('返回内容不是有效图片，或图片尺寸过大');
         return { png: image.toPNG(), ...size, thumbnail: image.resize({ width: Math.min(640, size.width) }).toDataURL() };
       },
-      changed: state => this.publish(state)
+      changed: state => this.publish(state), deliverWeb
     });
     const handle = (name: string, fn: (...args: any[]) => unknown) => {
       this.channels.push(name);
@@ -30,6 +33,14 @@ export class MediaWindow {
     handle('media:state', () => this.snapshot());
     handle('media:configure', (input: MediaConfigInput) => this.snapshot(this.service.configure(input)));
     handle('media:check-connection', () => this.service.checkConnection());
+    handle('media:models', () => this.service.models());
+    handle('media:open-file', async () => {
+      try {
+        const result = await dialog.showOpenDialog(this.win!, { title: '选择生图参考图片', properties: ['openFile'], filters: [{ name: 'PNG / JPEG 图片', extensions: ['png', 'jpg', 'jpeg'] }] });
+        if (!result.canceled && result.filePaths[0]) await this.receiveFile(result.filePaths[0]);
+        return { error: null };
+      } catch (error) { return { error: (error as Error).message }; }
+    });
     handle('media:set-reference', (id: string | null) => this.snapshot(this.service.selectReference(id)));
     handle('media:generate', (request: MediaGenerateRequest) => this.snapshot(this.service.generate(request)));
     handle('media:remove', (id: string) => this.snapshot(this.service.remove(id)));
@@ -75,10 +86,14 @@ export class MediaWindow {
     win.setBounds(fitToWorkArea(win.getBounds(), screen.getDisplayMatching(win.getBounds()).workArea));
     win.show(); win.focus();
   }
-  /** Called exclusively with the capture editor's final flattened and validated PNG. */
+  /** Receives validated local images or the capture editor's final flattened PNG. */
   async receive(image: NativeImage) {
     this.service.addReference(image.toPNG());
     await this.show();
+  }
+  async receiveFile(path: string) {
+    const { image } = await readLocalImage(path);
+    await this.receive(image);
   }
   private async output(id: string, action: MediaOutputAction) {
     if (this.outputting) return { error: '正在输出图片' };
@@ -98,5 +113,5 @@ export class MediaWindow {
     } catch (error) { return { error: (error as Error).message }; }
     finally { this.outputting = false; }
   }
-  dispose() { this.quitting = true; for (const channel of this.channels) ipcMain.removeHandler(channel); this.win?.destroy(); }
+  dispose() { this.quitting = true; app.off('before-quit', this.beforeQuit); for (const channel of this.channels) ipcMain.removeHandler(channel); this.win?.destroy(); }
 }

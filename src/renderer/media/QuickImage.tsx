@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Check, Clipboard, Copy, Download, ImagePlus, Loader2, Minus, Pencil, Pin, Settings2, Trash2, X } from 'lucide-react';
-import type { MediaAPI, MediaAspect, MediaConfigInput, MediaJob, MediaOutputAction, MediaState } from '../../shared/media';
+import { Check, Clipboard, Copy, Download, FolderOpen, ImagePlus, Loader2, Minus, Pencil, Pin, Plus, Settings2, Trash2, X } from 'lucide-react';
+import { defaultMediaPreferences, type MediaAPI, type MediaAspect, type MediaBackground, type MediaConfigInput, type MediaDestination, type MediaFormat, type MediaJob, type MediaOutputAction, type MediaQuality, type MediaState } from '../../shared/media';
 import { BrandMark } from '../BrandMark';
 import { collapse, rise, Segmented } from '../motion';
 import { useFonts } from '../fonts';
@@ -9,9 +9,25 @@ import './quick-image.css';
 
 declare global { interface Window { media: MediaAPI } }
 
-const statusLabels: Record<MediaJob['status'], string> = { running: '正在生成', succeeded: '已保存', failed: '生成失败', interrupted: '中断 · 结果未知' };
+const statusLabels: Record<MediaJob['status'], string> = { running: '正在处理', succeeded: '已保存', 'handed-off': '已交给网页', failed: '处理失败', interrupted: '中断 · 结果未知' };
+const destinations = { api: 'API', chatgpt: 'ChatGPT 网页', gemini: 'Gemini 网页' };
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 const newest = (jobs: MediaJob[]) => [...jobs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+/** Options stay inside the window, using the same fields and clay feedback as settings. */
+function MediaChoice({ id, value, options, onChange }: { id: string; value: string; options: { id: string; name: string }[]; onChange(value: string): void }) {
+  const [open, setOpen] = useState(false), [index, setIndex] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!open) return; const close = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); }; window.addEventListener('pointerdown', close); return () => window.removeEventListener('pointerdown', close); }, [open]);
+  return <div className="qi-choice" ref={ref}>
+    <button id={id} className="l-select qi-choice-trigger" role="combobox" aria-haspopup="listbox" aria-expanded={open} aria-controls={id + '-options'} onClick={() => { setIndex(Math.max(0, options.findIndex(item => item.id === value))); setOpen(v => !v); }} onKeyDown={event => {
+      if (event.key === 'Escape') { event.stopPropagation(); setOpen(false); }
+      else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') { event.preventDefault(); setOpen(true); setIndex(i => (i + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length); }
+      else if (event.key === 'Enter' && open) { event.preventDefault(); onChange(options[index].id); setOpen(false); }
+    }}>{options.find(item => item.id === value)?.name || value || '选择模型'}</button>
+    {open && <div id={id + '-options'} className="qi-choice-options" role="listbox">{options.map((item, i) => <button key={item.id} role="option" aria-selected={item.id === value} className={i === index ? 'highlighted' : undefined} onMouseEnter={() => setIndex(i)} onClick={() => { onChange(item.id); setOpen(false); }}>{item.name}</button>)}</div>}
+  </div>;
+}
 
 /** A separate local surface: the generation continues in main when this window is hidden. */
 export function QuickImage() {
@@ -19,6 +35,14 @@ export function QuickImage() {
   useFonts(state ? { fonts: state.fonts, importedFonts: state.importedFonts } : undefined);
   const [prompt, setPrompt] = useState('');
   const [aspect, setAspect] = useState<MediaAspect>('1:1');
+  const [destination, setDestination] = useState<MediaDestination>('api');
+  const [presetId, setPresetId] = useState('draw');
+  const [quality, setQuality] = useState<MediaQuality>('auto');
+  const [background, setBackground] = useState<MediaBackground>('auto');
+  const [outputFormat, setOutputFormat] = useState<MediaFormat>('png');
+  const [models, setModels] = useState<string[]>([]);
+  const [editingPreset, setEditingPreset] = useState('draw');
+  const [removePreset, setRemovePreset] = useState('');
   const [selectedId, setSelectedId] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [config, setConfig] = useState<MediaConfigInput>({ baseURL: '', generationModel: '', editModel: '' });
@@ -41,7 +65,8 @@ export function QuickImage() {
       initialized.current = true;
       const latest = newest(next.jobs)[0];
       if (latest) { setPrompt(latest.prompt); setAspect(latest.aspect); }
-      setConfig({ baseURL: next.config.baseURL, generationModel: next.config.generationModel, editModel: next.config.editModel });
+      const preferences = { ...defaultMediaPreferences(), ...next.config };
+      setConfig(preferences); setDestination(preferences.destination); setPresetId(preferences.defaultPresetId); setQuality(preferences.quality); setBackground(preferences.background); setOutputFormat(preferences.outputFormat);
     }
   }, []);
 
@@ -57,7 +82,10 @@ export function QuickImage() {
   const running = jobs.find(job => job.status === 'running');
   const reference = state?.reference;
   const parent = reference && jobs.find(job => job.status === 'succeeded' && job.image?.id === reference.id);
-  const currentInput = JSON.stringify({ prompt: prompt.trim(), aspect, referenceId: reference?.id });
+  const presets = state?.config.presets || defaultMediaPreferences().presets;
+  const configurablePresets = config.presets || defaultMediaPreferences().presets;
+  const editablePreset = configurablePresets.find(item => item.id === editingPreset) || configurablePresets[0];
+  const currentInput = JSON.stringify({ prompt: prompt.trim(), aspect, referenceId: reference?.id, destination, presetId, quality, background, outputFormat });
   const submitted = pendingRequest.current?.input === currentInput ? jobs.find(job => job.requestId === pendingRequest.current?.id) : undefined;
 
   async function act(operation: () => Promise<void>) {
@@ -70,11 +98,11 @@ export function QuickImage() {
   async function generate() {
     if (!state || !prompt.trim() || running || submittingRef.current) return;
     submittingRef.current = true; setSubmitting(true); setError(''); setMessage('');
-    const input = JSON.stringify({ prompt: prompt.trim(), aspect, referenceId: reference?.id });
+    const input = currentInput;
     if (pendingRequest.current?.input !== input) pendingRequest.current = { id: crypto.randomUUID(), input };
     const requestId = pendingRequest.current.id;
     try {
-      const next = await window.media.generate({ requestId, prompt: prompt.trim(), aspect, ...(reference ? { referenceId: reference.id } : {}), ...(parent ? { parentId: parent.id } : {}) });
+      const next = await window.media.generate({ requestId, prompt: prompt.trim(), aspect, destination, presetId, quality, background, outputFormat, ...(reference ? { referenceId: reference.id } : {}), ...(parent ? { parentId: parent.id } : {}) });
       acceptState(next);
       const job = next.jobs.find(item => item.requestId === requestId);
       if (job) setSelectedId(job.id);
@@ -84,7 +112,7 @@ export function QuickImage() {
 
   function toggleSettings() {
     if (!settingsOpen && state) {
-      setConfig({ baseURL: state.config.baseURL, generationModel: state.config.generationModel, editModel: state.config.editModel });
+      setConfig({ ...defaultMediaPreferences(), ...state.config }); setEditingPreset(presetId); setRemovePreset('');
       setCredential(''); setClearCredential(false);
     }
     setSettingsOpen(value => !value);
@@ -112,10 +140,16 @@ export function QuickImage() {
     }}>
       <AnimatePresence initial={false}>{settingsOpen && <motion.section key="settings" className="qi-settings" {...collapse} aria-label="生图连接设置">
         <div className="qi-settings-inner">
-          <div className="l-field"><label htmlFor="qi-base">服务地址</label><input id="qi-base" className="l-input mono" value={config.baseURL} placeholder="https://…/v1" onChange={event => setConfig(value => ({ ...value, baseURL: event.target.value }))} /></div>
+          <div className="l-field"><label htmlFor="qi-preset-edit">提示词预设</label><div className="qi-row"><MediaChoice id="qi-preset-edit" value={editablePreset.id} options={configurablePresets} onChange={value => { setEditingPreset(value); setRemovePreset(''); }} />
+            <button className="l-ghost" aria-label="新增生图预设" onClick={() => { const id = crypto.randomUUID(); setConfig(value => ({ ...value, presets: [...configurablePresets, { id, name: '新预设', template: '请直接生成图片，宽高比 {{aspect}}。\n\n{{prompt}}' }] })); setEditingPreset(id); }}><Plus size={14} />新增</button>
+            <button className="l-ghost" disabled={configurablePresets.length <= 1} onClick={() => { if (removePreset !== editablePreset.id) { setRemovePreset(editablePreset.id); return; } const next = configurablePresets.filter(item => item.id !== editablePreset.id); setConfig(value => ({ ...value, presets: next })); setEditingPreset(next[0].id); setRemovePreset(''); }}>{removePreset === editablePreset.id ? '再点一次删除' : '删除'}</button></div></div>
+          <div className="l-field"><label htmlFor="qi-preset-name">预设名称</label><input id="qi-preset-name" className="l-input" value={editablePreset.name} onChange={event => setConfig(value => ({ ...value, presets: configurablePresets.map(item => item.id === editablePreset.id ? { ...item, name: event.target.value } : item) }))} /></div>
+          <div className="l-field"><label htmlFor="qi-preset-template">提示词</label><textarea id="qi-preset-template" className="l-textarea" value={editablePreset.template} onChange={event => setConfig(value => ({ ...value, presets: configurablePresets.map(item => item.id === editablePreset.id ? { ...item, template: event.target.value } : item) }))} /><p className="l-field-help">{'{{prompt}} 放入你的描述，{{aspect}} 放入画面比例。保存时会记住当前方式、预设与 API 选项。'}</p></div>
+          <Segmented label="网页发送方式" value={config.webMode || 'send'} options={ [['send','直接发送'],['edit','先编辑']] } onChange={webMode => setConfig(value => ({ ...value, webMode }))} />
+          <div className="l-field"><label htmlFor="qi-base">API 服务地址</label><input id="qi-base" className="l-input mono" value={config.baseURL} placeholder="https://…/v1" onChange={event => setConfig(value => ({ ...value, baseURL: event.target.value }))} /></div>
           <div className="l-pair">
-            <div className="l-field"><label htmlFor="qi-generation-model">生成模型</label><input id="qi-generation-model" className="l-input mono" value={config.generationModel} onChange={event => setConfig(value => ({ ...value, generationModel: event.target.value }))} /></div>
-            <div className="l-field"><label htmlFor="qi-edit-model">改图模型</label><input id="qi-edit-model" className="l-input mono" value={config.editModel} onChange={event => setConfig(value => ({ ...value, editModel: event.target.value }))} /></div>
+            <div className="l-field"><label htmlFor="qi-generation-model">生成模型</label><input id="qi-generation-model" className="l-input mono" value={config.generationModel} onChange={event => setConfig(value => ({ ...value, generationModel: event.target.value }))} />{models.length > 0 && <MediaChoice id="qi-generation-choice" value={config.generationModel} options={models.map(id => ({ id, name: id }))} onChange={generationModel => setConfig(value => ({ ...value, generationModel }))} />}</div>
+            <div className="l-field"><label htmlFor="qi-edit-model">改图模型</label><input id="qi-edit-model" className="l-input mono" value={config.editModel} onChange={event => setConfig(value => ({ ...value, editModel: event.target.value }))} />{models.length > 0 && <MediaChoice id="qi-edit-choice" value={config.editModel} options={models.map(id => ({ id, name: id }))} onChange={editModel => setConfig(value => ({ ...value, editModel }))} />}</div>
           </div>
           <div className="l-field"><label htmlFor="qi-credential">凭据</label><input id="qi-credential" type="password" autoComplete="off" className="l-input mono" value={credential} placeholder={state?.config.hasCredential ? '已安全保存，留空保留' : '输入服务凭据'} onChange={event => { setCredential(event.target.value); setClearCredential(false); }} />
             {state?.config.hasCredential && <button className="l-ghost qi-clear-key" aria-pressed={clearCredential} onClick={() => { setClearCredential(value => !value); setCredential(''); }}>{clearCredential ? '保存时将清除凭据 · 撤销' : '清除已存凭据'}</button>}
@@ -123,15 +157,19 @@ export function QuickImage() {
           <p className="l-field-help">填写此服务支持的生成和改图模型。连接检测仅检查服务连接。</p>
           <div className="qi-row">
             <button className="l-btn small" disabled={busy || !!running} onClick={() => void act(async () => {
-              const next = await window.media.configure({ ...config, ...(clearCredential ? { credential: '' } : credential ? { credential } : {}) });
-              acceptState(next); setCredential(''); setClearCredential(false); setMessage('连接设置已保存。');
+              const defaultPresetId = configurablePresets.some(item => item.id === presetId) ? presetId : configurablePresets[0].id;
+              const next = await window.media.configure({ ...config, destination, defaultPresetId, quality, background, outputFormat, ...(clearCredential ? { credential: '' } : credential ? { credential } : {}) });
+              acceptState(next); setPresetId(defaultPresetId); setCredential(''); setClearCredential(false); setMessage('连接设置已保存。');
             })}>保存设置</button>
             <button className="l-btn small" disabled={busy || !!running} onClick={() => void act(async () => setMessage((await window.media.checkConnection()).message))}>检测已保存连接</button>
+            <button className="l-btn small" disabled={busy || !!running} onClick={() => void act(async () => { setModels(await window.media.models()); setMessage('已读取模型列表，可在模型输入框中选择；实际支持以生成结果为准。'); })}>读取模型</button>
           </div>
         </div>
       </motion.section>}</AnimatePresence>
       <section className="qi-input" aria-label="生成图片">
         <div className="l-image-head"><span className="l-small">{reference ? '单张参考图改图' : '文字生图'}</span><h2>这次，想画什么？</h2></div>
+        <Segmented label="生图方式" value={destination} onChange={setDestination} options={ [['api','API'],['chatgpt','ChatGPT 网页'],['gemini','Gemini 网页']] } />
+        <div className="l-field"><label htmlFor="qi-preset">提示词预设</label><MediaChoice id="qi-preset" value={presets.some(item => item.id === presetId) ? presetId : presets[0].id} options={presets} onChange={setPresetId} /></div>
         <label className="l-field" htmlFor="qi-prompt"><span className="l-field-label">描述</span><textarea id="qi-prompt" className="l-textarea" value={prompt} placeholder={reference ? '描述想保留或改变的内容…' : '描述画面、细节和风格…'} onChange={event => setPrompt(event.target.value)} /></label>
         {reference ? <figure className="qi-reference">
           <img src={reference.thumbnail} alt="本次改图采用的最终参考图" />
@@ -140,12 +178,19 @@ export function QuickImage() {
         </figure> : <button className="l-ghost dashed qi-reference-add" disabled={busy || submitting} onClick={() => void act(async () => {
           const result = await window.media.prepareReference(); if (result.error) throw Error(result.error);
         })}><Clipboard size={15} />从剪贴板添加参考图</button>}
-        <p className="l-field-help">截图或剪贴板图片先在编辑器裁剪、处理隐私，再点「用于生图」。</p>
+        <button className="l-ghost qi-reference-add" disabled={busy || submitting} onClick={() => void act(async () => { const result = await window.media.openFile(); if (result.error) throw Error(result.error); })}><FolderOpen size={15} />选择图片文件</button>
+        <p className="l-field-help">{destination === 'api' ? '参考图只在点击生成后发送。截图可先在编辑器处理隐私，再点「用于生图」。' : '使用 Lasso 中的网页登录状态；参考图随预设提示词一起交给网页，结果在网页中查看。'}</p>
+        {destination === 'api' && <div className="qi-options" aria-label="API 生图选项">
+          <Segmented label="图片质量" value={quality} onChange={setQuality} options={ [['auto','默认质量'],['low','低'],['medium','中'],['high','高']] } />
+          <Segmented label="图片背景" value={background} onChange={setBackground} options={ [['auto','默认背景'],['opaque','不透明'],['transparent','透明']] } />
+          <Segmented label="图片格式" value={outputFormat} onChange={setOutputFormat} options={ [['png','PNG'],['jpeg','JPEG'],['webp','WebP']] } />
+          <p className="l-field-help">选项需模型支持，默认项沿用服务设置。结果会转为 PNG 保存。</p>
+        </div>}
         <div className="qi-row qi-generate-row">
           <Segmented label="生成比例" value={aspect} onChange={setAspect} options={[['1:1', '1:1'], ['3:2', '3:2'], ['2:3', '2:3']]} />
-          <button className="l-btn primary" disabled={!state || !prompt.trim() || !!running || submitting || busy || !!submitted} onClick={() => void generate()}>{running || submitting ? <Loader2 size={15} className="l-spin" /> : <ImagePlus size={15} />}{running || submitting ? '正在生成' : submitted ? '已提交' : reference ? '生成一个新版本' : '生成一张'}</button>
+          <button className="l-btn primary" disabled={!state || !prompt.trim() || !!running || submitting || busy || !!submitted} onClick={() => void generate()}>{running || submitting ? <Loader2 size={15} className="l-spin" /> : <ImagePlus size={15} />}{running || submitting ? '正在处理' : submitted ? '已提交' : destination !== 'api' ? `交给 ${destination === 'chatgpt' ? 'ChatGPT' : 'Gemini'}` : reference ? '生成一个新版本' : '生成一张'}</button>
         </div>
-        {(running || submitting) && <p className="qi-progress" role="status">隐藏窗口后继续生成。此次请求不会自动重试。</p>}
+        {(running || submitting) && <p className="qi-progress" role="status">{destination === 'api' ? '隐藏窗口后继续生成。' : '正在将描述和参考图交给网页。'}此次请求不会自动重试。</p>}
         {submitted && !running && !submitting && <div className="qi-row"><span className="l-field-help">此输入已提交。再次生成需要新请求。</span><button className="l-ghost" disabled={busy} onClick={() => {
           pendingRequest.current = null; setMessage('已准备新请求。点击生成才会再次发送。');
         }}>准备{ submitted.status === 'failed' || submitted.status === 'interrupted' ? '重新生成' : '再生成一张' }</button></div>}
@@ -171,9 +216,10 @@ export function QuickImage() {
           <p className="qi-prompt-preview">{selected.prompt}</p>
           {selected.reference && <div className="qi-used-reference"><img src={selected.reference.thumbnail} alt="这个版本使用的参考图" /><span>这个版本的参考图</span></div>}
           {selected.error && <p className="l-field-help error" role="alert">{selected.error}</p>}
+          {selected.status === 'handed-off' && <p className="l-field-help">已交给 {destinations[selected.destination || 'api']}。请在网页中查看{selected.webMode === 'edit' ? '并发送' : ''}，生成结果保留在对应网页对话。</p>}
           {selected.status === 'interrupted' && <p className="l-field-help">应用在生成期间退出，上游结果未知。描述和参考图已保留，未自动重发。</p>}
           {(selected.status === 'failed' || selected.status === 'interrupted') && <div className="qi-result-actions"><button className="l-btn small" disabled={busy || submitting || !!running} onClick={() => void act(async () => {
-            acceptState(await window.media.setReference(selected.referenceId || null)); pendingRequest.current = null; setPrompt(selected.prompt); setAspect(selected.aspect); setMessage('已恢复描述和参考图，点击生成才会重新发送。'); document.getElementById('qi-prompt')?.focus();
+            acceptState(await window.media.setReference(selected.referenceId || null)); pendingRequest.current = null; setPrompt(selected.prompt); setAspect(selected.aspect); setDestination(selected.destination || 'api'); setPresetId(presets.some(p => p.id === selected.presetId) ? selected.presetId! : presets[0].id); setQuality(selected.quality || 'auto'); setBackground(selected.background || 'auto'); setOutputFormat(selected.outputFormat || 'png'); setMessage('已恢复描述和参考图，点击生成才会重新发送。'); document.getElementById('qi-prompt')?.focus();
           })}><Pencil size={14} />恢复这次输入</button></div>}
           {selected.status === 'succeeded' && <div className="qi-result-actions">
             <button className="l-btn small" disabled={busy || submitting} onClick={() => void act(async () => {

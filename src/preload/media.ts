@@ -10,6 +10,8 @@ const api: MediaAPI = {
   },
   configure: input => ipcRenderer.invoke('media:configure', input),
   checkConnection: () => ipcRenderer.invoke('media:check-connection'),
+  models: () => ipcRenderer.invoke('media:models'),
+  openFile: () => ipcRenderer.invoke('media:open-file'),
   setReference: id => ipcRenderer.invoke('media:set-reference', id),
   prepareReference: () => ipcRenderer.invoke('media:prepare-reference'),
   generate: request => ipcRenderer.invoke('media:generate', request),

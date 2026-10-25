@@ -1,7 +1,7 @@
 {
   "name": "mac-ai-prompt",
   "productName": "Lasso",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "description": "Mac 上不打断当前工作的 AI 小窗",
   "main": "dist/main.cjs",

@@ -31,7 +31,7 @@ let seq = 0;
 /** Runs `fn(electron, ...args)` in the main process; fn must be self-contained. */
 function main(fn, ...args) {
   const id = ++seq;
-  const expression = `(async () => { const electron = process.mainModule.require('electron'); return JSON.stringify(await (${fn})(electron, ...${JSON.stringify(args)})); })()`;
+  const expression = `(async () => { for (let i = 0; !process.mainModule && i < 100; i++) await new Promise(resolve => setTimeout(resolve, 50)); const electron = process.mainModule.require('electron'); return JSON.stringify(await (${fn})(electron, ...${JSON.stringify(args)})); })()`;
   return new Promise((resolve, reject) => {
     ws.addEventListener('message', function on(event) {
       const message = JSON.parse(event.data);
@@ -135,7 +135,8 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
     const importedAppearance = { fonts: Object.fromEntries(['display', 'text', 'ui', 'mono'].map(role => [role, importedFamily])), importedFonts: [{ family: importedFamily, file: 'ui-shots-font.woff2' }] };
     const image = (await find().webContents.capturePage()).resize({ width: 400, height: 300 }).toDataURL();
     const ref = { id: 'fixture-reference', width: 1200, height: 900, thumbnail: image };
-    const config = { baseURL: 'http://127.0.0.1:3000/v1', generationModel: 'configured-generation-model', editModel: 'configured-edit-model', hasCredential: true };
+    const config = { baseURL: 'http://127.0.0.1:3000/v1', generationModel: 'configured-generation-model', editModel: 'configured-edit-model', hasCredential: true,
+      destination: 'api', defaultPresetId: 'draw', quality: 'auto', background: 'auto', outputFormat: 'png', webMode: 'send', presets: [{ id: 'draw', name: '自由作图', template: '请生成图片，宽高比 {{aspect}}。\n\n{{prompt}}' }, { id: 'cover', name: '封面配图', template: '请为以下内容生成封面：{{prompt}}' }] };
     const original = { id: 'fixture-original', requestId: 'fixture-first', prompt: '一张纸上的暖白建筑草图，细节清晰。', aspect: '3:2', status: 'succeeded', createdAt: '2026-10-25T01:00:00Z', updatedAt: '2026-10-25T01:01:00Z', image: { ...ref, id: 'fixture-original' } };
     const edited = { ...original, id: 'fixture-edited', requestId: 'fixture-second', prompt: '保留构图，将屋顶改成陶土色。', parentId: original.id, referenceId: original.id, reference: original.image, createdAt: '2026-10-25T01:02:00Z', image: { ...ref, id: 'fixture-edited' } };
     const failed = { ...edited, id: 'fixture-failed', image: undefined, status: 'failed', error: '图片请求失败（HTTP 503）；未自动重试', createdAt: '2026-10-25T01:03:00Z' };
@@ -158,6 +159,9 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       'quick-image-interrupted': { jobs: [interrupted, edited, original], reference: original.image, config },
       'quick-image-running': { jobs: [{ ...failed, id: 'fixture-running', status: 'running', error: undefined }], reference: ref, config },
       'quick-image-settings': { jobs: [], reference: null, config },
+      'quick-image-chatgpt': { jobs: [], reference: ref, config: { ...config, destination: 'chatgpt' } },
+      'quick-image-gemini': { jobs: [], reference: null, config: { ...config, destination: 'gemini', webMode: 'edit' } },
+      'quick-image-web-delivered': { jobs: [{ ...original, image: undefined, destination: 'chatgpt', status: 'handed-off' }], reference: ref, config: { ...config, destination: 'chatgpt' } },
       'quick-image-fonts': { jobs: [], reference: null, config, ...importedAppearance },
       'quick-image-narrow': { jobs: [edited, original], reference: original.image, config }
     };
@@ -172,6 +176,14 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       const overflow = await page(w, 'document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth');
       if (overflow) throw Error(name + ': horizontal overflow');
       names.push(await save(w, name));
+      if (name === 'quick-image-settings') {
+        await page(w, `document.getElementById('qi-preset-edit').click()`); await wait(150); names.push(await save(w, 'quick-image-preset-menu'));
+        await page(w, `document.getElementById('qi-preset-edit').click(); Array.from(document.querySelectorAll('.qi-settings button')).find(b => b.textContent === '读取模型').click()`); await wait(150);
+        await page(w, `document.getElementById('qi-generation-choice').scrollIntoView({block:'center'}); document.getElementById('qi-generation-choice').click()`); await wait(150);
+        names.push(await save(w, 'quick-image-model-menu'));
+        await page(w, `document.getElementById('qi-generation-choice').click(); document.querySelector('.qi-settings-inner').lastElementChild.scrollIntoView({block:'end'})`); await wait(150);
+        names.push(await save(w, 'quick-image-settings-options'));
+      }
       if (name === 'quick-image-fonts') {
         const loaded = await page(w, `document.fonts.ready.then(() => document.fonts.check('14px "UI Shots Imported Mono"', 'Lasso') && document.documentElement.style.getPropertyValue('--font-ui').includes('UI Shots Imported Mono'))`);
         if (!loaded) throw Error('Imported generation font was not loaded through lasso-font');

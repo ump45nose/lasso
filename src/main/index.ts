@@ -45,6 +45,18 @@ let fontsDir: string;
 let images: Images;
 let screenshots: CaptureManager;
 let media: MediaWindow;
+let fileServices: { start(callback: (path: string) => void): void; stop(): void } | undefined;
+const pendingMediaFiles: string[] = [];
+let openingMediaFile = false;
+async function receiveMediaFile(path: string) {
+  if (!media) { pendingMediaFiles.push(path); return; }
+  if (openingMediaFile) { state.notice = '正在打开图片，请稍后再选择'; layout(); publish(); return; }
+  openingMediaFile = true;
+  try { await media.receiveFile(path); }
+  catch (error) { state.notice = (error as Error).message; layout(); showWindow(); publish(); }
+  finally { openingMediaFile = false; }
+}
+app.on('open-file', (event, path) => { event.preventDefault(); void receiveMediaFile(path); });
 let inputImage: ImageInput | null = null;
 let capture: SelectionCapture;
 let actionBar: ActionBar;
@@ -539,6 +551,7 @@ async function boot() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'Lasso', submenu: [
       { label: '设置…', accelerator: 'Command+,', click: openSettings },
+      { role: 'services' },
       { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' },
       { type: 'separator' }, { label: '退出 Lasso', accelerator: 'Command+Q', click: requestQuit }
     ] },
@@ -575,7 +588,23 @@ async function boot() {
   media = new MediaWindow(join(app.getPath('userData'), 'generated-media'), image => screenshots.openImage(image), async image => {
     const size = image.getSize();
     await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
-  }, () => state.settings);
+  }, () => state.settings, async request => {
+    const image = request.reference ? images.add(nativeImage.createFromBuffer(request.reference)) : null;
+    const preset: Preset = { id: 'media-' + randomUUID(), name: '图片生成', template: request.prompt, target: request.target, mode: request.mode, enabled: true, needsSelection: false };
+    closePalette(false); state.settingsOpen = false; state.inputOpen = false;
+    rememberTarget(request.target);
+    const delivery = tasks.runPreset(preset, request.prompt, image ? { imageId: image.id } : {});
+    layout(); showWindow(); publish();
+    const result = await delivery;
+    if (result.error) throw Error(result.error);
+  });
+  fileServices = require(join(__dirname, 'native/file-services.node'));
+  fileServices!.start(path => { void receiveMediaFile(path); });
+  if (pendingMediaFiles.length) {
+    const files = pendingMediaFiles.splice(0);
+    if (files.length === 1) void receiveMediaFile(files[0]);
+    else { state.notice = '请一次选择一张 PNG 或 JPEG 图片'; publish(); showWindow(); }
+  }
   stopCaptureEfficiency=screenshots.efficiency.subscribe(next=>{
     const starting=next.phase==='countdown'&&state.captureEfficiency.phase!=='countdown';
     state.captureEfficiency=next;
@@ -600,7 +629,7 @@ else {
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
   app.on('before-quit', () => { quitting = true; });
-  app.on('will-quit', () => { stopCaptureEfficiency?.();media?.dispose(); screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('will-quit', () => { fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));
     quitting = true;

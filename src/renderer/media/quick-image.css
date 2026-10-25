@@ -1,6 +1,14 @@
 /* Dedicated generation surface, using the existing small-window components and tokens. */
 .qi-body { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; padding: 24px 28px; }
 .qi-input { display: flex; flex-direction: column; gap: 12px; }
+.qi-options { display: flex; flex-wrap: wrap; gap: 8px; }
+.qi-options .l-field-help { flex-basis: 100%; margin: 0; }
+.qi-choice { flex: 1; min-width: 0; }
+.qi-choice-trigger { text-align: left; overflow: hidden; text-overflow: ellipsis; }
+.qi-choice-options { max-height: 200px; overflow-y: auto; margin-top: 4px; padding: 4px; border: 0.5px solid var(--line-strong); border-radius: 9px; background: var(--surface); }
+.qi-choice-options button { display: block; width: 100%; text-align: left; overflow-wrap: anywhere; padding: 7px 9px; border: 0; border-radius: 6px; background: transparent; }
+.qi-choice-options button:hover, .qi-choice-options button.highlighted { background: var(--clay-wash); color: var(--clay-ink); }
+.qi-choice-options button[aria-selected="true"] { background: var(--clay-wash-2); color: var(--clay-ink); }
 .qi-input h2 { margin: 0; font-family: var(--font-display); font-size: 28px; font-weight: 300; line-height: 1.3; }
 .qi-input .l-textarea { min-height: 96px; max-height: 240px; }
 .qi-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }

@@ -14,7 +14,11 @@ const paths = await packager({
   appBundleId: 'local.mac-ai-prompt', appCategoryType: 'public.app-category.productivity',
   platform: 'darwin', arch: process.arch, overwrite: true, asar: false, prune: true,
   ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /^\/\.(?:claude|worktree)(?:\/|$)/, /\.tsbuildinfo$/],
-  extendInfo: { NSScreenCaptureUsageDescription: '选择屏幕区域并截图。', NSMicrophoneUsageDescription: '在 AI 网页中使用语音输入。', NSCameraUsageDescription: '在 AI 网页中添加相机内容。' }
+  extendInfo: {
+    NSScreenCaptureUsageDescription: '选择屏幕区域并截图。', NSMicrophoneUsageDescription: '在 AI 网页中使用语音输入。', NSCameraUsageDescription: '在 AI 网页中添加相机内容。',
+    CFBundleDocumentTypes: [{ CFBundleTypeName: 'PNG / JPEG 图片', CFBundleTypeRole: 'Viewer', LSHandlerRank: 'Alternate', LSItemContentTypes: ['public.png', 'public.jpeg'] }],
+    NSServices: [{ NSMenuItem: { default: '使用 Lasso 生图' }, NSMessage: 'generateImage', NSPortName: 'Lasso', NSSendTypes: ['public.file-url', 'NSFilenamesPboardType'], NSSendFileTypes: ['public.png', 'public.jpeg'], NSRequiredContext: {}, NSTimeout: '10000' }]
+  }
 });
 for (const path of paths) {
   // Packager ties the display name to executableName; keep the stable executable

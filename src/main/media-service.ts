@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { mediaAspects, type MediaAspect, type MediaConfig, type MediaConfigInput, type MediaGenerateRequest, type MediaJob, type MediaReference, type MediaState } from '../shared/media';
+import { defaultMediaPreferences, mediaPrompt, mediaAspects, type MediaAspect, type MediaConfig, type MediaConfigInput, type MediaGenerateRequest, type MediaJob, type MediaReference, type MediaState } from '../shared/media';
 
 /** Appearance comes from the host's current settings and is never stored with image jobs. */
 type MediaServiceState = Omit<MediaState, 'fonts' | 'importedFonts'>;
@@ -13,8 +13,9 @@ export interface MediaServiceAdapters {
   normalizeImage(buffer: Buffer): NormalizedMediaImage;
   fetch?: typeof fetch;
   changed?: (state: MediaServiceState) => void;
+  deliverWeb?: (request: { target: 'chatgpt' | 'gemini'; prompt: string; mode: 'edit' | 'send'; reference?: Buffer }) => Promise<void>;
 }
-interface SavedConfig { baseURL: string; generationModel: string; editModel: string; credential?: string }
+type SavedConfig = Omit<MediaConfig, 'hasCredential'> & { credential?: string };
 interface SavedMedia { version: 1; jobs: MediaJob[]; references: MediaReference[]; referenceId: string | null }
 const MAX_IMAGE_BYTES = 64 * 1024 * 1024;
 const MAX_JSON_BYTES = 96 * 1024 * 1024;
@@ -26,7 +27,7 @@ export class MediaService {
   private jobs: MediaJob[] = [];
   private references = new Map<string, MediaReference>();
   private referenceId: string | null = null;
-  private config: SavedConfig = { baseURL: '', generationModel: '', editModel: '' };
+  private config: SavedConfig = { ...defaultMediaPreferences(), baseURL: '', generationModel: '', editModel: '' };
   private active: Promise<void> | null = null;
   private readonly request: typeof fetch;
 
@@ -36,15 +37,15 @@ export class MediaService {
     const configPath = join(directory, 'config.json');
     if (existsSync(configPath)) {
       const value = JSON.parse(readFileSync(configPath, 'utf8')) as SavedConfig;
-      this.validateConfig(value);
+      this.validateConfig({ ...this.config, ...value });
       if (value.credential !== undefined && typeof value.credential !== 'string') throw Error('图片服务凭据存储无效');
-      this.config = value;
+      this.config = { ...this.config, ...value };
     }
     const storePath = join(directory, 'results.json');
     if (existsSync(storePath)) {
       const value = JSON.parse(readFileSync(storePath, 'utf8')) as SavedMedia;
       if (value.version !== 1 || !Array.isArray(value.jobs) || !Array.isArray(value.references)) throw Error('图片结果存储格式无效');
-      if (!value.jobs.every(job => validId(job.id) && validId(job.requestId) && typeof job.prompt === 'string' && mediaAspects.includes(job.aspect) && ['running', 'succeeded', 'failed', 'interrupted'].includes(job.status))) throw Error('图片任务存储格式无效');
+      if (!value.jobs.every(job => validId(job.id) && validId(job.requestId) && typeof job.prompt === 'string' && mediaAspects.includes(job.aspect) && ['running', 'succeeded', 'handed-off', 'failed', 'interrupted'].includes(job.status))) throw Error('图片任务存储格式无效');
       if (!value.references.every(image => validId(image.id) && typeof image.thumbnail === 'string' && Number.isSafeInteger(image.width) && Number.isSafeInteger(image.height))) throw Error('图片引用存储格式无效');
       this.jobs = value.jobs;
       this.references = new Map(value.references.map(image => [image.id, image]));
@@ -60,15 +61,17 @@ export class MediaService {
   }
 
   snapshot(): MediaServiceState {
-    const config: MediaConfig = { baseURL: this.config.baseURL, generationModel: this.config.generationModel, editModel: this.config.editModel, hasCredential: Boolean(this.config.credential) };
+    const { credential, ...saved } = this.config;
+    const config: MediaConfig = { ...saved, hasCredential: Boolean(credential) };
     return structuredClone({ jobs: this.jobs, reference: this.referenceId ? this.references.get(this.referenceId) || null : null, config });
   }
 
   configure(input: MediaConfigInput): MediaServiceState {
     if (this.active) throw Error('生成期间不能更改图片服务配置');
-    this.validateConfig(input);
+    const merged = { ...this.config, ...input };
+    this.validateConfig(merged);
     if (input.credential !== undefined && (typeof input.credential !== 'string' || input.credential.length > 16000)) throw Error('凭据格式无效');
-    const config: SavedConfig = { baseURL: input.baseURL.trim().replace(/\/+$/, ''), generationModel: input.generationModel.trim(), editModel: input.editModel.trim(), credential: this.config.credential };
+    const config: SavedConfig = { destination: merged.destination, defaultPresetId: merged.defaultPresetId, quality: merged.quality, background: merged.background, outputFormat: merged.outputFormat, webMode: merged.webMode, presets: structuredClone(merged.presets), baseURL: input.baseURL.trim().replace(/\/+$/, ''), generationModel: input.generationModel.trim(), editModel: input.editModel.trim(), credential: this.config.credential };
     if (input.credential !== undefined) {
       if (input.credential.trim()) {
         if (!this.adapters.secrets.available()) throw Error('系统安全存储不可用，未保存凭据');
@@ -82,15 +85,21 @@ export class MediaService {
   }
 
   async checkConnection(): Promise<{ message: string }> {
+    await this.models();
+    return { message: '服务连接正常；生成/改图能力以实际请求为准。' };
+  }
+
+  async models(): Promise<string[]> {
     const config = this.config;
     if (!config.baseURL) throw Error('请先填写并保存图片服务地址');
     const response = await this.fetchOnce(this.endpoint('models', config), { headers: this.headers(config), signal: AbortSignal.timeout(15000) });
     if (!response.ok) { await response.body?.cancel(); throw Error(`连接检查失败（HTTP ${response.status}）`); }
-    await response.body?.cancel();
-    return { message: '服务连接正常；生成/改图能力以实际请求为准。' };
+    const value = JSON.parse((await this.readLimited(response, 2 * 1024 * 1024)).toString('utf8')) as { data?: { id?: unknown }[] };
+    if (!Array.isArray(value.data)) throw Error('服务未返回有效模型列表');
+    return [...new Set(value.data.map(model => model.id).filter((id): id is string => typeof id === 'string'))].sort();
   }
 
-  /** Accept only the host editor's final composited PNG, never a screenshot backdrop. */
+  /** Accept an explicitly selected local image or the editor's final composited PNG. */
   addReference(png: Buffer): MediaServiceState {
     const normalized = this.normalize(png);
     const reference = this.saveImage(randomUUID(), normalized);
@@ -115,12 +124,20 @@ export class MediaService {
     if (this.active || this.jobs.some(job => job.status === 'running')) throw Error('已有图片正在生成，请等待完成');
     if (typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 24000) throw Error('请填写描述（最多 24000 字符）');
     if (!mediaAspects.includes(input.aspect)) throw Error('不支持的图片比例');
+    const destination = input.destination ?? this.config.destination;
+    const quality = input.quality ?? this.config.quality, background = input.background ?? this.config.background, outputFormat = input.outputFormat ?? this.config.outputFormat;
+    if (!['api', 'chatgpt', 'gemini'].includes(destination) || !['auto', 'low', 'medium', 'high'].includes(quality) || !['auto', 'opaque', 'transparent'].includes(background) || !['png', 'jpeg', 'webp'].includes(outputFormat)) throw Error('生图方式或参数无效');
+    if (destination === 'api' && background === 'transparent' && outputFormat === 'jpeg') throw Error('透明背景请选择 PNG 或 WebP');
+    const preset = this.config.presets.find(item => item.id === (input.presetId ?? this.config.defaultPresetId));
+    if (!preset) throw Error('提示词预设已删除，请重新选择');
+    const renderedPrompt = mediaPrompt(preset.template, input.prompt.trim(), input.aspect);
+    if (renderedPrompt.length > 32000) throw Error('组合后的提示词超过 32000 字符，请缩短描述或预设');
     const reference = input.referenceId ? this.references.get(input.referenceId) : undefined;
     if (input.referenceId && !reference) throw Error('参考图片已不可用，请重新选择');
     const parent = reference && this.jobs.find(job => job.id === reference.id && job.status === 'succeeded');
     if (input.parentId !== undefined && (!parent || parent.id !== input.parentId)) throw Error('父版本与所选参考图不符');
     const now = new Date().toISOString();
-    const job: MediaJob = { id: randomUUID(), requestId: input.requestId, prompt: input.prompt.trim(), aspect: input.aspect, status: 'running', createdAt: now, updatedAt: now,
+    const job: MediaJob = { id: randomUUID(), requestId: input.requestId, prompt: input.prompt.trim(), aspect: input.aspect, destination, presetId: preset.id, renderedPrompt, quality, background, outputFormat, webMode: this.config.webMode, status: 'running', createdAt: now, updatedAt: now,
       ...(reference ? { referenceId: reference.id, reference: structuredClone(reference) } : {}), ...(parent ? { parentId: parent.id } : {}) };
     this.jobs.unshift(job);
     try { this.persist(); } catch { this.jobs.shift(); throw Error('未能保存图片任务，尚未发送生成请求'); }
@@ -154,18 +171,26 @@ export class MediaService {
 
   private async run(job: MediaJob, config: SavedConfig): Promise<void> {
     try {
+      if (job.destination === 'chatgpt' || job.destination === 'gemini') {
+        if (!this.adapters.deliverWeb) throw Error('网页生图尚未接通');
+        await this.adapters.deliverWeb({ target: job.destination, prompt: job.renderedPrompt || job.prompt, mode: job.webMode || 'send', ...(job.referenceId ? { reference: this.readImage(job.referenceId) } : {}) });
+        job.status = 'handed-off'; job.updatedAt = new Date().toISOString(); this.persist(); return;
+      }
       if (!config.baseURL || !(job.referenceId ? config.editModel : config.generationModel)) throw Error('请先保存服务地址和对应的生成/改图模型');
       const model = job.referenceId ? config.editModel : config.generationModel;
       const headers = this.headers(config);
+      const prompt = job.renderedPrompt || job.prompt;
+      const options = { ...(job.quality && job.quality !== 'auto' ? { quality: job.quality } : {}), ...(job.background && job.background !== 'auto' ? { background: job.background } : {}), ...(job.outputFormat && job.outputFormat !== 'png' ? { output_format: job.outputFormat } : {}) };
       let body: BodyInit;
       if (job.referenceId) {
         const form = new FormData();
-        form.set('model', model); form.set('prompt', job.prompt); form.set('size', sizes[job.aspect]); form.set('n', '1');
+        form.set('model', model); form.set('prompt', prompt); form.set('size', sizes[job.aspect]); form.set('n', '1');
+        for (const [name, value] of Object.entries(options)) form.set(name, value);
         form.set('image', new Blob([new Uint8Array(this.readImage(job.referenceId))], { type: 'image/png' }), 'reference.png');
         body = form;
       } else {
         headers['Content-Type'] = 'application/json';
-        body = JSON.stringify({ model, prompt: job.prompt, size: sizes[job.aspect], n: 1 });
+        body = JSON.stringify({ model, prompt, size: sizes[job.aspect], n: 1, ...options });
       }
       const response = await this.fetchOnce(this.endpoint(job.referenceId ? 'images/edits' : 'images/generations', config), { method: 'POST', headers, body, signal: AbortSignal.timeout(300000) });
       if (!response.ok) { await response.body?.cancel(); throw Error(`图片请求失败（HTTP ${response.status}）；未自动重试`); }
@@ -223,8 +248,16 @@ export class MediaService {
     try { return { Authorization: 'Bearer ' + this.adapters.secrets.decrypt(Buffer.from(config.credential, 'base64')) }; }
     catch { throw Error('无法解密图片服务凭据，请在设置中重新保存'); }
   }
-  private validateConfig(input: MediaConfigInput | SavedConfig) {
+  private validateConfig(input: SavedConfig) {
     if (!input || typeof input.baseURL !== 'string' || typeof input.generationModel !== 'string' || typeof input.editModel !== 'string' || input.generationModel.length > 512 || input.editModel.length > 512) throw Error('图片服务配置无效');
+    if (!['api', 'chatgpt', 'gemini'].includes(input.destination) || !['auto', 'low', 'medium', 'high'].includes(input.quality) || !['auto', 'opaque', 'transparent'].includes(input.background) || !['png', 'jpeg', 'webp'].includes(input.outputFormat) || !['edit', 'send'].includes(input.webMode)) throw Error('生图偏好设置无效');
+    if (!Array.isArray(input.presets) || !input.presets.length || input.presets.length > 30) throw Error('请保留 1—30 个提示词预设');
+    const ids = new Set<string>();
+    for (const preset of input.presets) {
+      if (!preset || !validId(preset.id) || ids.has(preset.id) || typeof preset.name !== 'string' || !preset.name.trim() || preset.name.length > 60 || typeof preset.template !== 'string' || !preset.template.trim() || preset.template.length > 8000) throw Error('提示词预设名称或内容无效');
+      ids.add(preset.id);
+    }
+    if (!ids.has(input.defaultPresetId)) throw Error('请选择有效的默认提示词预设');
     if (input.baseURL.trim()) {
       let url: URL;
       try { url = new URL(input.baseURL.trim()); } catch { throw Error('服务地址须为 HTTP 或 HTTPS URL'); }
