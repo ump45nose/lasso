@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CircleAlert } from 'lucide-react';
+import { AnimatePresence, MotionConfig, motion } from 'motion/react';
 import type { DesktopAPI, PaletteEvent, ShellState } from '../shared/contracts';
 import '@fontsource-variable/newsreader/opsz.css';
 import '@fontsource/jetbrains-mono/400.css';
@@ -19,6 +20,7 @@ import { ImageEntry } from './ImageEntry';
 import { TextEntry } from './TextEntry';
 import { Pinned } from './capture/Pinned';
 import { isLocal } from './targets';
+import { collapse, rise } from './motion';
 declare global { interface Window { desktop: DesktopAPI } }
 
 function App() {
@@ -34,27 +36,29 @@ function App() {
   if (!state) return null;
   const view = state.settingsOpen ? 'settings' : state.inputOpen && state.inputText ? 'text' : state.inputOpen && state.inputImage ? 'image' : state.activeTaskId && isLocal(state.activeTarget) ? 'chat'
     : state.pageError ? 'error' : state.hasPage ? 'web' : 'launcher';
+  const viewKey = view === 'chat' ? 'chat-' + state.activeTaskId : view === 'text' ? 'text-' + state.inputText!.id : view === 'image' ? 'image-' + state.inputImage!.id : view;
   function paste(event: React.ClipboardEvent) {
     if (view !== 'launcher' || ![...event.clipboardData.items].some(item => item.type.startsWith('image/'))) return;
     event.preventDefault(); void window.desktop.readImage();
   }
   // Footer rows match main's layout(): the native page sits between the 44px bar and these 48px rows.
   return <div className="l-app" onPaste={paste}>
-    {view === 'settings' ? <Settings state={state} tab={settingsTab} setTab={setSettingsTab} /> : <>
+    <AnimatePresence mode="wait" initial={false}>{view === 'settings' ? <motion.div key="settings" className="l-view" {...rise}><Settings state={state} tab={settingsTab} setTab={setSettingsTab} /></motion.div>
+      : <motion.div key="shell" className="l-view" {...rise}>
       <TitleBar state={state} />
-      <main className="l-main">
-        {view === 'text' ? <TextEntry key={state.inputText!.id} input={state.inputText!} presets={state.presets} />
+      <main className="l-main"><AnimatePresence mode="wait" initial={false}><motion.div key={viewKey} className="l-view" {...rise}>
+        {view === 'text' ? <TextEntry input={state.inputText!} presets={state.presets} />
           : view === 'image' ? <ImageEntry image={state.inputImage!} presets={state.presets} />
-          : view === 'chat' ? <AgentChat key={state.activeTaskId} taskId={state.activeTaskId!} />
-          : view === 'error' ? <div className="l-empty l-surface-enter"><CircleAlert size={22} className="l-danger" /><h2>网页还没打开。</h2><p>{state.pageError}</p><button className="l-btn primary" onClick={() => void window.desktop.act('reload')}>重新加载</button></div>
+          : view === 'chat' ? <AgentChat taskId={state.activeTaskId!} />
+          : view === 'error' ? <div className="l-empty"><CircleAlert size={22} className="l-danger" /><h2>网页还没打开。</h2><p>{state.pageError}</p><button className="l-btn primary" onClick={() => void window.desktop.act('reload')}>重新加载</button></div>
           : view === 'launcher' ? <Launcher state={state} openPermission={() => { setSettingsTab('general'); void window.desktop.act('settings'); }} />
           : <div className="l-web-slot" aria-label={`${state.hostname} 网页区域`} />}
-      </main>
-      {state.delivery && <DeliveryRow delivery={state.delivery} />}
-    </>}
-    {state.notice && <NoticeRow message={state.notice} />}
-    {palette.scope && <Palette key={palette.scope} state={state} scope={palette.scope} backdrop={palette.backdrop} />}
+      </motion.div></AnimatePresence></main>
+      <AnimatePresence initial={false}>{state.delivery && <motion.div key="delivery" className="l-foot-wrap" {...collapse}><DeliveryRow delivery={state.delivery} /></motion.div>}</AnimatePresence>
+    </motion.div>}</AnimatePresence>
+    <AnimatePresence initial={false}>{state.notice && <motion.div key="notice" className="l-foot-wrap" {...collapse}><NoticeRow message={state.notice} /></motion.div>}</AnimatePresence>
+    <AnimatePresence>{palette.scope && <Palette key={palette.scope} state={state} scope={palette.scope} backdrop={palette.backdrop} />}</AnimatePresence>
   </div>;
 }
 const surface = new URLSearchParams(location.search).get('surface');
-createRoot(document.getElementById('root')!).render(surface === 'screenshot' ? <Screenshot /> : surface === 'action-bar' ? <ActionBar /> : surface === 'pin' ? <Pinned /> : <App />);
+createRoot(document.getElementById('root')!).render(<MotionConfig reducedMotion="user">{surface === 'screenshot' ? <Screenshot /> : surface === 'action-bar' ? <ActionBar /> : surface === 'pin' ? <Pinned /> : <App />}</MotionConfig>);

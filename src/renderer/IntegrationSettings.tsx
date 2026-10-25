@@ -23,7 +23,7 @@ export function IntegrationSettings({ settings, section }: { settings: Settings;
   }
   async function save() { const r = await window.desktop.saveIntegrations({ local, appPrompts: rules }); setError(r.error || ''); setSaved(!r.error); }
   return <>
-    <div className="l-set-body l-surface-enter">
+    <div className="l-set-body">
       {section === 'local' ? <>
         {(['codex', 'pi'] as const).map(target => <div className="l-set-section" key={target}>
           <div className="l-set-row-head"><h3>{targetLabels[target]}</h3></div>

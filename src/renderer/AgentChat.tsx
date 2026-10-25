@@ -5,6 +5,8 @@ import { ArrowUp, Check, ChevronDown, CircleAlert, Folder, Image, RotateCw, Term
 import { mergeAgentEvent } from './agent-state';
 import { folderName } from './targets';
 import { targetLabels, type AgentState, type AgentRequest, type AgentAnswer, type AgentEvent, type ChatMessage } from '../shared/contracts';
+import { AnimatePresence, motion } from 'motion/react';
+import { collapse } from './motion';
 
 function RequestCard({ request, answer }: { request: AgentRequest; answer(value: AgentAnswer): Promise<void> }) {
   const [value, setValue] = useState(request.prefill || '');
@@ -44,7 +46,7 @@ function Ledger({ tools }: { tools: ChatMessage[] }) {
   const title = running ? `正在运行 · ${[...tools].reverse().find(tool => tool.running)!.title}` : `${tools.length} 个工具步骤`;
   return <div className="l-ledger">
     <button type="button" aria-expanded={expanded} onClick={() => setOpen(!expanded)}><ChevronDown size={12} />{title}</button>
-    {expanded && <ul>{tools.map(tool => <li key={tool.id}><details><summary>{tool.running ? <span className="dot running" /> : <Check size={12} className="ok" />}<span>{tool.title}</span></summary>{tool.text && <pre>{tool.text}</pre>}</details></li>)}</ul>}
+    <AnimatePresence initial={false}>{expanded && <motion.ul key="tools" {...collapse}>{tools.map(tool => <li key={tool.id}><details><summary>{tool.running ? <span className="dot running" /> : <Check size={12} className="ok" />}<span>{tool.title}</span></summary>{tool.text && <pre>{tool.text}</pre>}</details></li>)}</motion.ul>}</AnimatePresence>
   </div>;
 }
 function groupMessages(messages: ChatMessage[]) {
@@ -96,7 +98,7 @@ export function AgentChat({ taskId }: { taskId: string }) {
   };
   const alert = error || state.error || state.modelsError;
   const modelLabel = state.models.find(model => model.id === state.model)?.label || state.model || 'CLI 默认模型';
-  return <section className="l-chat l-surface-enter">
+  return <section className="l-chat">
     <div className="l-msgs" ref={scroll} onScroll={() => { const el = scroll.current!; follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80; }}>
       {!state.messages.length && <div className="l-welcome"><h2>在这里接着聊。</h2><p>沿用 {name} 的登录、模型、工具与权限设置。工作目录：<span className="mono l-small">{state.cwd}</span></p>{state.target === 'pi' && <p className="l-small">Pi 沿用本机执行权限；终端专属扩展界面不在小窗显示。</p>}</div>}
       {groupMessages(state.messages).map(item => Array.isArray(item) ? <Ledger key={item[0].id} tools={item} /> : <MessageView key={item.id} message={item} />)}

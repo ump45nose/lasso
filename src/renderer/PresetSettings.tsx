@@ -4,6 +4,7 @@ import { ExecutionFields } from './ExecutionFields';
 import { targetLabels } from '../shared/contracts';
 import type { Preset } from '../shared/contracts';
 import { targets } from './targets';
+import { Segmented } from './motion';
 
 const BAR_SIZE = 4;
 const preview = (template: string) => template.replace(/\s+/g, ' ').split('{{selection}}');
@@ -35,7 +36,7 @@ export function PresetSettings({ presets }: { presets: Preset[] }) {
     <span className="l-row-meta">{targetLabels[preset.target]} · {preset.mode === 'edit' ? '先编辑' : '直接发送'}</span>
     <button className="l-switch" role="switch" aria-checked={preset.enabled} aria-label={'启用 ' + preset.name} onClick={() => void save(presets.map(p => p.id === preset.id ? { ...p, enabled: !p.enabled } : p))}><span /></button>
   </li>;
-  return <div className="l-set-body l-surface-enter">
+  return <div className="l-set-body">
     <div className="l-set-row-head"><h3>动作条 · 前 {BAR_SIZE} 个</h3><span>拖动或 ⌥↑↓ 调整顺序，点开编辑</span></div>
     {bar.length ? <ul className="l-group">{bar.map(row)}</ul> : <p className="l-field-help">启用一个预设后，它会出现在动作条上。</p>}
     {more.length > 0 && <><div className="l-set-row-head l-gap"><h3>更多菜单</h3><span>动作条「···」与指令面板</span></div><ul className="l-group">{more.map(row)}</ul></>}
@@ -68,12 +69,10 @@ function PresetEditor({ preset, isNew, save, remove, back, error }: { preset: Pr
         <p className="l-field-help"><span className="mono">{'{{selection}}'}</span> 处放选中文字；没有这个位置时，选中文字附在末尾。应用背景会放在最前面。</p>
       </div>
       <div className="l-field"><span className="l-field-label">目标</span>
-        <div className="l-seg" role="radiogroup" aria-label="目标">{targets.map(id => <button key={id} role="radio" aria-checked={draft.target === id} onClick={() => set({ target: id, model: '', effort: '' })}>{targetLabels[id]}</button>)}</div></div>
+        <Segmented label="目标" value={draft.target} onChange={target => set({ target, model: '', effort: '' })} options={targets.map(id => [id, targetLabels[id]] as const)} /></div>
       <ExecutionFields key={draft.target} target={draft.target} profile={draft} update={set} />
       <div className="l-field"><span className="l-field-label">执行方式</span>
-        <div className="l-seg" role="radiogroup" aria-label="执行方式">
-          <button role="radio" aria-checked={draft.mode === 'edit'} onClick={() => set({ mode: 'edit' })}>先填入，再编辑</button>
-          <button role="radio" aria-checked={draft.mode === 'send'} onClick={() => set({ mode: 'send' })}>填入后直接发送</button></div></div>
+        <Segmented label="执行方式" value={draft.mode} onChange={mode => set({ mode })} options={[['edit', '先填入，再编辑'], ['send', '填入后直接发送']]} /></div>
       <ul className="l-group">
         <li><div className="l-row-label"><span>需要内容</span><span>没有选中文字或图片时，这个预设不可用</span></div><button className="l-switch" role="switch" aria-checked={draft.needsSelection} aria-label="需要内容" onClick={() => set({ needsSelection: !draft.needsSelection })}><span /></button></li>
         <li><div className="l-row-label"><span>启用</span><span>停用后不出现在动作条和指令面板</span></div><button className="l-switch" role="switch" aria-checked={draft.enabled} aria-label="启用预设" onClick={() => set({ enabled: !draft.enabled })}><span /></button></li>

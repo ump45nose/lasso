@@ -53,7 +53,7 @@ export function FontSettings({ settings }: { settings: Settings }) {
     const r = await window.desktop.removeFont(file);
     setError(r.error || ''); if (!r.error) setMessage(`已移除「${family}」。使用它的角色会改用后备字体，可重新选择。`);
   }
-  return <div className="l-set-body l-surface-enter">
+  return <div className="l-set-body">
     <div className="l-set-row-head"><h3>字体</h3><span>默认全部使用衬线体</span></div>
     <ul className="l-group">
       {roles.map(role => {

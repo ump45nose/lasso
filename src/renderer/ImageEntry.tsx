@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { targetLabels, type ImagePreview, type LaunchOptions, type Preset, type Target } from '../shared/contracts';
 import { targets } from './targets';
+import { Segmented } from './motion';
 
 /** Shared by pending image and text: pick an optional one-off target, then run a preset with the input. */
 export function PresetPicker({ presets, input }: { presets: Preset[]; input: Pick<LaunchOptions, 'imageId' | 'textId'> }) {
@@ -14,9 +15,7 @@ export function PresetPicker({ presets, input }: { presets: Preset[]; input: Pic
     finally { setBusy(false); }
   }
   return <>
-    <div className="l-seg" role="radiogroup" aria-label="发送到">
-      {(['', ...targets] as const).map(id => <button key={id || 'preset'} role="radio" aria-checked={target === id} onClick={() => setTarget(id)}>{id ? targetLabels[id] : '沿用预设目标'}</button>)}
-    </div>
+    <Segmented label="发送到" value={target} onChange={setTarget} options={[['', '沿用预设目标'], ...targets.map(id => [id, targetLabels[id]] as const)]} />
     <div className="l-list">
       {presets.filter(p => p.enabled).map(p => <button key={p.id} className="l-list-row" disabled={busy} onClick={() => void run(p)}>
         {p.name}<small>{targetLabels[target || p.target]} · {p.mode === 'edit' ? '先编辑' : '直接发送'}</small><ChevronRight size={14} className="l-row-chev" /></button>)}
@@ -28,7 +27,7 @@ export function PresetPicker({ presets, input }: { presets: Preset[]; input: Pic
 export function ImageEntry({ image, presets }: { image: ImagePreview; presets: Preset[] }) {
   const [error, setError] = useState('');
   const replace = () => void window.desktop.readImage(); // A failure shows as the app notice row.
-  return <div className="l-image l-surface-enter" onPaste={e => { if ([...e.clipboardData.items].some(i => i.type.startsWith('image/'))) { e.preventDefault(); replace(); } }}>
+  return <div className="l-image" onPaste={e => { if ([...e.clipboardData.items].some(i => i.type.startsWith('image/'))) { e.preventDefault(); replace(); } }}>
     <div className="l-image-head"><span className="l-small">待处理图片</span><h2>这张图，想问什么？</h2></div>
     <figure className="l-image-fig">
       <div className="l-print"><img className="l-shot" src={image.thumbnail} alt="待处理图片预览" /></div>

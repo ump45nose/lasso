@@ -2,7 +2,7 @@ import type { Preset } from '../shared/contracts';
 import { PresetPicker } from './ImageEntry';
 
 export function TextEntry({ input, presets }: { input: { id: string; text: string }; presets: Preset[] }) {
-  return <div className="l-image l-surface-enter">
+  return <div className="l-image">
     <div className="l-image-head"><span className="l-small">图中所选文字</span><h2>这段文字，想问什么？</h2></div>
     <figure className="l-image-fig">
       <pre className="l-print l-text-preview">{input.text}</pre>

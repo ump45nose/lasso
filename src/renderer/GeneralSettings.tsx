@@ -36,7 +36,7 @@ export function GeneralSettings({ state }: { state: ShellState }) {
   const saveCapture = async (next: Partial<Pick<typeof settings, 'selectionEnabled' | 'clipboardFallback'>>) => setError((await window.desktop.saveCapture({ selectionEnabled: settings.selectionEnabled, clipboardFallback: settings.clipboardFallback, ...next })).error || '');
   const resident = state.tasks.filter(task => task.residency === 'resident').length, released = state.tasks.length - resident;
   const captureDot = capture.status === 'active' ? 'complete' : capture.status === 'error' ? 'error' : capture.status === 'permission' ? 'waiting' : 'released';
-  return <div className="l-set-body l-surface-enter">
+  return <div className="l-set-body">
     <div className="l-set-row-head"><h3>划词</h3></div>
     <ul className="l-group">
       <li className="col">

@@ -1,6 +1,7 @@
 import { Fragment, useEffect } from 'react';
 import { Check, CircleAlert, Copy, X } from 'lucide-react';
 import type { DeliveryStatus, DeliveryStep } from '../shared/contracts';
+import { Glide } from './motion';
 
 const stepLabels: Record<DeliveryStep, string> = { open: '打开', model: '模型', fill: '填入', upload: '图片', send: '发送', edit: '交给你' };
 const act = (action: Parameters<typeof window.desktop.act>[0]) => void window.desktop.act(action);
@@ -27,6 +28,7 @@ export function DeliveryRow({ delivery }: { delivery: DeliveryStatus }) {
         return <Fragment key={step}>
           {i > 0 && <li aria-hidden="true" className={'l-link-line' + (done || now ? '' : ' todo')} />}
           <li className={'l-step ' + (done ? 'done' : now ? (error ? 'fail' : 'now') : '')} aria-current={now ? 'step' : undefined}>
+            {now && <Glide id="step-now" className="l-step-mark" />}
             {done ? <Check size={12} /> : now ? (error ? <CircleAlert size={12} /> : <span className={'dot ' + (phase === 'login' ? 'waiting' : 'running')} />) : <span className="dot draft l-step-todo" />}
             {stepLabels[step]}
           </li>

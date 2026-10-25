@@ -4,6 +4,11 @@ import { Image, Maximize2, Minimize2, Minus, Pin, RotateCw, ScanLine, Search, Se
 import { targetLabels } from '../shared/contracts';
 import type { Action, PaletteScope, Preset, ShellState, Target, TaskSummary } from '../shared/contracts';
 import { Badge, isLocal, shortcutLabel, taskDot, taskStatus, targets } from './targets';
+import { motion } from 'motion/react';
+import { spring } from './motion';
+
+const scrimMotion = { hidden: { opacity: 0, transition: { duration: 0.12 } }, shown: { opacity: 1, transition: { duration: 0.14 } } };
+const panelMotion = { hidden: { opacity: 0, y: -6, scale: 0.98, transition: { duration: 0.12 } }, shown: { opacity: 1, y: 0, scale: 1, transition: spring } };
 
 type Row = { key: string; label: string; disabled?: boolean } & (
   | { kind: 'preset'; preset: Preset }
@@ -92,10 +97,10 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
       setOverrides({ ...overrides, [preset.id]: targets[(at + (event.shiftKey ? targets.length - 1 : 1)) % targets.length] });
     }
   }
-  return <>
+  return <motion.div className="l-pal-layer" initial="hidden" animate="shown" exit="hidden">
     {backdrop && <img className="l-backdrop" src={backdrop} alt="" />}
-    <div className="l-scrim" onClick={() => void close()} />
-    <div className="l-palette" role="dialog" aria-label="指令面板">
+    <motion.div className="l-scrim" variants={scrimMotion} onClick={() => void close()} />
+    <motion.div className="l-palette" role="dialog" aria-label="指令面板" variants={panelMotion}>
       <label className="l-pal-search"><Search size={16} />
         <input ref={input} aria-label="搜索预设、任务或指令" aria-controls="palette-list" aria-activedescendant={current ? 'pal-' + current.key : undefined}
           placeholder={scope === 'tasks' ? '搜索任务' : scope === 'new' ? '选择新任务的目标' : '搜索预设、任务或指令'} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={key} spellCheck={false} />
@@ -125,8 +130,8 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
         {!flat.length && <p className="l-pal-empty">{query ? `没有匹配「${query}」的预设或指令。` : '没有可用的项目。'}</p>}
       </div>
       <div className="l-pal-foot"><span><span className="mono">↑↓</span> 选择</span><span><span className="mono">↵</span> 运行</span>{scope === 'all' && <span><span className="mono">⇥</span> 临时换目标</span>}<span className="push"><span className="mono">⌘,</span> 设置</span></div>
-    </div>
-  </>;
+    </motion.div>
+  </motion.div>;
 }
 function PresetMeta({ preset, target, selected, disabled }: { preset: Preset; target: Target; selected: boolean; disabled?: boolean }) {
   const changed = target !== preset.target;

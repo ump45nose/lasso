@@ -1,9 +1,11 @@
 import { useLayoutEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { Image, Pin, TextQuote, PinOff, Plus, Search, X } from 'lucide-react';
 import { targetLabels } from '../shared/contracts';
 import type { ShellState } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
 import { Badge, taskDot, taskStatus } from './targets';
+import { Glide, pop } from './motion';
 
 const TAB_WIDTH = 124, MORE_WIDTH = 36, INPUT_WIDTH = 120;
 
@@ -37,20 +39,24 @@ export function TitleBar({ state }: { state: ShellState }) {
   }
   return <header className="l-bar">
     {!tasks.length && !input ? <div className="l-wordmark"><BrandMark size={18} /><span>Lasso</span></div> : <div className="l-tabs" ref={row} role="tablist" aria-label="本次任务">
-      {input && <div className={'l-tab image' + (inputOpen ? ' active' : '')}>
+      <AnimatePresence initial={false} mode="popLayout">
+      {input && <motion.div key="input" layout="position" {...pop} className={'l-tab image' + (inputOpen ? ' active' : '')}>
+        {inputOpen && <Glide id="tab-active" className="l-tab-bg" />}
         <button role="tab" className="l-tab-select" aria-selected={inputOpen} onClick={() => void window.desktop.act('show-input')}>{input === 'text' ? <TextQuote size={14} /> : <Image size={14} />}<span className="l-tab-title">{input === 'text' ? '待处理文字' : '待处理图片'}</span></button>
-      </div>}
+      </motion.div>}
       {visible.map(task => {
         const selected = !inputOpen && task.id === activeTaskId, status = taskStatus(task);
-        return <div key={task.id} className={'l-tab' + (selected ? ' active' : '')}>
+        return <motion.div key={task.id} layout="position" {...pop} className={'l-tab' + (selected ? ' active' : '')}>
+          {selected && <Glide id="tab-active" className="l-tab-bg" />}
           <button id={'tab-' + task.id} role="tab" className="l-tab-select" aria-selected={selected} tabIndex={task.id === activeTaskId ? 0 : -1}
             title={`${targetLabels[task.target]} · ${task.title} · ${status}`} onClick={() => void window.desktop.selectTask(task.id)} onKeyDown={event => navigate(event, task.id)}>
             <span className={'dot ' + taskDot(task)} aria-label={status} /><Badge target={task.target} /><span className="l-tab-title">{task.title}</span>
           </button>
           <button className="l-tab-close" aria-label={`关闭 ${task.title}`} title="关闭任务" onClick={() => void window.desktop.closeTask(task.id)}><X size={12} /></button>
-        </div>;
+        </motion.div>;
       })}
-      {overflow > 0 && <button className="l-more" aria-label={`另外 ${overflow} 个任务`} title="全部任务" onClick={() => void window.desktop.openPalette('tasks')}>+{overflow}</button>}
+      {overflow > 0 && <motion.button key="more" layout="position" {...pop} className="l-more" aria-label={`另外 ${overflow} 个任务`} title="全部任务" onClick={() => void window.desktop.openPalette('tasks')}>+{overflow}</motion.button>}
+      </AnimatePresence>
     </div>}
     <button className="l-icon" aria-label="新任务" title="新任务 ⌘N" onClick={() => void window.desktop.openPalette('new')}><Plus size={16} /></button>
     <span className="l-sep" />
