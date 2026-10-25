@@ -13,7 +13,7 @@ const paths = await packager({
   dir: '.', out: process.env.LASSO_PACKAGE_OUT || 'release', name: 'Lasso', executableName: 'MacAIPrompt',
   appBundleId: 'local.mac-ai-prompt', appCategoryType: 'public.app-category.productivity',
   platform: 'darwin', arch: process.arch, overwrite: true, asar: false, prune: true,
-  ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /\.tsbuildinfo$/],
+  ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /^\/\.(?:claude|worktree)(?:\/|$)/, /\.tsbuildinfo$/],
   extendInfo: { NSScreenCaptureUsageDescription: '选择屏幕区域并截图。', NSMicrophoneUsageDescription: '在 AI 网页中使用语音输入。', NSCameraUsageDescription: '在 AI 网页中添加相机内容。' }
 });
 for (const path of paths) {
