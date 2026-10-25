@@ -19,6 +19,7 @@ export interface AgentState { revision: number; effort: string; efforts: string[
 export type AgentEvent = { taskId: string; revision: number; patch: Partial<Omit<AgentState, 'messages'>>; messages: ChatMessage[]; order?: string[] };
 export type FontRole = 'display' | 'text' | 'ui' | 'mono';
 export interface ImportedFont { family: string; file: string }
+export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
 export interface Settings {
   /** Empty means no global shortcut. */
   shortcut: string;

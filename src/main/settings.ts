@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import type { Settings } from '../shared/contracts';
-export const defaultFonts: Settings['fonts'] = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
+import { defaultFonts, type Settings } from '../shared/contracts';
 export function defaultSettings(): Settings {
   const executable = (name: string) => ['/opt/homebrew/bin/', '/usr/local/bin/'].map(p => p + name).find(existsSync) || '';
   return { shortcut: '', screenshotShortcut: '', lastTarget: 'chatgpt', selectionEnabled: true, clipboardFallback: false, appPrompts: [], local: {
