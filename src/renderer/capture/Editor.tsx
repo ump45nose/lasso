@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, Send, Slash, Square, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
+import { ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, ImagePlus, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, Send, Slash, Square, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
 import type { CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
 import { pixelRect } from '../../shared/capture';
 import { Glide, Segmented, spring } from '../motion';
@@ -190,6 +190,7 @@ export function Editor({state}:{state:ScreenshotState}){
               {(['png','jpeg'] as const).map(f=><button key={f} role="menuitemradio" aria-checked={format===f} onClick={()=>{setFormat(f);setFormatOpen(false);}}>{f.toUpperCase()}</button>)}</motion.span>}</AnimatePresence>
           </span>
           <button className="ed-tool" data-tip={state.pinId?'更新贴图':'贴到桌面'} aria-label={state.pinId?'更新贴图':'贴图'} disabled={!ready||busy} onClick={()=>void output('pin')}><Pin/></button>
+          <button className="ed-tool" data-tip="用于生图 · 使用处理后的图片" aria-label="用于生图" disabled={!ready||busy} onClick={()=>void output('media')}><ImagePlus/></button>
           <button className="ed-text" disabled={!ready||busy} onClick={()=>void output('image')}><Send/>图片预设</button>
           <button className="ed-primary" disabled={!ready||busy} onClick={()=>void output('copy')}><Copy/>复制</button>
           <button className="ed-tool" data-tip="关闭 Esc" aria-label="关闭截图编辑器" disabled={busy} onClick={()=>void window.screenshot.action('cancel')}><X/></button>
