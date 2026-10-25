@@ -346,7 +346,7 @@ function Palette({ s, act }) {
         { key: 'clip', kind: 'cmd', icon: 'image', label: '使用剪贴板图片', run: act.openImage },
         { key: 'pin', kind: 'cmd', icon: 'pin', label: s.pinned ? '取消置顶' : '置顶小窗', run: act.pin },
         { key: 'reload', kind: 'cmd', icon: 'retry', label: '重新加载网页', run: act.reload },
-        { key: 'expand', kind: 'cmd', icon: 'expand', label: '放大到工作区', hint: '双击标题栏', run: () => act.toast('放大到当前显示器工作区') },
+        { key: 'expand', kind: 'cmd', icon: 'expand', label: '放大到工作区', run: () => act.toast('放大到当前显示器工作区') },
         { key: 'hide', kind: 'cmd', icon: 'minus', label: '隐藏小窗', hint: '⌘W', run: act.hide },
         { key: 'settings', kind: 'cmd', icon: 'sliders', label: '设置…', hint: '⌘,', run: () => act.settings('general') },
       ].filter(r => match(r.label));
@@ -468,8 +468,7 @@ function Chat({ task, kind, act }) {
   }
   function answer(allow) {
     setC(old => ({ ...old, request: null, activity: 'running',
-      messages: [...old.messages, { id: 'd' + Date.now(), role: 'decision', text: (allow ? '已允许一次 · ' : '已拒绝 · ') + old.request.command },
-        ...(allow ? [{ id: 'l' + Date.now(), role: 'ledger', title: '运行了 1 条命令', items: ['npm run typecheck · 退出码 0'] }] : [])],
+      messages: [...old.messages, ...(allow ? [{ id: 'l' + Date.now(), role: 'ledger', title: '运行了 1 条命令', items: ['npm run typecheck · 退出码 0'] }] : [])],
       stream: allow ? '类型检查通过，没有新增错误。' : '好的，不运行命令。如果需要，你可以稍后在终端里自己执行 `npm run typecheck`。', streamed: '' }));
   }
   function stop() { setC(old => ({ ...old, activity: 'complete', request: null, stream: null, streamed: '', messages: [...old.messages, ...(old.streamed ? [{ id: 'a' + Date.now(), role: 'assistant', text: old.streamed }] : []), { id: 'n' + Date.now(), role: 'notice', text: '已停止。' }] })); }
@@ -483,7 +482,6 @@ function Chat({ task, kind, act }) {
         : m.role === 'ledger' ? html`<div className="l-ledger" key=${m.id}>
           <button type="button" aria-expanded=${Boolean(open[m.id])} onClick=${() => setOpen({ ...open, [m.id]: !open[m.id] })}><${Icon} n="chevD" s="xs" />${m.title}</button>
           ${open[m.id] && html`<ul>${m.items.map(item => html`<li key=${item}><span className="ok"><${Icon} n="check" s="xs" /></span><span>${item}</span></li>`)}</ul>`}</div>`
-        : m.role === 'decision' ? html`<div className="l-req done" key=${m.id}><${Icon} n="terminal" s="s" /><span className="mono" style=${{ fontSize: 12 }}>${m.text}</span></div>`
         : m.role === 'notice' ? html`<p className="l-notice-msg" key=${m.id}>${m.text}</p>`
         : html`<${Answer} key=${m.id} text=${m.text} />`)}
       ${c.stream != null && html`<${Answer} text=${c.streamed || '…'} streaming=${true} />`}
@@ -629,7 +627,7 @@ function LocalSettings() {
   const [paths, setPaths] = useState({ codex: '/opt/homebrew/bin/codex', pi: '' });
   return html`<div className="l-set-body l-surface-enter">
     ${['codex', 'pi'].map(id => html`<${Fragment} key=${id}>
-      <div className="l-set-row-head"><h3>${TARGETS[id].label}</h3><span style=${{ display: 'flex', alignItems: 'center', gap: 6, color: paths[id] ? 'var(--olive)' : 'var(--danger)' }}>${paths[id] ? html`<${Icon} n="check" s="xs" />已找到` : html`<${Icon} n="alert" s="xs" />尚未选择可执行文件`}</span></div>
+      <div className="l-set-row-head"><h3>${TARGETS[id].label}</h3></div>
       <ul className="l-group"><li className="col">
         <div className="l-field"><label htmlFor=${'exec-' + id}>可执行文件（绝对路径）</label><div style=${{ display: 'flex', gap: 6 }}><input id=${'exec-' + id} className="l-input mono" value=${paths[id]} placeholder="/opt/homebrew/bin/pi" onChange=${e => setPaths({ ...paths, [id]: e.target.value })} /><button type="button" className="l-btn">选择…</button></div></div>
         <div className="l-field"><label htmlFor=${'cwd-' + id}>默认工作目录</label><div style=${{ display: 'flex', gap: 6 }}><input id=${'cwd-' + id} className="l-input mono" defaultValue="~" /><button type="button" className="l-btn">选择…</button></div></div>
@@ -713,7 +711,7 @@ function Settings({ s, act, fontProps }) {
 const STEP = { open: '打开', model: '模型', upload: '图片', fill: '填入', send: '发送', edit: '交给你' };
 const STEP_MSG = { open: '正在打开新对话…', model: '正在应用预设模型与思考强度…', upload: '正在上传图片…', fill: '正在完整填入 14,208 字…', send: '正在发送…', edit: '已填入，请在网页中编辑并发送' };
 function plan(preset, image) {
-  const ids = ['open', preset.model || preset.effort ? 'model' : null, image ? 'upload' : null, 'fill', preset.mode === 'send' ? 'send' : 'edit'].filter(Boolean);
+  const ids = ['open', preset.model || preset.effort ? 'model' : null, 'fill', image ? 'upload' : null, preset.mode === 'send' ? 'send' : 'edit'].filter(Boolean);
   return ids.map(id => ({ id, label: STEP[id] }));
 }
 const SCENES = [
@@ -865,8 +863,8 @@ function Simulator({ fontProps, onScene }) {
 
 const NOTES = {
   launcher: { title: '启动台', rules: ['只在关闭了全部任务后出现；启动时仍直接进入上次目标的新对话。', '套索圈每次启动只描一次（900ms），之后静止。', '目标卡标出上次使用；本地 CLI 显示默认工作目录。', '底栏：粘贴图片（也接受直接 ⌘V）与截图。'], m: [['标题', '展示 34 / 1.32 · Light'], ['卡片', '2 列 · 间距 8 · 圆角 12'], ['底栏', '52 · Sunken 底']] },
-  web: { title: '网页任务', rules: ['标题栏 44px：任务标签、新建、置顶、⌘K。双击空白处放大，拖动空白处移动窗口。', '标签最多显示 3 个，放不下时出现 +N；当前任务始终可见。目标徽标只在当前标签显示，其余标签悬停可见目标与关闭按钮。', '标签状态点以形状加颜色区分，悬停提示包含目标、标题与状态。', '网页区域是原生视图，React 只负责其上方 44px 与下方提示行。'], m: [['标题栏', '44'], ['标签', '高 30 · 最大宽 150 · 圆角 8'], ['图标按钮', '28 × 28 · 圆角 7']] },
-  delivering: { title: '投递进度', rules: ['步骤按预设生成：打开 →（模型）→（图片）→ 填入 → 发送 / 交给你。', '当前步骤用荧光笔底；完成的步骤显示对勾，未开始的为空心点。', '直接发送成功后显示 2.6 秒再收起；进行中可随时复制原文或取消。', '网页输入框在填入后出现柔橙外圈，提示内容已在网页里。'], m: [['提示行', '48 · 位于网页下方'], ['步骤连线', '14 × 1'], ['收起', '发送成功 2.6s']] },
+  web: { title: '网页任务', rules: ['标题栏 44px：任务标签、新建、置顶、⌘K。拖动空白处移动窗口；放大入口在 ⌘K 与「窗口」菜单（拖动区域收不到双击）。', '标签数量按宽度计算，放不下时出现 +N；当前任务始终可见。目标徽标只在当前标签显示，其余标签悬停可见目标与关闭按钮。', '标签状态点以形状加颜色区分，悬停提示包含目标、标题与状态。', '网页区域是原生视图，React 只负责其上方 44px 与下方提示行。'], m: [['标题栏', '44'], ['标签', '高 30 · 最大宽 150 · 圆角 8'], ['图标按钮', '28 × 28 · 圆角 7']] },
+  delivering: { title: '投递进度', rules: ['步骤按预设生成，顺序跟随实际执行：打开 →（模型）→ 填入 →（图片）→ 发送 / 交给你。', '当前步骤用荧光笔底；完成的步骤显示对勾，未开始的为空心点。', '直接发送成功后显示 2.6 秒再收起；进行中可随时复制原文或取消。', '网页输入框在填入后出现柔橙外圈，提示内容已在网页里。'], m: [['提示行', '48 · 位于网页下方'], ['步骤连线', '14 × 1'], ['收起', '发送成功 2.6s']] },
   editing: { title: '先编辑', rules: ['填入完成即停，焦点交给网页输入框。', '提示保留到网页草稿被发送或清空；也可以点「完成」收起。', '标签状态为「有草稿」，关闭时需要确认。'], m: [['状态点', '有草稿 · 空心墨色圈']] },
   login: { title: '等待登录', rules: ['网页要求登录时，进度停在「打开」，状态点为空心柔橙圈。', '登录完成后自动继续，不需要再次运行预设。', '待发送内容一直保留，可随时复制原文。'], m: [] },
   failed: { title: '投递失败', rules: ['提示行变为错误色，失败步骤用菱形标记。', '「重试」从失败步骤继续，不会重复已完成的步骤，也不会重复提交。', '原文与图片保留；关闭提示即放弃这次待发送动作。'], m: [['错误底', '#F8E7E1'], ['错误字', '#B3412E · 5.3:1']] },
@@ -877,14 +875,14 @@ const NOTES = {
   palette: { title: '⌘K 指令面板', rules: ['替代运行预设、新对话、更多任务三个系统菜单。打开时网页视图隐藏，背后显示冻结的页面截图。', '顶部显示当前选区长度、来源应用与是否匹配应用背景。', '↑↓ 选择，↵ 运行，⇥ / ⇧⇥ 为选中的预设临时切换目标；换目标后提示「跟随目标默认」模型。', '搜索同时匹配预设、任务与指令。Esc 或点击外部关闭。'], m: [['面板', '宽 460 · 距顶 52 · 圆角 14'], ['行', '36 · 圆角 8'], ['打开', '180ms · 下移 4px + 缩放 .985']] },
   paletteNone: { title: '没有选区', rules: ['需要选区的预设保留在列表里但不可选，右侧写明「需要选区」。', '有选区时，全局快捷键唤起小窗会直接打开面板。'], m: [] },
   paletteTasks: { title: '全部任务', rules: ['标签栏 +N 打开面板的任务视图，按状态列出全部任务。', '已释放任务选中后按原链接或原会话恢复。'], m: [] },
-  chat: { title: '本地 CLI 对话', rules: ['回答用「回答正文」字体，用户消息用沙色气泡。', '工具记录折叠成一行摘要，展开为等宽清单。', '审批单出现在消息流末尾；允许或拒绝后收成一行记录。', '模型、强度、工作目录收进输入卡底部；运行中不可改。⌘↵ 发送，运行中可以先写下一条。'], m: [['回答', '16 / 1.75'], ['输入卡', '圆角 16 · 内边 12'], ['发送', '32 圆 · Clay']] },
+  chat: { title: '本地 CLI 对话', rules: ['回答用「回答正文」字体，用户消息用沙色气泡。', '工具记录折叠成一行摘要，展开为等宽清单。', '审批单出现在消息流末尾；允许或拒绝后审批单消失，执行结果由 CLI 自己的工具记录体现。', '模型、强度、工作目录收进输入卡底部；运行中不可改。⌘↵ 发送，运行中可以先写下一条。'], m: [['回答', '16 / 1.75'], ['输入卡', '圆角 16 · 内边 12'], ['发送', '32 圆 · Clay']] },
   chatEmpty: { title: 'CLI 新对话', rules: ['说明沿用 CLI 自己的配置和权限，并给出工作目录。', 'Pi 额外说明终端专属扩展不在小窗显示。'], m: [] },
   chatReleased: { title: '已释放的 CLI 任务', rules: ['进程已释放时，在输入卡上方说明；发送下一条或点「立即恢复」时按原会话恢复。', '恢复不会重发历史内容。'], m: [] },
   image: { title: '图片入口', rules: ['待处理图片作为临时标签出现在最前面，切到其他任务后可以回来。', '目标默认沿用每个预设自己的目标，也可以一次性改成别的目标。', '运行后标签消失，图片随任务一起投递；失败时保留。'], m: [['预览', '高 160 · 外框 10 · 圆角 14']] },
   setPresets: { title: '预设列表', rules: ['按「动作条 · 前 4 个」与「更多菜单」分组，直接反映动作条的规则。', '拖动排序；开关立即生效，停用的预设沉到更多菜单并变淡。', '模板预览里的 {{selection}} 显示为「选区」标签。'], m: [['行', '最小 52'], ['开关', '32 × 20']] },
   setEdit: { title: '编辑预设', rules: ['「插入选区位置」把占位符放到光标处。', '目标、执行方式用分段控件；模型与强度选项读取自目标本身。', '有改动时底部出现保存条；保存后显示「已保存」。删除需要再点一次确认。'], m: [] },
   setApps: { title: '应用背景', rules: ['每个应用一张卡片：名称、bundle ID、开关、背景提示词。', '可以从应用程序目录选择，也可以手动填写 bundle ID。'], m: [] },
-  setLocal: { title: '本地 CLI', rules: ['路径和目录用等宽字体；右上角直接显示是否找到可执行文件。'], m: [] },
+  setLocal: { title: '本地 CLI', rules: ['路径和目录用等宽字体。没有可靠的「已找到」信号，路径错误在启动任务时直接报错。'], m: [] },
   setGeneral: { title: '通用', rules: ['划词状态写在开关下方，授权问题直接给出修复按钮。', '两个快捷键都用录制方式，⌥ 空格 会被拒绝并说明原因。', '后台任务数实时显示。'], m: [] },
   setAppearance: { title: '外观 · 字体', rules: ['四个角色分别设置：标题、回答正文、界面文字、代码与数据。', '默认前三个都是 Anthropic Serif Text，代码保持等宽。', '可从本机字体中选择、直接输入字体名，或导入 .otf / .ttf / .woff2 文件。', '字体缺失时标出「未找到」，并自动使用内置后备字体。'], m: [] },
 };
@@ -947,7 +945,7 @@ function ActionBarDemo({ presets }) {
       <ul className="doc-rules">
         <li>独立的不可聚焦窗口，<strong>不抢源应用焦点</strong>；只放启用的前 4 个预设，其余在「···」系统菜单。</li>
         <li>默认在选区上方 12px；上方空间不足时放到选区下方，并避开屏幕边缘。</li>
-        <li>悬停显示目标与执行方式；点击后按钮变柔橙 120ms，胶囊原位显示「正在交给…」，在小窗出现时淡出。</li>
+        <li>悬停用系统提示（title）显示目标与执行方式，窗口只有 40px 高，放不下自定义浮层；点击后按钮变柔橙 120ms，胶囊原位显示「正在交给…」，随窗口淡出让位给小窗。</li>
         <li>点击动作条外、选区消失或开始截图时立即隐藏；没有启用的预设时不出现。</li>
       </ul>
       <div className="measure"><span>40</span><span>高度 · 圆角 12</span><span>30</span><span>按钮高 · 内边 10</span><span>120ms</span><span>出现：淡入 + 上移 4px</span><span>150ms</span><span>隐藏：淡出（WindowMotion）</span></div>
@@ -1015,7 +1013,7 @@ function CaptureDemo() {
     if (r && r.width >= 4 && r.height >= 4) setResult(r);
   }
   function key(e) {
-    if (e.key === 'Escape') { e.preventDefault(); setResult(null); }
+    if (e.key === 'Escape') { e.preventDefault(); setResult(null); setToast('已取消截图'); }
     else if (e.key.toLowerCase() === 'f' && !e.metaKey) { e.preventDefault(); setResult({ x: 0, y: 0, width: size.w, height: size.h, source: 'screen' }); }
     else if (result && (e.key === 'Enter' || (e.metaKey && e.key.toLowerCase() === 'c'))) { e.preventDefault(); setToast('已复制 ' + label(result)); }
     else if (result && e.key.startsWith('Arrow')) {
@@ -1052,7 +1050,7 @@ function CaptureDemo() {
         <button type="button" className="primary" onClick=${() => setToast('已复制 ' + label(result))}>复制<span className="mono" style=${{ fontSize: 11, opacity: .7 }}>⌘C</span></button>
         <button type="button" aria-label="取消截图" onClick=${() => setResult(null)}><${Icon} n="x" s="s" /></button>
       </div>`}
-      <div className="cap-guide">${result ? html`<span><b>方向键</b> 微调</span><span><b>⇧</b> 10 点</span><span><b>↵</b> 复制</span><span><b>Esc</b> 重选</span>` : html`<span>悬停选区域</span><span><b>滚轮</b> 切换层级</span><span><b>拖动</b> 框选</span><span><b>F</b> 全屏</span>`}</div>
+      <div className="cap-guide">${result ? html`<span><b>方向键</b> 微调</span><span><b>⇧</b> 10 点</span><span><b>↵</b> 复制</span><span><b>⌘S</b> 保存</span><span><b>Esc</b> 取消</span>` : html`<span>悬停选区域</span><span><b>滚轮</b> 切换层级</span><span><b>拖动</b> 框选</span><span><b>F</b> 全屏</span>`}</div>
       ${toast && html`<div className="cap-toast" role="status">${toast}</div>`}
     </div>
     <div style=${{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -1214,17 +1212,17 @@ function SpecBook() {
         <header><span className="doc-kicker">实现映射</span><h2>改哪里，怎么验收。</h2></header>
         <div className="doc-card doc-scroll" style=${{ padding: 0 }}><table className="doc-table"><thead><tr><th>范围</th><th>改动</th><th>文件</th></tr></thead><tbody>
           ${[
-            ['样式基础', '用本页变量替换 style.css；按组件拆分样式；打包 Newsreader 与 JetBrains Mono 到 assets/fonts', 'src/renderer/styles/*'],
-            ['标题栏', 'TaskTabs 改为单行；移除工具行与 8 个图标按钮；双击放大', 'TaskTabs.tsx · main.tsx'],
+            ['样式基础', '用本页变量替换 style.css；tokens.css + app.css；Newsreader 与 JetBrains Mono 由 fontsource 经 Vite 打包', 'src/renderer/styles/*'],
+            ['标题栏', 'TitleBar 替代 TaskTabs，单行；移除工具行与 8 个图标按钮；⌘K / ⌘N 为「窗口」菜单项，焦点在网页内也可用', 'TitleBar.tsx · main.tsx'],
             ['布局常量', 'HEADER_HEIGHT 80 → 44；网页下方让出提示行高度（行数 × 48）', 'src/main/index.ts layout()'],
             ['指令面板', '新组件；打开时隐藏网页视图并显示 capturePage 截图作背景；替代 showPresetMenu、showNewTaskMenu 与溢出菜单（托盘菜单保留）', 'Palette.tsx · index.ts · tasks.ts'],
             ['提示行', 'screenshotError 与图片读取错误合并为 ShellState.notice；投递阶段增加 steps 供步骤显示', 'contracts.ts · tasks.ts'],
-            ['待处理图片', '标签栏显示临时标签，切走后保留 inputImage', 'TaskTabs.tsx · ImageEntry.tsx'],
-            ['CLI 对话', '回答用 --font-text；工具记录折叠；审批单与处理记录；模型/强度/目录进入输入卡', 'AgentChat.tsx'],
+            ['待处理图片', '标签栏显示临时标签（ShellState.imageOpen），切走后保留 inputImage', 'TitleBar.tsx · ImageEntry.tsx'],
+            ['CLI 对话', '回答用 --font-text；连续工具记录折叠为一行；审批单；模型/强度/目录进入输入卡', 'AgentChat.tsx'],
             ['设置', '新增「外观」；预设分组列表 + 编辑页 + 保存条；两个快捷键都用录制', 'PresetSettings.tsx · Settings*.tsx'],
             ['字体', 'Settings 增加 fonts 与 importedFonts；导入文件复制到 userData/fonts，经 lasso-font:// 协议提供；CSP 增加 font-src；本地窗口允许 local-fonts 权限', 'settings.ts · index.ts · index.html'],
-            ['动作条', '深色胶囊；悬停提示；点击后原位显示交付中，小窗出现时淡出', 'ActionBar.tsx · action-bar.ts'],
-            ['截图', '新工具栏与层级点阵；常驻键位提示', 'capture/Screenshot.tsx · capture.css'],
+            ['动作条', '深色胶囊（窗口 40px）；原生 title 提示；点击后原位显示交付中，随窗口淡出', 'ActionBar.tsx · action-bar.ts'],
+            ['截图', '新工具栏与层级点阵；常驻键位提示；Esc 仍为取消截图', 'capture/Screenshot.tsx · capture.css'],
           ].map(r => html`<tr key=${r[0]}><td>${r[0]}</td><td>${r[1]}</td><td><code>${r[2]}</code></td></tr>`)}
         </tbody></table></div>
         <div className="doc-grid">

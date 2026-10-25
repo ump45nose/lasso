@@ -364,9 +364,6 @@ function installIPC() {
     switch (action) {
       case 'dismiss-notice': state.notice = null; layout(); publish(); break;
       case 'screenshot': await startScreenshot(); break;
-      case 'open-chat': openChat(); break;
-      case 'clipboard-image': await readImage().catch(() => {}); break; // The failure is already shown as a notice.
-      case 'dismiss-image': removeImage(); break;
       case 'show-image': if (inputImage) { closePalette(false); state.settingsOpen = false; state.imageOpen = true; layout(); win.webContents.focus(); publish(); } break;
       case 'retry-delivery': await tasks.retryDelivery(); break;
       case 'pin': setPin(); break;

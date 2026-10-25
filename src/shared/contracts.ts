@@ -92,8 +92,8 @@ export interface ShellState {
   selection: { length: number; sourceApp: string } | null;
   delivery: DeliveryStatus | null;
 }
-export type Action = 'dismiss-notice' | 'screenshot' | 'open-chat' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
-  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'clipboard-image' | 'dismiss-image' | 'show-image' | 'retry-delivery';
+export type Action = 'dismiss-notice' | 'screenshot' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
+  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-image' | 'retry-delivery';
 export type PaletteScope = 'all' | 'tasks' | 'new';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {

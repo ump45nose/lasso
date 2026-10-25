@@ -32,7 +32,7 @@ export function Launcher({ state, openPermission }: { state: ShellState; openPer
       </section>}
     </div>
     <footer className="l-launch-foot">
-      <button className="l-ghost dashed" onClick={() => void window.desktop.act('clipboard-image')}><Image size={14} />粘贴图片<span className="l-kbd">⌘V</span></button>
+      <button className="l-ghost dashed" onClick={() => void window.desktop.readImage()}><Image size={14} />粘贴图片<span className="l-kbd">⌘V</span></button>
       <button className="l-ghost" onClick={() => void window.desktop.act('screenshot')}><ScanLine size={14} />截图</button>
       <span className="l-hint">{settings.shortcut ? <>随时按 <span className="l-kbd">{shortcutLabel(settings.shortcut)}</span> 唤起</> : '从菜单栏随时打开'}</span>
     </footer>

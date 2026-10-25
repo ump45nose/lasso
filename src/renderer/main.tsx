@@ -4,7 +4,6 @@ import { CircleAlert } from 'lucide-react';
 import type { DesktopAPI, PaletteEvent, ShellState } from '../shared/contracts';
 import '@fontsource-variable/newsreader/opsz.css';
 import '@fontsource/jetbrains-mono/400.css';
-import './style.css';
 import './styles/tokens.css';
 import './styles/app.css';
 import { useFonts } from './fonts';
