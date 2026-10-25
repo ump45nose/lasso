@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 // macOS icon family, regenerated from the committed full-resolution artwork (scripts/brand.mjs renders it from assets/lasso-icon.svg).
-const scratch = mkdtempSync(join(tmpdir(), 'lasso-icons-'));
+mkdirSync('outputs/.packaging', {recursive:true});
+const scratch = mkdtempSync(join(resolve('outputs/.packaging'), 'lasso-icons-'));
 const iconset = join(scratch, 'lasso.iconset');
 mkdirSync(iconset);
 try {

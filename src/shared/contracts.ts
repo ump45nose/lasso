@@ -6,7 +6,7 @@ export interface LocalConfig { executable: string; cwd: string }
 export interface ImagePreview { id: string; thumbnail: string; width: number; height: number }
 export interface ExecutionProfile { model?: string; effort?: string }
 export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; currentModel: string; currentEffort: string }
-export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string }
+export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string; textId?: string }
 export interface ChatMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'notice'; text: string; title?: string; running?: boolean; image?: string }
 export interface AgentModel { id: string; label: string; images?: boolean; efforts?: string[]; defaultEffort?: string }
 export interface AgentQuestion { id: string; question: string; options?: string[]; secret?: boolean }
@@ -66,19 +66,21 @@ export interface ShellState {
   hasPage: boolean;
   activeTarget: Target | null;
   inputImage: ImagePreview | null;
+  inputText: {id:string;text:string} | null;
   title: string;
   hostname: string;
   loading: boolean;
   pageError: string | null;
   shortcutError: string | null;
   screenshotError: string | null;
+  imageError: string | null;
   settings: Settings;
   presets: Preset[];
   capture: CaptureStatus;
   selection: { length: number; sourceApp: string } | null;
   delivery: DeliveryStatus | null;
 }
-export type Action = 'dismiss-screenshot-error' | 'screenshot' | 'open-chat' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
+export type Action = 'dismiss-image-error' | 'dismiss-screenshot-error' | 'screenshot' | 'open-chat' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
   | 'new-task' | 'presets' | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'clipboard-image' | 'dismiss-image' | 'retry-delivery';
 export interface DesktopAPI {
   openLink(url: string): Promise<void>;
@@ -94,6 +96,8 @@ export interface DesktopAPI {
   choosePath(kind: 'directory' | 'executable' | 'application'): Promise<{ path: string; bundleId?: string; name?: string } | null>;
   readImage(taskId?: string): Promise<{ error: string | null }>;
   removeImage(taskId?: string): Promise<void>;
+  editImage(imageId: string): Promise<{error:string|null}>;
+  removeText(): Promise<void>;
   getAgent(taskId: string): Promise<AgentState | null>;
   agentDraft(taskId: string, text: string): Promise<void>;
   agentSend(taskId: string): Promise<{ error: string | null }>;

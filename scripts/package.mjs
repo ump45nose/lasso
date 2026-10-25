@@ -1,7 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { sign } from '@electron/osx-sign';
 import { packager } from '@electron/packager';
 import './icons.mjs';
@@ -11,7 +10,7 @@ try { execFileSync('/usr/bin/security', ['find-certificate', '-c', identity], { 
 catch { throw new Error('请先运行 npm run signing:setup 创建本机固定开发签名。'); }
 const paths = await packager({
   icon: 'assets/lasso.icns',
-  dir: '.', out: 'release', name: 'Lasso', executableName: 'MacAIPrompt',
+  dir: '.', out: process.env.LASSO_PACKAGE_OUT || 'release', name: 'Lasso', executableName: 'MacAIPrompt',
   appBundleId: 'local.mac-ai-prompt', appCategoryType: 'public.app-category.productivity',
   platform: 'darwin', arch: process.arch, overwrite: true, asar: false, prune: true,
   ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /\.tsbuildinfo$/],
@@ -21,7 +20,8 @@ for (const path of paths) {
   // Packager ties the display name to executableName; keep the stable executable
   // while exposing the chosen name to Finder, Dock and system permissions.
   execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName Lasso', path + '/Lasso.app/Contents/Info.plist']);
-  const scratch = mkdtempSync(join(tmpdir(), 'lasso-sign-'));
+  mkdirSync('outputs/.packaging', {recursive:true});
+  const scratch = mkdtempSync(join(resolve('outputs/.packaging'), 'lasso-sign-'));
   const entitlements = join(scratch, 'entitlements.plist');
   writeFileSync(entitlements, '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict/></plist>');
   try { await sign({
