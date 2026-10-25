@@ -24,10 +24,21 @@
 .cap-tools button.primary:hover { background: #30302E; }
 .cap-key { font-size: 11px; opacity: .7; }
 .cap-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--line-strong); }
-.cap-guide { position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); display: flex; align-items: center; gap: 16px; height: 34px; padding: 0 6px 0 16px; border-radius: 17px; background: rgba(20, 20, 19, 0.82); color: var(--on-ink); font-size: 12.5px; white-space: nowrap; cursor: default; }
+.cap-window { cursor: default; }
+.cap-window .cap-rect { outline-width: 2px; }
+.cap-guide { position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; height: 38px; padding: 0 5px; border-radius: 19px; background: rgba(20, 20, 19, 0.86); box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.6), inset 0 0 0 0.5px rgba(250, 249, 245, 0.12); color: var(--on-ink); font-size: 12.5px; white-space: nowrap; cursor: default; }
 .cap-guide b { font-weight: inherit; font-family: var(--font-mono); color: var(--oat); }
-.cap-guide span:last-child { margin-right: 10px; }
-.cap-guide button { height: 26px; padding: 0 10px; border: 0; border-radius: 13px; background: rgba(250, 249, 245, 0.12); color: var(--on-ink); font-size: 12.5px; }
-.cap-guide button:hover { background: rgba(250, 249, 245, 0.2); }
+.cap-guide button { height: 28px; padding: 0 11px; border: 0; border-radius: 14px; background: transparent; color: var(--on-ink); font-size: 12.5px; transition: background var(--t-fast), color var(--t-fast); }
+.cap-modes { display: flex; gap: 2px; }
+.cap-guide-sep { width: 1px; height: 16px; margin: 0 -2px; background: rgba(250, 249, 245, 0.18); }
+.cap-modes button { position: relative; display: flex; align-items: center; gap: 6px; color: rgba(250, 249, 245, 0.72); }
+.cap-modes button > :not(.cap-mode-on) { position: relative; }
+.cap-modes button svg { width: 14px; height: 14px; }
+.cap-modes button:hover { color: var(--clay); background: rgba(250, 249, 245, 0.06); }
+.cap-modes button[aria-checked="true"] { color: #FFFFFF; background: transparent; }
+.cap-mode-on { position: absolute; inset: 0; border-radius: 14px; background: var(--clay); }
+.cap-guide .cap-cancel { background: rgba(250, 249, 245, 0.1); }
+.cap-guide .cap-cancel:hover { background: var(--clay); color: #FFFFFF; }
+.cap-cancel:hover b { color: inherit; }
 .cap-toast { position: absolute; left: 50%; top: 6%; transform: translateX(-50%); padding: 8px 14px; border-radius: 10px; background: var(--bg); font-size: 13px; box-shadow: var(--shadow-float); animation: l-rise var(--t-base) var(--ease-out); }
 .cap-toast.error { background: var(--danger-wash); color: var(--danger); }

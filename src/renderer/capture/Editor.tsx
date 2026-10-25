@@ -25,8 +25,8 @@ export function Editor({state}:{state:ScreenshotState}){
   const [ready,setReady]=useState(false),[tool,setTool]=useState<Tool>('text-select'),[style,setStyle]=useState<Style>({color:colors[0],width:4,fontSize:32}),[revision,setRevision]=useState(0),[zoom,setZoom]=useState(1),[crop,setCrop]=useState<CaptureRect|null>(null),[preview,setPreview]=useState<CaptureRect|null>(null);
   const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<'png'|'jpeg'>('png');
   const [ocrMode,setOCRMode]=useState<OCRMode>('text'),[enhance,setEnhance]=useState(false);
-  // Screen captures are edited in place over the frozen screen; clipboard and pin images get a desk window with zoom.
-  const inline=state.origin==='screen';
+  // Screen captures are edited in place, at their placement over the frozen screen; clipboard and pin images get a desk window with zoom.
+  const place=state.placement,inline=Boolean(place);
   const [formatOpen,setFormatOpen]=useState(false),[ocrOpen,setOCROpen]=useState(false),[dockWidth,setDockWidth]=useState(0),dockRef=useRef<HTMLDivElement>(null);
   const ocrCache=useRef<{content:string;mode:OCRMode;enhance:boolean;lines:OCRLine[]}|null>(null),forceOCR=useRef(false);
   const version=useRef(0),mutating=useRef(false),exporting=useRef(false),selection=useRef(''),alive=useRef(true);
@@ -47,7 +47,7 @@ export function Editor({state}:{state:ScreenshotState}){
       editor=new AnnotationEditor(canvasRef.current,source,changed,invalidate,setPreview);engine.current=editor;
       if(state.annotations)await editor.load(state.annotations);
       if(canceled)return;
-      const area=viewportRef.current!;setZoom(inline?state.selection!.width/r.width:Math.min(1,Math.max(.05,Math.min((area.clientWidth-120)/r.width,(area.clientHeight-200)/r.height))));
+      const area=viewportRef.current!;setZoom(place?place.width/r.width:Math.min(1,Math.max(.05,Math.min((area.clientWidth-120)/r.width,(area.clientHeight-200)/r.height))));
       setReady(true);changed();
     })().catch(e=>setError('图片编辑未能加载：'+(e as Error).message));};img.onerror=()=>setError('截图加载失败，请重新选区。');img.src=state.image;
     return()=>{canceled=true;alive.current=false;version.current++;engine.current=null;editor?.dispose();};
@@ -110,7 +110,7 @@ export function Editor({state}:{state:ScreenshotState}){
   },[tool,format]);
   const editor=engine.current,activeCrop=preview||crop;
   useLayoutEffect(()=>{const el=dockRef.current;if(!el)return;const observer=new ResizeObserver(()=>setDockWidth(el.offsetWidth));observer.observe(el);return()=>observer.disconnect();},[]);
-  const sel=state.selection!,W=window.innerWidth,H=window.innerHeight,GAP=10,ROOM=104;
+  const sel=place??state.selection!,W=window.innerWidth,H=window.innerHeight,GAP=10,ROOM=104;
   // In place, the dock sits under the selection, else above it, else inside its bottom edge;
   // right-aligned when it fits the selection's width, centred on it otherwise, and always kept on screen.
   const below=sel.y+sel.height+GAP+ROOM<=H-8,above=!below&&sel.y-GAP-ROOM>=8;
@@ -132,7 +132,7 @@ export function Editor({state}:{state:ScreenshotState}){
     :panelKind==='crop'?<><span className="ed-hint">拖动画面或边角裁剪</span><button className="ed-text" disabled={busy} onClick={()=>editor?.resetCrop()}>恢复裁剪</button></>:null;
   const toolButton=(id:Tool,label:string,icon:ReactNode)=><button key={id} className="ed-tool" data-tip={label} aria-label={label} aria-pressed={tool===id} disabled={!ready||busy} onClick={()=>choose(id)}>{tool===id&&<Glide id="ed-tool" className="ed-tool-on"/>}{icon}</button>;
   return <section className={'ed '+(inline?'ed-inline':'ed-window')} aria-label="截图编辑器" aria-busy={busy}>
-    {inline?<><img className="cap-background" src={state.image} draggable={false} alt=""/>
+    {inline?<>{state.backdrop&&<img className="cap-background" src={state.backdrop} draggable={false} alt=""/>}
       <div className="cap-rect ed-hole" style={{left:sel.x,top:sel.y,width:sel.width,height:sel.height}}><span className={'cap-size'+(labelsInside?' inside':'')}><span className="mono">{crop?`${crop.width} × ${crop.height}`:'…'}</span><span className="cap-source">像素</span></span></div></>
       :<header className="ed-drag"><strong>图片编辑</strong><span className="mono">{crop?`${crop.width} × ${crop.height}`:'正在加载…'}</span></header>}
     <div className="ed-viewport" ref={viewportRef} inert={busy} onPointerDown={closeMenus}>

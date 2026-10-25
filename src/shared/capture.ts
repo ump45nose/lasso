@@ -9,7 +9,13 @@ export interface CaptureFrame { id: string; revision: number; crop: CaptureRect;
 export type OCRMode = 'text' | 'code';
 export interface OCRRequest extends CaptureFrame { mode: OCRMode; enhance: boolean; force?: boolean }
 export type ExportAction = 'copy' | 'save' | 'image' | 'pin';
-export interface ScreenshotState { id: string; editId: string; image: string; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result'; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
+/** Area drags or picks regions, window picks whole windows, screen takes the display, front takes the frontmost app window. */
+export type CaptureMode = 'area' | 'window' | 'screen' | 'front';
+export const captureModes: CaptureMode[] = ['area', 'window', 'screen', 'front'];
+export const captureModeLabels: Record<CaptureMode, string> = { area: '区域截图', window: '窗口截图', screen: '全屏截图', front: '前台窗口截图' };
+/** An on-screen window in overlay coordinates, front to back. */
+export interface CaptureWindow extends CaptureRect { id: number }
+export interface ScreenshotState { id: string; editId: string; image: string; backdrop?: string; placement?: CaptureRect; mode?: 'area' | 'window'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result'; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
 export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean }
 export type PinAction = 'menu' | 'edit' | 'image' | 'copy' | 'close' | 'hide';
 export interface PinAPI {
@@ -28,6 +34,7 @@ export interface ScreenshotAPI {
   hover(x: number, y: number): void;
   select(rect: CaptureRect): Promise<void>;
   action(action: 'cancel' | 'reselect' | 'screen'): Promise<{ error: string | null }>;
+  captureWindow(id: number, shadow: boolean): Promise<{ error: string | null }>;
   recognize(request: OCRRequest): Promise<OCRResult>;
   invalidateOCR(request: {id: string; revision: number}): void;
   export(frame: CaptureFrame, action: ExportAction, format: 'png' | 'jpeg'): Promise<{error: string | null}>;

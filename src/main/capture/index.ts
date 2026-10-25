@@ -1,16 +1,27 @@
-import { BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, clipboard, ClipboardItem, desktopCapturer, dialog, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
-import { writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'node:crypto';
-import type { CaptureFrame, CaptureRect, ExportAction, OCRRequest, OCRResult, RegionCandidate, ScreenshotState } from '../../shared/capture';
+import type { CaptureFrame, CaptureMode, CaptureRect, ExportAction, OCRRequest, OCRResult, RegionCandidate, ScreenshotState } from '../../shared/capture';
 import { pixelRect } from '../../shared/capture';
 import { clip, contains, rank } from './candidates';
 import { OCRService, type VisionOCR } from './ocr';
 import { validateAnnotations, type PinnedDocument } from './document';
 import { PinManager } from './pins';
-type WindowRect = CaptureRect & { pid: number };
+type WindowRect = CaptureRect & { pid: number; id: number };
+const run=promisify(execFile);
+/** Shadow margins of a `screencapture -l` image, read from where the window's opaque pixels begin on its middle row and column. */
+function opaqueInset(image:NativeImage){
+  const {width,height}=image.getSize(),bitmap=image.toBitmap(),solid=(x:number,y:number)=>bitmap[(y*width+x)*4+3]>=250,row=height>>1,col=width>>1;
+  let left=0,right=0,top=0,bottom=0;
+  while(left<width-1&&!solid(left,row))left++;while(right<width-1&&!solid(width-1-right,row))right++;
+  while(top<height-1&&!solid(col,top))top++;while(bottom<height-1&&!solid(col,height-1-bottom))bottom++;
+  return {left,top,right,bottom};
+}
 type AX = { windows(): WindowRect[]; query(pid:number,x:number,y:number):Promise<{rects:CaptureRect[];error:number}>; requestScreen(): Promise<boolean> };
 export class CaptureManager {
   private win: BrowserWindow | null=null;
@@ -38,6 +49,7 @@ export class CaptureManager {
   private epoch=0;
   private editRevision=0;
   private exporting=false;
+  private grabbing=false;
   private editorKey: string | null=null;
   readonly pins: PinManager;
   private displayRemoved=(_event:Electron.Event,display:Electron.Display)=>{if(display.id===this.displayId)this.displayChanged();};
@@ -58,6 +70,7 @@ export class CaptureManager {
     // A send-style IPC has no rejection channel; discard stale or foreign frames.
     ipcMain.on('screenshot:hover',(e,x:number,y:number)=>{if(owns(e)&&Number.isFinite(x)&&Number.isFinite(y))this.hover(x,y);});
     ipcMain.handle('screenshot:select',(e,r:CaptureRect)=>{assert(e);this.select(r);});
+    ipcMain.handle('screenshot:window',async(e,id:number,shadow:boolean)=>{assert(e);try{await this.captureWindow(id,shadow===true);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('screenshot:action',async(e,a:string)=>{assert(e);try{await this.action(a);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('screenshot:recognize',(e,frame:OCRRequest)=>{assert(e);return this.recognize(frame);});
     ipcMain.on('screenshot:invalidate-ocr',(e,request:{id:string;revision:number})=>{if(!owns(e)||!request||this.state?.phase!=='result'||request.id!==this.state.editId||!Number.isSafeInteger(request.revision)||request.revision<this.editRevision)return;this.editRevision=request.revision;this.ocr.invalidate(request.id,request.revision);});
@@ -68,7 +81,7 @@ export class CaptureManager {
     screen.on('display-metrics-changed',this.displayMetrics);
   }
   get active(){return this.busy||Boolean(this.win);}
-  async start() {
+  async start(mode:CaptureMode='area') {
     if(this.disposed)return;
     if(this.win){this.win.show();this.win.focus();return;}
     if(this.busy)return;
@@ -101,7 +114,12 @@ export class CaptureManager {
       this.elements=[];this.edges=[];this.colors=[];this.hoverPoint={x:-100,y:-100};
       const id=randomUUID();
       const pixels=this.image.getSize();
-      this.state={id,editId:randomUUID(),image:this.image.toDataURL(),width:this.bounds.width,height:this.bounds.height,pixelWidth:pixels.width,pixelHeight:pixels.height,candidates:this.fixed,phase:'selecting',selection:null,status:'悬停识别区域 · 拖动自由框选 · 滚轮切换层级 · F 全屏 · Esc 取消',origin:'screen'};
+      const windows=this.windows.map(w=>({id:w.id,x:w.x-this.bounds.x,y:w.y-this.bounds.y,width:w.width,height:w.height})).filter(w=>clip(w,{x:0,y:0,width:this.bounds.width,height:this.bounds.height}));
+      // The frozen screen is a display-only backdrop; the editing session receives only the pixels it captures.
+      this.state={id,editId:randomUUID(),image:'',backdrop:this.image.toDataURL(),width:this.bounds.width,height:this.bounds.height,pixelWidth:pixels.width,pixelHeight:pixels.height,candidates:this.fixed,windows,mode:mode==='window'?'window':'area',phase:'selecting',selection:null,status:'',origin:'screen'};
+      if(mode==='screen')this.select({x:0,y:0,width:this.bounds.width,height:this.bounds.height});
+      else if(mode==='front'){if(windows[0])await this.captureWindow(windows[0].id,false);else this.state.mode='window';}
+      if(this.disposed||epoch!==this.epoch)return;
       const win=new BrowserWindow({...display.bounds,frame:false,show:false,transparent:false,backgroundColor:'#242320',resizable:false,movable:false,fullscreenable:false,hasShadow:false,enableLargerThanScreen:true,webPreferences:{preload:join(__dirname,'capture-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
       this.win=win;win.setAlwaysOnTop(true,'screen-saver');win.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true});
       win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());
@@ -109,6 +127,7 @@ export class CaptureManager {
       await win.loadFile(join(__dirname,'renderer/index.html'),{query:{surface:'screenshot'}});
       if(this.win!==win||this.disposed)return;
       win.setBounds(display.bounds);win.show();win.focus();
+      if(this.state?.phase!=='selecting')return;
       // Downsample only the detection image. The exported crop keeps source pixels.
       const reduced=this.image.resize({width:Math.min(1440,this.image.getSize().width)});
       const size=reduced.getSize();const bitmap=reduced.toBitmap();
@@ -131,7 +150,8 @@ export class CaptureManager {
     finally{this.busy=false;}
   }
   private detectScale={x:1,y:1};
-  private publish(includeImage=false){if(this.state&&this.win&&!this.win.isDestroyed()){const {image,...rest}=this.state;this.win.webContents.send('screenshot:changed',includeImage?this.state:rest);}}
+  /** The backdrop is sent once with the initial state; the edit image only when it changes. */
+  private publish(includeImage=false){if(this.state&&this.win&&!this.win.isDestroyed()){const {image,backdrop,...rest}=this.state;this.win.webContents.send('screenshot:changed',includeImage?{...rest,image}:rest);}}
   private stopDetection(){this.seq++;this.pending=null;this.fixed=[];this.windows=[];this.elements=[];this.edges=[];this.colors=[];this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;}
   private select(r:CaptureRect){
     if(!r||![r.x,r.y,r.width,r.height].every(Number.isFinite))throw Error('无效的选区');
@@ -139,9 +159,28 @@ export class CaptureManager {
     const s=this.state,rect=clip(r,{x:0,y:0,width:s.width,height:s.height});if(!rect)return;
     const pixels=pixelRect(rect,s.width,s.height,s.pixelWidth,s.pixelHeight);
     // The editing session owns only the chosen pixels, never the full desktop.
-    this.image=nativeImage.createFromBuffer(this.image.crop(pixels).toPNG());
-    const size=this.image.getSize();this.stopDetection();this.ocr.reset();this.editRevision=0;
-    Object.assign(s,{editId:randomUUID(),image:this.image.toDataURL(),width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,candidates:[],selection:{x:0,y:0,...size},phase:'result'});
+    this.edit(nativeImage.createFromBuffer(this.image.crop(pixels).toPNG()),rect);
+  }
+  /** Captures the whole window, including parts covered by other windows; with a shadow, the placement grows by its margins. */
+  private async captureWindow(id:number,shadow:boolean){
+    const s=this.state;
+    if(s?.phase!=='selecting'||this.grabbing)return;
+    const target=s.windows?.find(w=>w.id===id);if(!target)throw Error('窗口已关闭，请重新选择');
+    const epoch=this.epoch,file=join(app.getPath('temp'),'lasso-window-'+randomUUID()+'.png');
+    this.grabbing=true;let png:Buffer;
+    try{await run('/usr/sbin/screencapture',['-x',...(shadow?[]:['-o']),'-l'+id,file]);png=await readFile(file);}
+    catch{throw Error('窗口截图失败，请确认窗口仍在当前屏幕上');}
+    finally{this.grabbing=false;void rm(file,{force:true});}
+    if(epoch!==this.epoch||this.state!==s||s.phase!=='selecting')return;
+    const image=nativeImage.createFromBuffer(png);if(image.isEmpty())throw Error('窗口截图失败，请确认窗口仍在当前屏幕上');
+    const size=image.getSize(),inset=shadow?opaqueInset(image):{left:0,top:0,right:0,bottom:0},scale=(size.width-inset.left-inset.right)/target.width;
+    this.edit(image,{x:target.x-inset.left/scale,y:target.y-inset.top/scale,width:size.width/scale,height:size.height/scale});
+  }
+  /** Hands captured pixels to the in-place editor at their on-screen placement. */
+  private edit(image:NativeImage,placement:CaptureRect){
+    const s=this.state!;this.image=image;
+    const size=image.getSize();this.stopDetection();this.ocr.reset();this.editRevision=0;
+    Object.assign(s,{editId:randomUUID(),image:image.toDataURL(),width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,candidates:[],windows:[],selection:{x:0,y:0,...size},placement,phase:'result'});
     this.publish(true);
   }
   async openImage(image:NativeImage,origin:'clipboard'|'pin'='clipboard',document?:PinnedDocument,pinId?:string,inputId?:string){

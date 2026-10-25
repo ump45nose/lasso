@@ -1,7 +1,10 @@
 import { useState } from 'react';
 import { X } from 'lucide-react';
 import type { ShellState } from '../shared/contracts';
+import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import { shortcutLabel } from './targets';
+
+const captureHelp: Record<CaptureMode, string> = { area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口' };
 
 /** Records on keydown and saves right away; main validates and rejects reserved combinations such as ⌥ Space. */
 function ShortcutField({ id, label, help, value, save, error: external }: { id: string; label: string; help: string; value: string; save: (value: string) => Promise<{ error: string | null }>; error?: string | null }) {
@@ -56,7 +59,7 @@ export function GeneralSettings({ state }: { state: ShellState }) {
     <div className="l-set-row-head l-gap"><h3>快捷键</h3><span>默认不绑定</span></div>
     <ul className="l-group">
       <ShortcutField id="shortcut-open" label="唤起小窗" help="有选区时同时打开指令面板；不绑定也可从菜单栏打开" value={settings.shortcut} save={window.desktop.saveShortcut} error={state.shortcutError} />
-      <ShortcutField id="shortcut-shot" label="截图" help="选择窗口、消息或任意区域" value={settings.screenshotShortcut} save={window.desktop.saveScreenshotShortcut} />
+      {captureModes.map(mode => <ShortcutField key={mode} id={'shortcut-' + mode} label={captureModeLabels[mode]} help={captureHelp[mode]} value={settings.captureShortcuts[mode]} save={shortcut => window.desktop.saveCaptureShortcut(mode, shortcut)} />)}
     </ul>
     <div className="l-set-row-head l-gap"><h3>窗口与任务</h3></div>
     <ul className="l-group">

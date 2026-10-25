@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Image, Maximize2, Minimize2, Minus, Pin, RotateCw, ScanLine, Search, Settings2 } from 'lucide-react';
+import { AppWindow, AppWindowMac, Image, Maximize2, Minimize2, Minus, Monitor, Pin, RotateCw, ScanLine, Search, Settings2 } from 'lucide-react';
+import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import { targetLabels } from '../shared/contracts';
 import type { Action, PaletteScope, Preset, ShellState, Target, TaskSummary } from '../shared/contracts';
 import { Badge, isLocal, shortcutLabel, taskDot, taskStatus, targets } from './targets';
@@ -18,6 +19,7 @@ type Row = { key: string; label: string; disabled?: boolean } & (
 
 const close = () => window.desktop.closePalette();
 const act = (action: Action) => () => window.desktop.act(action);
+const captureIcons: Record<CaptureMode, ReactNode> = { area: <ScanLine size={14} />, window: <AppWindow size={14} />, screen: <Monitor size={14} />, front: <AppWindowMac size={14} /> };
 
 /** Main owns open/close (⌘K works while a web page has focus); this only renders and runs the chosen row. */
 export function Palette({ state, scope, backdrop }: { state: ShellState; scope: PaletteScope; backdrop: string | null }) {
@@ -50,7 +52,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     }
     if (scope === 'all') {
       const rows: Row[] = ([
-        { key: 'shot', kind: 'cmd', icon: <ScanLine size={14} />, label: '截图', hint: settings.screenshotShortcut ? shortcutLabel(settings.screenshotShortcut) : undefined, run: act('screenshot') },
+        ...captureModes.map(mode => ({ key: 'shot-' + mode, kind: 'cmd' as const, icon: captureIcons[mode], label: captureModeLabels[mode], hint: settings.captureShortcuts[mode] ? shortcutLabel(settings.captureShortcuts[mode]) : undefined, run: () => window.desktop.screenshot(mode) })),
         { key: 'clip', kind: 'cmd', icon: <Image size={14} />, label: '使用剪贴板图片', run: () => window.desktop.readImage() },
         { key: 'pin', kind: 'cmd', icon: <Pin size={14} />, label: state.pinned ? '取消置顶' : '置顶小窗', run: act('pin'), keepOpen: true },
         ...(state.hasPage ? [{ key: 'reload', kind: 'cmd' as const, icon: <RotateCw size={14} />, label: isLocal(state.activeTarget) ? '恢复 CLI 会话' : '重新加载网页', run: act('reload') }] : []),
@@ -61,7 +63,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
       if (rows.length) out.push({ title: '图片与窗口', rows });
     }
     return out;
-  }, [query, scope, state.presets, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.screenshotShortcut]);
+  }, [query, scope, state.presets, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.captureShortcuts]);
   const flat = groups.flatMap(group => group.rows).filter(row => !row.disabled);
   const current = flat[Math.min(index, flat.length - 1)];
   useEffect(() => { setIndex(0); setError(''); }, [query, scope]);

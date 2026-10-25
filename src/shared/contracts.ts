@@ -1,3 +1,4 @@
+import type { CaptureMode } from './capture';
 export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
 /** Native web views are placed below the title bar and above any footer rows. */
 export const HEADER_HEIGHT = 44;
@@ -23,7 +24,8 @@ export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Seri
 export interface Settings {
   /** Empty means no global shortcut. */
   shortcut: string;
-  screenshotShortcut: string;
+  /** Empty means unbound, per capture mode. */
+  captureShortcuts: Record<CaptureMode, string>;
   lastTarget: Target;
   selectionEnabled: boolean;
   clipboardFallback: boolean;
@@ -95,7 +97,7 @@ export interface ShellState {
   selection: { length: number; sourceApp: string } | null;
   delivery: DeliveryStatus | null;
 }
-export type Action = 'dismiss-notice' | 'screenshot' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
+export type Action = 'dismiss-notice' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
   | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-input' | 'retry-delivery';
 export type PaletteScope = 'all' | 'tasks' | 'new';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
@@ -103,7 +105,8 @@ export interface DesktopAPI {
   openLink(url: string): Promise<void>;
   getState(): Promise<ShellState>;
   act(action: Action): Promise<void>;
-  saveScreenshotShortcut(shortcut: string): Promise<{ error: string | null }>;
+  screenshot(mode: CaptureMode): Promise<void>;
+  saveCaptureShortcut(mode: CaptureMode, shortcut: string): Promise<{ error: string | null }>;
   saveShortcut(shortcut: string): Promise<{ error: string | null }>;
   saveCapture(options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>): Promise<{ error: string | null }>;
   savePresets(presets: Preset[]): Promise<{ error: string | null }>;
@@ -135,19 +138,26 @@ export interface DesktopAPI {
   removeFont(file: string): Promise<{ error: string | null }>;
   onState(callback: (state: ShellState) => void): () => void;
 }
-export interface ActionBarState { presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; busy: boolean; fonts: Pick<Settings, 'fonts' | 'importedFonts'> }
-/** Which side of the capsule has room for the hover tip: away from the selection when the screen allows. */
+/** `presets` fill the capsule; `more` are the remaining enabled presets, listed in the ··· menu. */
+export interface ActionBarState { presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; more: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; busy: boolean; fonts: Pick<Settings, 'fonts' | 'importedFonts'> }
+/** A side of the capsule, away from the selection when the screen allows. */
 export type ActionBarTip = 'above' | 'below';
+/** Where the hover tip and the ··· menu open; the capsule stays anchored to the other edge. */
+export interface ActionBarLayout { tip: ActionBarTip; menu: ActionBarTip }
+/** ··· menu metrics, shared by main (window growth) and the renderer (row sizes). */
+export const BAR_MENU = { width: 232, row: 32, pad: 5, sep: 9, gap: 6 };
+export const barMenuHeight = (more: number) => BAR_MENU.pad * 2 + (more + 1) * BAR_MENU.row + (more ? BAR_MENU.sep : 0);
 export interface ActionBarAPI {
   getState(): Promise<ActionBarState>;
   runPreset(id: string): Promise<void>;
-  more(): void;
+  /** Grows the window on the menu side while the ··· menu is open. */
+  menu(open: boolean): void;
+  settings(): void;
   /** Width of the capsule itself; main adds the transparent margins. */
   resize(width: number): void;
   /** The pointer entered or left the capsule; outside it the window lets clicks through. */
   hit(inside: boolean): void;
   onState(callback: (state: ActionBarState) => void): () => void;
   /** Fired on every show so the capsule can replay its entrance. */
-  onEnter(callback: (tip: ActionBarTip) => void): () => void;
-  onMenuClosed(callback: () => void): () => void;
+  onEnter(callback: (layout: ActionBarLayout) => void): () => void;
 }
