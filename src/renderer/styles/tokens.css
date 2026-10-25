@@ -8,18 +8,23 @@
   --sand: #F0EEE6;
   --oat: #E3DACC;
   --desk: #E9E6DD;
+  /* Behind the frozen screen while capturing */
+  --stage: #222222;
   /* Ink (warm grays) */
   --ink: #141413;
   --ink-2: #3D3D3A;
   --ink-3: #5E5D59;
   --ink-4: #73726C;
   --ink-5: #9C9A92;
+  --ink-6: #C2C0B6;
+  --track: #D1CFC5;
   --line: rgba(31, 30, 29, 0.12);
   --line-strong: rgba(31, 30, 29, 0.22);
   --line-heavy: rgba(31, 30, 29, 0.32);
   /* The one accent */
   --clay: #D97757;
   --clay-ink: #A4502F;
+  --clay-press: #C2603F;
   --marker: rgba(217, 119, 87, 0.3);
   --clay-halo: rgba(217, 119, 87, 0.22);
   /* Hover and selection tints: interaction always answers in clay. */

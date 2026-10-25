@@ -10,7 +10,7 @@ export function Launcher({ state, openPermission }: { state: ShellState; openPer
   return <>
     <div className="l-launch">
       <div className="l-launch-intro">
-        <h1 className="l-hero">随手<span className="l-hero-loop"><svg viewBox="0 0 220 80" preserveAspectRatio="none" aria-hidden="true"><path d="M30 44 C28 18 110 6 180 16 C214 22 216 56 170 66 C110 78 36 72 22 50 C14 36 40 22 70 20" /></svg><span>问一句</span></span>，<br />再回到手上的事。</h1>
+        <h1 className="l-hero">随手<span className="l-hero-loop">{/* ui-check-ignore: hand-drawn hero loop */}<svg viewBox="0 0 220 80" preserveAspectRatio="none" aria-hidden="true"><path d="M30 44 C28 18 110 6 180 16 C214 22 216 56 170 66 C110 78 36 72 22 50 C14 36 40 22 70 20" /></svg><span>问一句</span></span>，<br />再回到手上的事。</h1>
         <p className="l-sub">在任意应用里选中文字，附近会出现动作条。没有选区，就从这里开始。</p>
         {state.capture.status === 'permission' && <button className="l-link" onClick={openPermission}>开启划词 · 授予辅助功能权限</button>}
       </div>

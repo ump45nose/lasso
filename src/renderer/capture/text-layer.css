@@ -1,6 +1,6 @@
 /* Invisible OCR glyphs laid over an image so its text can be selected; shared by the editor and pins. */
 .editor-text-layer { position: absolute; inset: 0; pointer-events: none; user-select: none; overflow: hidden; }
 .editor-text-layer.enabled { pointer-events: auto; user-select: text; cursor: text; }
-.editor-text-line { position: absolute; user-select: text; color: transparent; white-space: pre; font-family: -apple-system, 'PingFang SC', sans-serif; }
+.editor-text-line { position: absolute; user-select: text; color: transparent; white-space: pre; font-family: -apple-system, 'PingFang SC', sans-serif; } /* ui-check-ignore: invisible OCR glyphs follow system metrics */
 .editor-text-line span { position: absolute; display: inline-block; white-space: pre; color: transparent; user-select: text; overflow: visible; }
 .editor-text-layer ::selection { background: rgba(217, 119, 87, 0.38); color: transparent; }

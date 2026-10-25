@@ -17,7 +17,7 @@ const tools: [Tool, string, ReactNode][][] = [
 ];
 const styled: Tool[] = ['arrow', 'line', 'rectangle', 'ellipse', 'pen', 'highlight', 'text', 'number'];
 const sizes = [16, 24, 32, 40, 48, 64, 96];
-const colors=['#e24a35','#eaaa31','#3a9866','#337cc1','#9b62b8','#171717','#ffffff'];
+const colors=['#e24a35','#eaaa31','#3a9866','#337cc1','#9b62b8','#171717','#ffffff']; // ui-check-ignore: annotation inks are image content, not UI
 /** OCR status text maps to a dot: running, ready, needs attention, or waiting for edits to finish. */
 const ocrTone = (status: string) => status.startsWith('正在') ? 'loading' : status.startsWith('拖选') || status.startsWith('已复制') ? 'ok' : status.includes('未') ? 'warn' : 'idle';
 export function Editor({state}:{state:ScreenshotState}){
@@ -120,7 +120,10 @@ export function Editor({state}:{state:ScreenshotState}){
   const labelsInside=sel.y<44;
   const chipStyle=inline?(labelsInside?{right:W-sel.x-sel.width+8,top:sel.y+8}:{right:W-sel.x-sel.width,bottom:H-sel.y+8}):undefined;
   const closeMenus=()=>{setFormatOpen(false);setOCROpen(false);};
-  const reselect=()=>{if(editor?.count&&!window.confirm('重新选区会清除当前标注，是否继续？'))return;void window.screenshot.action('reselect');};
+  // With annotations, the first press arms the button and a second press within 3s discards them.
+  const [armed,setArmed]=useState(false);
+  useEffect(()=>{if(!armed)return;const timer=setTimeout(()=>setArmed(false),3000);return()=>clearTimeout(timer);},[armed]);
+  const reselect=()=>{if(editor?.count&&!armed){setArmed(true);return;}void window.screenshot.action('reselect');};
   const panelKind=styled.includes(tool)?'style':['redact','mosaic','blur'].includes(tool)?'privacy':tool==='crop'?'crop':null;
   const panel=panelKind==='style'?<>
       <div className="ed-colors" role="radiogroup" aria-label="标注颜色">{colors.map(color=><button key={color} role="radio" aria-checked={style.color===color} aria-label={`颜色 ${color}`} style={{'--swatch':color} as React.CSSProperties} disabled={busy} onClick={()=>changeStyle({...style,color})}/>)}</div>
@@ -178,7 +181,8 @@ export function Editor({state}:{state:ScreenshotState}){
           <button className="ed-tool" data-tip="删除所选标注" aria-label="删除所选标注" disabled={tool!=='select'||busy} onClick={()=>editor?.remove()}><Trash2/></button>
         </div>
         <div className="ed-bar" role="toolbar" aria-label="输出">
-          {inline&&<button className="ed-tool" data-tip="重新截图" aria-label="重新截图" disabled={busy} onClick={reselect}><ScanLine/></button>}
+          {inline&&(armed?<button className="ed-text ed-armed" disabled={busy} onClick={reselect}><ScanLine/>再点一次清除标注</button>
+            :<button className="ed-tool" data-tip="重新截图" aria-label="重新截图" disabled={busy} onClick={reselect}><ScanLine/></button>)}
           <span className="ed-split">
             <button className="ed-tool" data-tip={`保存为 ${format.toUpperCase()} ⌘S`} aria-label="保存" disabled={!ready||busy} onClick={()=>void output('save')}><Download/></button>
             <button className="ed-caret" aria-label="保存格式" aria-expanded={formatOpen} disabled={busy} onClick={()=>{setOCROpen(false);setFormatOpen(o=>!o);}}><ChevronDown/></button>

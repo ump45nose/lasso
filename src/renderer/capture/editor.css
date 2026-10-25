@@ -1,7 +1,7 @@
 /* Screenshot editor. In place (.ed-inline) it floats over the frozen screen at the selection;
    for clipboard and pin images (.ed-window) the image sits on a desk with zoom. Interaction answers in clay. */
 .ed { position: fixed; inset: 0; overflow: hidden; user-select: none; color: var(--ink); font-family: var(--font-ui); font-size: 13px; }
-.ed-inline { background: #222; }
+.ed-inline { background: var(--stage); }
 .ed-window { background: var(--desk); }
 .ed svg { width: 16px; height: 16px; stroke-width: 1.6; flex-shrink: 0; }
 
@@ -124,3 +124,4 @@
 .ed-toast svg { width: 13px; height: 13px; }
 
 @keyframes ed-ring { 0% { outline-color: rgba(217, 119, 87, 0); outline-offset: 6px; } 60% { outline-color: var(--clay); } 100% { outline-color: var(--clay); outline-offset: 0; } }
+.ed-text.ed-armed, .ed-text.ed-armed:hover:not(:disabled) { background: var(--clay); color: #FFFFFF; }

@@ -1,5 +1,5 @@
 /* Screenshot overlay over the frozen screen. Ported from docs/design/v2/lasso.css (cap-*). */
-.cap { position: fixed; inset: 0; overflow: hidden; user-select: none; cursor: crosshair; background: #222; color: var(--ink); font-family: var(--font-ui); }
+.cap { position: fixed; inset: 0; overflow: hidden; user-select: none; cursor: crosshair; background: var(--stage); color: var(--ink); font-family: var(--font-ui); }
 .cap-background { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
 .cap-dim { position: absolute; inset: 0; background: rgba(20, 20, 19, 0.52); pointer-events: none; }
 .cap-rect { position: absolute; box-shadow: 0 0 0 20000px rgba(20, 20, 19, 0.52); outline: 1.5px solid var(--clay); pointer-events: none; transition: left 90ms, top 90ms, width 90ms, height 90ms; }
@@ -11,19 +11,6 @@
 .cap-levels { display: flex; gap: 4px; }
 .cap-levels i { width: 5px; height: 5px; border-radius: 50%; background: rgba(250, 249, 245, 0.35); }
 .cap-levels i.on { background: var(--clay); }
-.cap-drag { position: absolute; inset: 0; pointer-events: auto; cursor: move; }
-.cap-handle { position: absolute; width: 9px; height: 9px; border-radius: 2px; background: #FFFFFF; border: 1.5px solid var(--clay); pointer-events: auto; }
-.cap-handle.nw { left: -5px; top: -5px; cursor: nwse-resize; } .cap-handle.n { left: calc(50% - 4.5px); top: -5px; cursor: ns-resize; }
-.cap-handle.ne { right: -5px; top: -5px; cursor: nesw-resize; } .cap-handle.e { right: -5px; top: calc(50% - 4.5px); cursor: ew-resize; }
-.cap-handle.se { right: -5px; bottom: -5px; cursor: nwse-resize; } .cap-handle.s { left: calc(50% - 4.5px); bottom: -5px; cursor: ns-resize; }
-.cap-handle.sw { left: -5px; bottom: -5px; cursor: nesw-resize; } .cap-handle.w { left: -5px; top: calc(50% - 4.5px); cursor: ew-resize; }
-.cap-tools { position: absolute; z-index: 3; display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 5px; border-radius: 13px; background: var(--bg); border: 0.5px solid rgba(20, 20, 19, 0.2); box-shadow: 0 16px 36px -12px rgba(0, 0, 0, 0.55); cursor: default; animation: l-fade 160ms ease-out; }
-.cap-tools button { height: 34px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; font-size: 13.5px; color: var(--ink); white-space: nowrap; }
-.cap-tools button:hover { background: var(--sand); }
-.cap-tools button.primary { background: var(--ink); color: var(--on-ink); }
-.cap-tools button.primary:hover { background: #30302E; }
-.cap-key { font-size: 11px; opacity: .7; }
-.cap-sep { width: 1px; height: 16px; margin: 0 4px; background: var(--line-strong); }
 .cap-window { cursor: default; }
 .cap-window .cap-rect { outline-width: 2px; }
 .cap-guide { position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; height: 38px; padding: 0 5px; border-radius: 19px; background: rgba(20, 20, 19, 0.86); box-shadow: 0 12px 32px -12px rgba(0, 0, 0, 0.6), inset 0 0 0 0.5px rgba(250, 249, 245, 0.12); color: var(--on-ink); font-size: 12.5px; white-space: nowrap; cursor: default; }

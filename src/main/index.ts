@@ -20,7 +20,8 @@ import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOpti
 
 app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
-app.setPath('userData', join(app.getPath('appData'), 'mac-ai-prompt'));
+// LASSO_PROFILE gives tools such as scripts/ui-shots a separate profile that can run beside the installed app.
+app.setPath('userData', join(app.getPath('appData'), process.env.LASSO_PROFILE || 'mac-ai-prompt'));
 registerFontScheme();
 const hasLock = app.requestSingleInstanceLock();
 let win: BrowserWindow;
@@ -506,7 +507,7 @@ async function boot() {
       { label: '新任务…', accelerator: 'Command+N', click: () => void openPalette('new') },
       { type: 'separator' },
       { label: '隐藏小窗', accelerator: 'Command+W', click: () => motion.hide() },
-      { label: '贴图管理…', click:()=>Menu.buildFromTemplate(screenshots?.pins.trayItems()||[]).popup({window:BrowserWindow.getFocusedWindow()||win}) },
+      { label: '贴图管理…', click:()=>Menu.buildFromTemplate(screenshots?.pins.trayItems()||[]).popup({window:BrowserWindow.getFocusedWindow()||win}) }, // ui-check-ignore: continues the native app menu bar
       { label: '放大 / 还原', click: expand }
     ] }
   ]));
