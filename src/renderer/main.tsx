@@ -16,6 +16,8 @@ import { Palette } from './Palette';
 import { Settings, type SettingsTab } from './Settings';
 import { AgentChat } from './AgentChat';
 import { ImageEntry } from './ImageEntry';
+import { TextEntry } from './TextEntry';
+import { Pinned } from './capture/Pinned';
 import { isLocal } from './targets';
 declare global { interface Window { desktop: DesktopAPI } }
 
@@ -30,7 +32,7 @@ function App() {
     return () => stops.forEach(stop => stop());
   }, []);
   if (!state) return null;
-  const view = state.settingsOpen ? 'settings' : state.inputImage && state.imageOpen ? 'image' : state.activeTaskId && isLocal(state.activeTarget) ? 'chat'
+  const view = state.settingsOpen ? 'settings' : state.inputOpen && state.inputText ? 'text' : state.inputOpen && state.inputImage ? 'image' : state.activeTaskId && isLocal(state.activeTarget) ? 'chat'
     : state.pageError ? 'error' : state.hasPage ? 'web' : 'launcher';
   function paste(event: React.ClipboardEvent) {
     if (view !== 'launcher' || ![...event.clipboardData.items].some(item => item.type.startsWith('image/'))) return;
@@ -41,7 +43,8 @@ function App() {
     {view === 'settings' ? <Settings state={state} tab={settingsTab} setTab={setSettingsTab} /> : <>
       <TitleBar state={state} />
       <main className="l-main">
-        {view === 'image' ? <ImageEntry image={state.inputImage!} presets={state.presets} />
+        {view === 'text' ? <TextEntry key={state.inputText!.id} input={state.inputText!} presets={state.presets} />
+          : view === 'image' ? <ImageEntry image={state.inputImage!} presets={state.presets} />
           : view === 'chat' ? <AgentChat key={state.activeTaskId} taskId={state.activeTaskId!} />
           : view === 'error' ? <div className="l-empty l-surface-enter"><CircleAlert size={22} className="l-danger" /><h2>网页还没打开。</h2><p>{state.pageError}</p><button className="l-btn primary" onClick={() => void window.desktop.act('reload')}>重新加载</button></div>
           : view === 'launcher' ? <Launcher state={state} openPermission={() => { setSettingsTab('general'); void window.desktop.act('settings'); }} />
@@ -54,4 +57,4 @@ function App() {
   </div>;
 }
 const surface = new URLSearchParams(location.search).get('surface');
-createRoot(document.getElementById('root')!).render(surface === 'screenshot' ? <Screenshot /> : surface === 'action-bar' ? <ActionBar /> : <App />);
+createRoot(document.getElementById('root')!).render(surface === 'screenshot' ? <Screenshot /> : surface === 'action-bar' ? <ActionBar /> : surface === 'pin' ? <Pinned /> : <App />);

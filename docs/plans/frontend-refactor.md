@@ -29,7 +29,7 @@
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
 | 0 | 记录计划 | 完成 |
-| 1 | 契约与主进程：布局、notice、imageOpen、投递步骤、⌘K、菜单清理 | 完成 |
+| 1 | 契约与主进程：布局、notice、inputOpen（原 imageOpen）、投递步骤、⌘K、菜单清理 | 完成 |
 | 2 | 样式基础与字体：tokens / app.css、fontsource、协议、CSP、权限 | 完成（旧 style.css 在组件重写完后于阶段 7 删除） |
 | 3 | 小窗外壳：TitleBar、Launcher、Footer、Palette、设置外壳与通用页 | 完成（TaskTabs 已删除） |
 | 4 | CLI 对话与图片入口 | 完成 |
@@ -54,3 +54,13 @@
 - CLI 发送、审批与停止：未发送，避免消耗模型调用。
 - 截图覆盖层与图片入口：需要屏幕录制权限或改动剪贴板，未运行。
 - 导入字体后重启仍生效、减少动态效果。
+
+## 合并 main（2026-10-25）
+
+main 新增截图编辑器、OCR 文字交接、贴图。合并时：
+- `screenshotError` / `imageError` 并入 `notice` 提示行。
+- 待处理文字 `inputText` 与待处理图片互斥，共用一个临时标签：`imageOpen` 改为 `inputOpen`，`show-image` 改为 `show-input`。
+- TextEntry 用新样式重写，和 ImageEntry 共用 `PresetPicker`；图片入口加「编辑」，用来打开截图编辑器。
+- 截图选区阶段沿用 cap-* 新样式，结果阶段交给 main 的 Editor；`style.css` 删除。
+
+后续：Editor（editor.css）和 Pinned（pinned.css）仍是原有样式，还没有按新设计重做。

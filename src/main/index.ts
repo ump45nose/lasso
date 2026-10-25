@@ -3,6 +3,7 @@ import type { IpcMainInvokeEvent, Rectangle, WebContents } from 'electron';
 import { basename, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { CaptureManager } from './capture';
 import { Images, type ImageInput } from './images';
 import { readSettings, writeSettings } from './settings';
@@ -53,7 +54,7 @@ function layout() {
   const [width, height] = win.getContentSize();
   // Footer rows sit below the page: the app notice, then the active task's delivery progress.
   const rows = (state.notice ? 1 : 0) + (tasks.snapshot().delivery ? 1 : 0);
-  tasks.layout({ x: 0, y: HEADER_HEIGHT, width, height: Math.max(0, height - HEADER_HEIGHT - rows * FOOTER_ROW) }, !state.settingsOpen && !state.imageOpen && !palette);
+  tasks.layout({ x: 0, y: HEADER_HEIGHT, width, height: Math.max(0, height - HEADER_HEIGHT - rows * FOOTER_ROW) }, !state.settingsOpen && !state.inputOpen && !palette);
 }
 async function openPalette(scope: PaletteScope) {
   showWindow();
@@ -68,7 +69,7 @@ function closePalette(restore = true) {
   if (!palette) return;
   palette = null;
   if (!win.isDestroyed()) win.webContents.send('shell:palette', { scope: null, backdrop: null } satisfies PaletteEvent);
-  if (restore) { layout(); if (!state.settingsOpen && !state.imageOpen) tasks.focus(); }
+  if (restore) { layout(); if (!state.settingsOpen && !state.inputOpen) tasks.focus(); }
 }
 function showWindow() {
   if (!win) return;
@@ -79,7 +80,7 @@ function showWindow() {
   motion.show();
   app.focus({ steal: true });
   win.focus();
-  if (!state.settingsOpen && !state.imageOpen && !palette) tasks.focus();
+  if (!state.settingsOpen && !state.inputOpen && !palette) tasks.focus();
 }
 function openSettings() {
   capture?.configure(state.settings);
@@ -129,7 +130,7 @@ async function confirm(message: string, detail: string) {
 async function requestQuit() {
   if (quitPromptOpen) return;
   quitPromptOpen = true;
-  if (tasks.size && !await confirm('退出 Lasso？', `本次 ${tasks.size} 个任务会关闭，正在进行的任务和未发送内容不会在下次启动时恢复。`)) {
+  if ((tasks.size || screenshots?.pins.size) && !await confirm('退出 Lasso？', `本次 ${tasks.size} 个任务会关闭，正在进行的任务和未发送内容不会在下次启动时恢复。${screenshots?.pins.size ? ` ${screenshots.pins.size} 张贴图也不会恢复，请先保存需要保留的图片。` : ''}`)) {
     quitPromptOpen = false;
     return;
   }
@@ -161,18 +162,19 @@ function secureRemote(contents: WebContents) {
   });
 }
 function openChat(newTask = false) {
-  closePalette(false); state.settingsOpen = false; state.imageOpen = false;
+  closePalette(false); state.settingsOpen = false; state.inputOpen = false;
   if (newTask) tasks.newChat(); else tasks.openChat();
   layout(); showWindow(); publish();
 }
 function selectTask(id: string) {
-  closePalette(false); state.settingsOpen = false; state.imageOpen = false;
+  closePalette(false); state.settingsOpen = false; state.inputOpen = false;
   tasks.select(id); layout(); showWindow(); publish();
 }
 function updateTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开小窗', click: showWindow },
     { label: `打开 ${targetLabels[state.settings.lastTarget]}`, click: () => openChat() },
+    { label: `贴图（${screenshots?.pins.size || 0}）`, submenu: screenshots?.pins.trayItems() || [] },
     { label: '新任务…', click: () => void openPalette('new') },
     { label: '截图', accelerator: state.settings.screenshotShortcut || undefined, click: () => void startScreenshot() },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
@@ -226,18 +228,23 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   const preset = state.presets.find(p => p.id === id && p.enabled);
   if (!preset) return { error: '这个预设已停用或删除' };
   if (options.imageId && options.imageId !== inputImage?.id) return { error: '图片已被替换，请重新选择。' };
+  if(options.textId&&options.textId!==state.inputText?.id)return {error:'文字已被替换，请重新选择。'};
+  if(options.imageId&&options.textId)return {error:'请选择图片或文字中的一种输入。'};
+  if(options.textId)selection={text:state.inputText!.text,sourceApp:'',anchor:{x:0,y:0,width:0,height:0}};
   if (options.imageId) selection = null;
   if (preset.needsSelection && !selection?.text && !options.imageId) return { error: '请先选中文字' };
   const text = composePrompt(preset, selection, state.settings.appPrompts);
   actionBar.hide(); capture.suppress(); clearSelection(); closePalette(false);
   if (!options.imageId && inputImage) removeImage();
-  if (selection && !state.pinned && !state.expanded) {
+  if (!options.textId) state.inputText = null;
+  if (selection && !options.textId && !state.pinned && !state.expanded) {
     win.setBounds(placeNear(selection.anchor, screen.getDisplayNearestPoint(selection.anchor).workArea));
   }
   state.settingsOpen = false;
   rememberTarget(options.target || preset.target);
   const result = tasks.runPreset(preset, text, options);
-  if (options.imageId) { inputImage = null; state.inputImage = null; state.imageOpen = false; }
+  if (options.imageId) { inputImage = null; state.inputImage = null; }
+  state.inputText = null; state.inputOpen = false;
   layout(); showWindow(); publish();
   return result;
 }
@@ -260,7 +267,7 @@ function rememberTarget(target: Target) {
   writeSettings(settingsPath, settings); state.settings = settings; updateTray();
 }
 function launchTask(options: LaunchOptions) {
-  closePalette(false); state.settingsOpen = false; state.imageOpen = false; clearSelection();
+  closePalette(false); state.settingsOpen = false; state.inputOpen = false; clearSelection();
   if (options.target) rememberTarget(options.target);
   tasks.newChat(true, options); layout(); showWindow(); publish();
 }
@@ -276,14 +283,20 @@ async function readImage(taskId?: string) {
   state.notice = null;
   openImage(image);
 }
-/** A pending image is a temporary tab; selecting a task keeps it until it runs or is removed. */
+/** A pending image or text is a temporary tab; selecting a task keeps it until it runs or is removed. The two replace each other. */
 function openImage(image: ImageInput) {
-  images.remove(inputImage); inputImage = image; state.inputImage = images.preview(image); state.imageOpen = true;
+  images.remove(inputImage); inputImage = image; state.inputImage = images.preview(image); state.inputText = null; state.inputOpen = true;
   clearSelection(); closePalette(false); state.settingsOpen = false; layout(); showWindow(); win.webContents.focus(); publish();
+}
+async function receiveText(text: string) {
+  if (typeof text !== 'string' || !text.trim() || text.length > 100000) throw Error('没有可交接的文字');
+  images.remove(inputImage); inputImage = null; state.inputImage = null;
+  state.inputText = { id: randomUUID(), text }; state.inputOpen = true;
+  actionBar.hide(); capture.suppress(); clearSelection(); closePalette(false); state.settingsOpen = false; layout(); showWindow(); win.webContents.focus(); publish();
 }
 function removeImage(taskId?: string) {
   if (taskId) tasks.agentImage(taskId, null);
-  else { images.remove(inputImage); inputImage = null; state.inputImage = null; state.imageOpen = false; layout(); if (!state.settingsOpen) tasks.focus(); publish(); }
+  else { images.remove(inputImage); inputImage = null; state.inputImage = null; state.inputOpen = false; layout(); if (!state.settingsOpen) tasks.focus(); publish(); }
 }
 
 function installIPC() {
@@ -330,6 +343,8 @@ function installIPC() {
   ipcMain.handle('shell:new-task', (event, options: LaunchOptions) => { assertLocal(event); launchTask(options); });
   ipcMain.handle('shell:image', (event, id?: string) => { assertLocal(event); return result(() => readImage(id)); });
   ipcMain.handle('shell:image-remove', (event, id?: string) => { assertLocal(event); removeImage(id); });
+  ipcMain.handle('shell:image-edit',(event,id:string)=>{assertLocal(event);return result(async()=>{if(!inputImage||inputImage.id!==id)throw Error('图片已被替换，请重新读取');const image=nativeImage.createFromPath(inputImage.path);await screenshots.openImage(image,'clipboard',undefined,undefined,id);});});
+  ipcMain.handle('shell:text-remove',event=>{assertLocal(event);state.inputText=null;state.inputOpen=false;layout();if(!state.settingsOpen)tasks.focus();publish();});
   ipcMain.handle('agent:state', (event, id: string) => { assertLocal(event); return tasks.getAgent(id); });
   ipcMain.handle('agent:draft', (event, id: string, text: string) => { assertLocal(event); tasks.agentDraft(id, text); });
   ipcMain.handle('agent:send', (event, id: string) => { assertLocal(event); return result(() => tasks.agentSend(id)); });
@@ -364,7 +379,7 @@ function installIPC() {
     switch (action) {
       case 'dismiss-notice': state.notice = null; layout(); publish(); break;
       case 'screenshot': await startScreenshot(); break;
-      case 'show-image': if (inputImage) { closePalette(false); state.settingsOpen = false; state.imageOpen = true; layout(); win.webContents.focus(); publish(); } break;
+      case 'show-input': if (inputImage || state.inputText) { closePalette(false); state.settingsOpen = false; state.inputOpen = true; layout(); win.webContents.focus(); publish(); } break;
       case 'retry-delivery': await tasks.retryDelivery(); break;
       case 'pin': setPin(); break;
       case 'expand': expand(); break;
@@ -422,7 +437,7 @@ async function boot() {
   serveFonts(fontsDir);
   images = new Images(join(app.getPath('userData'), 'input-images'));
   state = {
-    pinned: false, expanded: false, settingsOpen: false, inputImage: null, imageOpen: false,
+    pinned: false, expanded: false, settingsOpen: false, inputImage: null, inputText: null, inputOpen: false,
     shortcutError: null, notice: null, settings: readSettings(settingsPath),
     presets: readPresets(presetsPath), capture: { status: 'paused', message: '划词未启动' }, selection: null
   };
@@ -491,6 +506,7 @@ async function boot() {
       { label: '新任务…', accelerator: 'Command+N', click: () => void openPalette('new') },
       { type: 'separator' },
       { label: '隐藏小窗', accelerator: 'Command+W', click: () => motion.hide() },
+      { label: '贴图管理…', click:()=>Menu.buildFromTemplate(screenshots?.pins.trayItems()||[]).popup({window:BrowserWindow.getFocusedWindow()||win}) },
       { label: '放大 / 还原', click: expand }
     ] }
   ]));
@@ -512,7 +528,7 @@ async function boot() {
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
-  }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, () => capture?.suppress());
+  }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray);
   const screenshotError = registerScreenshotShortcut(state.settings.screenshotShortcut);
   if (screenshotError) console.warn('[screenshot]', screenshotError);
   capture.configure(state.settings);

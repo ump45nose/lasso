@@ -9,7 +9,7 @@ export interface LocalConfig { executable: string; cwd: string }
 export interface ImagePreview { id: string; thumbnail: string; width: number; height: number }
 export interface ExecutionProfile { model?: string; effort?: string }
 export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; currentModel: string; currentEffort: string }
-export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string }
+export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string; textId?: string }
 export interface ChatMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'notice'; text: string; title?: string; running?: boolean; image?: string }
 export interface AgentModel { id: string; label: string; images?: boolean; efforts?: string[]; defaultEffort?: string }
 export interface AgentQuestion { id: string; question: string; options?: string[]; secret?: boolean }
@@ -78,7 +78,10 @@ export interface ShellState {
   hasPage: boolean;
   activeTarget: Target | null;
   inputImage: ImagePreview | null;
-  imageOpen: boolean;
+  /** OCR or handed-off text waiting for a preset; replaces any pending image. */
+  inputText: { id: string; text: string } | null;
+  /** The pending image or text is shown as a temporary tab in front of the tasks. */
+  inputOpen: boolean;
   title: string;
   hostname: string;
   loading: boolean;
@@ -93,7 +96,7 @@ export interface ShellState {
   delivery: DeliveryStatus | null;
 }
 export type Action = 'dismiss-notice' | 'screenshot' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
-  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-image' | 'retry-delivery';
+  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-input' | 'retry-delivery';
 export type PaletteScope = 'all' | 'tasks' | 'new';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
@@ -110,6 +113,8 @@ export interface DesktopAPI {
   choosePath(kind: 'directory' | 'executable' | 'application'): Promise<{ path: string; bundleId?: string; name?: string } | null>;
   readImage(taskId?: string): Promise<{ error: string | null }>;
   removeImage(taskId?: string): Promise<void>;
+  editImage(imageId: string): Promise<{error:string|null}>;
+  removeText(): Promise<void>;
   getAgent(taskId: string): Promise<AgentState | null>;
   agentDraft(taskId: string, text: string): Promise<void>;
   agentSend(taskId: string): Promise<{ error: string | null }>;

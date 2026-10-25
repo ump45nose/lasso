@@ -1,15 +1,16 @@
 import { useLayoutEffect, useRef, useState } from 'react';
-import { Image, Pin, PinOff, Plus, Search, X } from 'lucide-react';
+import { Image, Pin, TextQuote, PinOff, Plus, Search, X } from 'lucide-react';
 import { targetLabels } from '../shared/contracts';
 import type { ShellState } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
 import { Badge, taskDot, taskStatus } from './targets';
 
-const TAB_WIDTH = 124, MORE_WIDTH = 36, IMAGE_WIDTH = 120;
+const TAB_WIDTH = 124, MORE_WIDTH = 36, INPUT_WIDTH = 120;
 
 /** One 44px row: tasks first, overflow after, then new task, pin and the command palette. */
 export function TitleBar({ state }: { state: ShellState }) {
-  const { tasks, activeTaskId, inputImage, imageOpen } = state;
+  const { tasks, activeTaskId, inputOpen } = state;
+  const input = state.inputText ? 'text' : state.inputImage ? 'image' : null;
   const row = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(360);
   useLayoutEffect(() => {
@@ -17,8 +18,8 @@ export function TitleBar({ state }: { state: ShellState }) {
     const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
     observer.observe(row.current);
     return () => observer.disconnect();
-  }, [Boolean(tasks.length || inputImage)]);
-  const room = width - (inputImage ? IMAGE_WIDTH : 0);
+  }, [Boolean(tasks.length || input)]);
+  const room = width - (input ? INPUT_WIDTH : 0);
   let capacity = Math.max(1, Math.floor(room / TAB_WIDTH));
   if (tasks.length > capacity) capacity = Math.max(1, Math.floor((room - MORE_WIDTH) / TAB_WIDTH));
   const visible = tasks.slice(0, capacity);
@@ -35,12 +36,12 @@ export function TitleBar({ state }: { state: ShellState }) {
     void window.desktop.selectTask(target.id).then(() => requestAnimationFrame(() => document.getElementById('tab-' + target.id)?.focus()));
   }
   return <header className="l-bar">
-    {!tasks.length && !inputImage ? <div className="l-wordmark"><BrandMark size={18} /><span>Lasso</span></div> : <div className="l-tabs" ref={row} role="tablist" aria-label="本次任务">
-      {inputImage && <div className={'l-tab image' + (imageOpen ? ' active' : '')}>
-        <button role="tab" className="l-tab-select" aria-selected={imageOpen} onClick={() => void window.desktop.act('show-image')}><Image size={14} /><span className="l-tab-title">待处理图片</span></button>
+    {!tasks.length && !input ? <div className="l-wordmark"><BrandMark size={18} /><span>Lasso</span></div> : <div className="l-tabs" ref={row} role="tablist" aria-label="本次任务">
+      {input && <div className={'l-tab image' + (inputOpen ? ' active' : '')}>
+        <button role="tab" className="l-tab-select" aria-selected={inputOpen} onClick={() => void window.desktop.act('show-input')}>{input === 'text' ? <TextQuote size={14} /> : <Image size={14} />}<span className="l-tab-title">{input === 'text' ? '待处理文字' : '待处理图片'}</span></button>
       </div>}
       {visible.map(task => {
-        const selected = !imageOpen && task.id === activeTaskId, status = taskStatus(task);
+        const selected = !inputOpen && task.id === activeTaskId, status = taskStatus(task);
         return <div key={task.id} className={'l-tab' + (selected ? ' active' : '')}>
           <button id={'tab-' + task.id} role="tab" className="l-tab-select" aria-selected={selected} tabIndex={task.id === activeTaskId ? 0 : -1}
             title={`${targetLabels[task.target]} · ${task.title} · ${status}`} onClick={() => void window.desktop.selectTask(task.id)} onKeyDown={event => navigate(event, task.id)}>
