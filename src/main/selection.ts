@@ -39,14 +39,22 @@ export class SelectionCapture {
         this.hook.on('text-selection', data => this.receive(data));
         this.hook.on('mouse-down', point => this.onOutside(point));
         this.hook.on('mouse-wheel', () => this.onDismiss());
-        this.hook.on('key-down', ({ uniKey }) => { if (uniKey === 'Escape') this.onDismiss(); });
+        // Editing or moving the caret invalidates the previous selection. Modifier
+        // keys alone leave it intact so shortcuts can still use the selected text.
+        this.hook.on('key-down', ({ uniKey, flags }) => {
+          // Copy keeps the selection; clipboard fallback may also synthesize Cmd+C.
+          const command = (flags & (1 << 20)) !== 0; // kCGEventFlagMaskCommand
+          if (command && uniKey.toLowerCase() === 'c') return;
+          if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'].includes(uniKey)) this.onDismiss();
+        });
       }
       const started = this.hook.start({ enableClipboard: settings.clipboardFallback, enableMouseMoveEvent: false, debug: false });
       this.onStatus(started ? { status: 'active', message: '划词已开启' } : { status: 'error', message: '划词监听未能启动，请检查辅助功能权限后重试' });
     } catch (error) { this.onStatus({ status: 'error', message: String(error) }); }
   }
   private receive(data: TextSelectionData) {
-    if (Date.now() < this.suppressUntil || BrowserWindow.getFocusedWindow() || !data.text.trim()) return;
+    if (Date.now() < this.suppressUntil || BrowserWindow.getFocusedWindow()) return;
+    if (!data.text.trim()) { this.onDismiss(); return; }
     let anchor: SelectionContext['anchor'];
     // macOS selection-hook coordinates are already logical points, not Retina pixels.
     if (data.posLevel >= SelectionHook.PositionLevel.SEL_FULL) {
