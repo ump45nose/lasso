@@ -73,7 +73,6 @@ export class TaskManager {
   private warmTimer: ReturnType<typeof setTimeout> | null = null;
   private lastBounds: Rectangle = { x: 0, y: 80, width: 520, height: 560 };
   private projection = '';
-  private runtimeLastUsed = Date.now();
   private deliveredAgents = new Map<string, { revision: number; metadata: Omit<AgentState, 'messages'>; messages: Map<string, AgentState['messages'][number]>; order: string[] }>();
   private agentTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private tasks = new Map<string, Task>();
@@ -178,7 +177,6 @@ export class TaskManager {
   }
   private async readCatalog(target: Target, model: string, refresh: boolean): Promise<ExecutionCatalog> {
     if (target === 'codex') {
-      this.runtimeLastUsed = Date.now();
       const models = await this.runtime.models(this.settings().local.codex, true);
       return { models, efforts: models.find(m => m.id === model)?.efforts || [], currentModel: '', currentEffort: '' };
     }
@@ -575,10 +573,10 @@ export class TaskManager {
     this.polling = true;
     try {
       const codex = [...this.tasks.values()].filter(t => t.target === 'codex' && t.agent?.state.resident);
-      if (!codex.length && this.runtime.transport && Date.now() - this.runtimeLastUsed >= IDLE_RELEASE_MS) this.runtime.close();
+      this.runtime.closeIfIdle(IDLE_RELEASE_MS);
       if (codex.length && codex.every(t => t.id !== this.activeId && t.agent!.canRelease && Date.now() - t.lastActivityAt >= IDLE_RELEASE_MS)) {
         for (const task of codex) task.agent!.release();
-        this.runtime.close();
+        this.runtime.closeIfUnused();
       }
       for (const task of [...this.tasks.values()]) {
         if (task.agent) {
@@ -652,7 +650,7 @@ export class TaskManager {
     const ids = [...this.tasks.keys()];
     const index = ids.indexOf(id);
     this.tasks.delete(id); this.deliveredAgents.delete(id); task.agent?.dispose(); this.images.remove(task.image); this.destroyPage(task);
-    if (![...this.tasks.values()].some(t => t.target === 'codex')) this.runtime.close();
+    if (![...this.tasks.values()].some(t => t.target === 'codex')) this.runtime.closeIfUnused();
     if (this.activeId === id) {
       this.activeId = null;
       const next = ids[index + 1] || ids[index - 1];

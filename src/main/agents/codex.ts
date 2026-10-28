@@ -6,12 +6,22 @@ export class CodexRuntime {
   transport: Transport | null = null;
   private ready: Promise<Transport> | null = null;
   private modelCache: Promise<AgentModel[]> | null = null;
+  private users = new Set<symbol>();
+  private idleSince = Date.now();
   readonly listeners = new Map<string, (message: Wire) => void>();
   private owners = new Set<(error: Error) => void>();
+  /** A session holds its lease from connection start through release; catalog reads hold a temporary lease. */
+  retain() {
+    const user = Symbol(); this.users.add(user);
+    return () => { if (this.users.delete(user)) this.idleSince = Date.now(); };
+  }
+  closeIfUnused() { if (!this.users.size) this.close(); }
+  closeIfIdle(idleMs: number) { if (Date.now() - this.idleSince >= idleMs) this.closeIfUnused(); }
   async connect(config: LocalConfig) {
     if (this.ready) return this.ready;
-    this.ready = this.start(config).catch(error => { this.ready = null; throw error; });
-    return this.ready;
+    const ready = this.start(config); this.ready = ready;
+    void ready.catch(() => { if (this.ready === ready) this.ready = null; });
+    return ready;
   }
   private async start(config: LocalConfig) {
     const transport = this.transport = new Transport(config.executable, ['app-server', '--listen', 'stdio://'], config.cwd, 'codex');
@@ -30,17 +40,24 @@ export class CodexRuntime {
     transport.send({ method: 'initialized' });
     return transport;
   }
-  models(config: LocalConfig, refresh = false): Promise<AgentModel[]> {
-    if (refresh) this.modelCache = null;
-    return this.modelCache ||= this.connect(config).then(async transport => {
-      const models: AgentModel[] = []; let cursor: string | undefined;
-      do {
-        const page = await transport.request('model/list', { limit: 100, ...(cursor ? { cursor } : {}) });
-        models.push(...page.data.map((m: Wire) => ({ id: m.model, label: m.displayName, images: !m.inputModalities || m.inputModalities.includes('image'), efforts: m.supportedReasoningEfforts?.map((e: Wire) => e.reasoningEffort) || [], defaultEffort: m.defaultReasoningEffort })));
-        cursor = page.nextCursor || undefined;
-      } while (cursor);
-      return models;
-    }).catch(error => { this.modelCache = null; throw error; });
+  async models(config: LocalConfig, refresh = false): Promise<AgentModel[]> {
+    const release = this.retain();
+    try {
+      if (refresh) this.modelCache = null;
+      if (this.modelCache) return await this.modelCache;
+      const request = this.connect(config).then(async transport => {
+        const models: AgentModel[] = []; let cursor: string | undefined;
+        do {
+          const page = await transport.request('model/list', { limit: 100, ...(cursor ? { cursor } : {}) });
+          models.push(...page.data.map((m: Wire) => ({ id: m.model, label: m.displayName, images: !m.inputModalities || m.inputModalities.includes('image'), efforts: m.supportedReasoningEfforts?.map((e: Wire) => e.reasoningEffort) || [], defaultEffort: m.defaultReasoningEffort })));
+          cursor = page.nextCursor || undefined;
+        } while (cursor);
+        return models;
+      });
+      this.modelCache = request;
+      try { return await request; }
+      catch (error) { if (this.modelCache === request) this.modelCache = null; throw error; }
+    } finally { release(); }
   }
   watch(callback: (error: Error) => void) { this.owners.add(callback); return () => this.owners.delete(callback); }
   close() { const transport = this.transport; this.transport = null; this.ready = null; this.modelCache = null; transport?.close(); }

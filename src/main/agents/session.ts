@@ -13,6 +13,7 @@ export class AgentSession {
   sessionId: string | null = null;
   sessionFile: string | null = null;
   private transport: Transport | null = null;
+  private releaseRuntime: (() => void) | null = null;
   private starting: Promise<void> | null = null;
   private turn: string | null = null;
   private closed = false;
@@ -33,6 +34,26 @@ export class AgentSession {
     this.unwatch = runtime.watch(error => { if (target === 'codex' && this.state.resident) this.disconnected(error); });
   }
   private emit() { if (!this.closed) { this.state.revision++; this.changed(); } }
+  private assertOpen() { if (this.closed) throw new Error('任务已关闭'); }
+  /** Closing a task invalidates replies as well as future requests, without closing another task's transport. */
+  private async request(method: string, params: Wire = {}) {
+    this.assertOpen();
+    if (!this.transport) throw new Error('CLI 连接已关闭，请恢复会话。');
+    const result = await this.transport.request(method, params);
+    this.assertOpen();
+    return result;
+  }
+  private detach() {
+    const transport = this.transport; this.transport = null; this.state.resident = false;
+    if (this.state.target === 'pi') transport?.close();
+    else {
+      if (this.sessionId) this.runtime.listeners.delete(this.sessionId);
+      this.releaseRuntime?.(); this.releaseRuntime = null;
+    }
+  }
+  private interrupt(transport: Transport, threadId: string, turnId: string) {
+    void transport.request('turn/interrupt', { threadId, turnId }).catch(() => {});
+  }
   private upsert(message: ChatMessage) {
     const index = this.state.messages.findIndex(m => m.id === message.id);
     if (index < 0) this.state.messages.push(message); else this.state.messages[index] = message;
@@ -40,23 +61,28 @@ export class AgentSession {
   }
   private notice(text: string) { this.upsert({ id: randomUUID(), role: 'notice', text }); }
   private disconnected(error: Error) {
-    this.transport = null; this.state.resident = false;
+    this.detach();
     this.restoreFailedInput(); this.clearRequests(); this.state.error = error.message; this.state.activity = 'error'; this.emit();
   }
   async start() {
+    this.assertOpen();
     if (this.state.resident) return;
     if (this.starting) return this.starting;
     this.state.activity = 'loading'; this.state.error = null; this.emit();
     this.starting = this.connect().catch(error => {
-      if (this.state.target === 'pi') { const transport = this.transport; this.transport = null; transport?.close(); }
-      this.state.error = (error as Error).message; this.state.activity = 'error'; this.emit(); throw error;
+      this.detach();
+      if (!this.closed) { this.state.error = (error as Error).message; this.state.activity = 'error'; this.emit(); }
+      throw error;
     }).finally(() => { this.starting = null; });
     return this.starting;
   }
   private async connect() {
     if (this.state.target === 'codex') {
-      const transport = this.transport = await this.runtime.connect(this.config);
-      const result = await transport.request(this.sessionId ? 'thread/resume' : 'thread/start', { ...(this.sessionId ? { threadId: this.sessionId } : {}), cwd: this.config.cwd });
+      this.releaseRuntime = this.runtime.retain();
+      const transport = await this.runtime.connect(this.config);
+      this.assertOpen(); this.transport = transport;
+      const result = await this.request(this.sessionId ? 'thread/resume' : 'thread/start', { ...(this.sessionId ? { threadId: this.sessionId } : {}), cwd: this.config.cwd });
+      this.assertOpen();
       this.sessionId = result.thread.id;
       this.runtime.listeners.set(this.sessionId!, message => this.codexEvent(message));
       this.state.model = this.state.model || result.model || '';
@@ -71,31 +97,34 @@ export class AgentSession {
       if (this.sessionFile && (this.desiredProfile.model || this.desiredProfile.effort)) this.profilePending = true;
 
     }
-    if (this.closed) { this.dispose(); return; }
+    this.assertOpen();
     this.state.resident = true;
     this.state.activity = this.state.requests.length ? 'waiting' : this.state.draft || this.image ? 'draft' : this.state.messages.length ? 'complete' : 'idle';
     this.emit();
     void this.refreshModels().catch(() => {});
   }
   private async refreshPi() {
-    const value = await this.transport!.request('get_state');
+    const value = await this.request('get_state');
     this.sessionId = value.sessionId || null; this.sessionFile = value.sessionFile || null;
     if (value.model) this.state.model = `${value.model.provider}/${value.model.id}`;
     this.state.effort = value.thinkingLevel || '';
     this.queued = Boolean(value.pendingMessageCount || value.isCompacting);
   }
   setDraft(text: string) {
+    this.assertOpen();
     if (text === this.state.draft) return;
     this.state.draft = text;
     if (['idle', 'draft', 'complete'].includes(this.state.activity)) this.state.activity = text || this.image ? 'draft' : this.state.messages.length ? 'complete' : 'idle';
     this.emit();
   }
   setImage(image: ImageInput | null) {
+    this.assertOpen();
     this.images.remove(this.image); this.image = image; this.state.image = image ? this.images.preview(image) : null;
     if (['idle', 'draft', 'complete'].includes(this.state.activity)) this.state.activity = this.state.draft || image ? 'draft' : this.state.messages.length ? 'complete' : 'idle';
     this.emit();
   }
   async send() {
+    this.assertOpen();
     if (this.submission || ['running', 'waiting'].includes(this.state.activity)) throw new Error('请等待当前任务完成，或先停止。');
     if (!this.state.draft.trim() && !this.image) return;
     this.submission = true;
@@ -104,18 +133,23 @@ export class AgentSession {
       if (this.applyingProfile) await this.applyingProfile;
       if (this.changingProfile) await this.changingProfile;
       if (this.profilePending) await this.applyProfile(this.desiredProfile);
+      this.assertOpen();
       const image = this.image; const text = this.state.draft;
       const messageIndex = this.state.messages.length;
       const model = this.state.models.find(m => m.id === this.state.model);
       if (image && model?.images === false) throw new Error('当前模型不支持图片，请换一个模型；图片和草稿已保留。');
       this.state.error = null; this.state.activity = 'running'; this.submitted = { text, image }; this.emit();
       if (this.state.target === 'codex') {
-        const result = await this.transport!.request('turn/start', { threadId: this.sessionId, input: [
+        const transport = this.transport!, threadId = this.sessionId!;
+        const result = await transport.request('turn/start', { threadId, input: [
           ...(text ? [{ type: 'text', text, text_elements: [] }] : []), ...(image ? [{ type: 'localImage', path: image.path }] : [])
         ], ...(this.state.model ? { model: this.state.model } : {}), ...(this.state.effort ? { effort: this.state.effort } : {}) });
+        // A close can precede both turn/started and the acknowledgment. Stop that late turn by its returned ID.
+        if (this.closed && this.turn !== result.turn.id && transport.alive) this.interrupt(transport, threadId, result.turn.id);
+        this.assertOpen();
         this.turn = result.turn.id;
       } else {
-        const result = await this.transport!.request('prompt', { message: text, ...(image ? { images: [{ type: 'image', data: this.images.base64(image), mimeType: 'image/png' }] } : {}) });
+        const result = await this.request('prompt', { message: text, ...(image ? { images: [{ type: 'image', data: this.images.base64(image), mimeType: 'image/png' }] } : {}) });
         if (result?.disposition === 'handled') this.state.activity = 'complete';
       }
       this.upsert({ id: randomUUID(), role: 'user', text, image: image?.thumbnail });
@@ -126,7 +160,10 @@ export class AgentSession {
       if (this.image === image) { this.image = null; this.state.image = null; }
       if (!['running', 'waiting'].includes(this.state.activity)) this.settleInput();
       this.emit();
-    } catch (error) { this.restoreFailedInput(); this.state.error = (error as Error).message; this.state.activity = 'error'; this.emit(); throw error; }
+    } catch (error) {
+      if (!this.closed) { this.restoreFailedInput(); this.state.error = (error as Error).message; this.state.activity = 'error'; this.emit(); }
+      throw error;
+    }
     finally { this.submission = false; }
   }
   private restoreFailedInput() {
@@ -141,36 +178,41 @@ export class AgentSession {
     else if (this.submitted) { this.images.remove(this.submitted.image); this.submitted = null; }
   }
   async stop() {
+    this.assertOpen();
     if (!this.transport) return;
     if (this.state.target === 'codex') {
-      if (this.turn) await this.transport.request('turn/interrupt', { threadId: this.sessionId, turnId: this.turn });
+      if (this.turn) await this.request('turn/interrupt', { threadId: this.sessionId, turnId: this.turn });
     } else {
-      const queue = await this.transport.request('clear_queue');
+      const queue = await this.request('clear_queue');
       const pending = [...(queue?.steering || []), ...(queue?.followUp || [])].join('\n\n');
       if (pending) { this.state.draft = [this.state.draft, pending].filter(Boolean).join('\n\n'); this.state.draftRevision++; }
-      await this.transport.request('abort');
+      await this.request('abort');
     }
   }
   configure(profile: ExecutionProfile) {
+    this.assertOpen();
     this.desiredProfile = { model: profile.model || '', effort: profile.effort || '' };
     this.profilePending = Boolean(profile.model || profile.effort);
   }
   async refreshModels(force = false): Promise<void> {
+    this.assertOpen();
     if (this.loadingModels) return this.loadingModels;
     if (!force && this.state.models.length) return;
     if (!this.transport) await this.start();
+    this.assertOpen();
     if (this.loadingModels) return this.loadingModels;
     this.state.modelsLoading = true; this.state.modelsError = null; this.emit();
     this.loadingModels = (async () => {
       if (this.state.target === 'codex') {
-        this.state.models = await this.runtime.models(this.config, force);
+        const models = await this.runtime.models(this.config, force);
+        this.assertOpen(); this.state.models = models;
         this.state.efforts = this.state.models.find(m => m.id === this.state.model)?.efforts || [];
       } else {
-        const models = await this.transport!.request('get_available_models');
+        const models = await this.request('get_available_models');
         this.state.models = models.models.map((m: Wire) => ({ id: `${m.provider}/${m.id}`, label: `${m.name || m.id} · ${m.provider}`, images: m.input?.includes('image') }));
-        this.state.efforts = (await this.transport!.request('get_available_thinking_levels')).levels;
+        this.state.efforts = (await this.request('get_available_thinking_levels')).levels;
       }
-    })().catch(error => { this.state.modelsError = (error as Error).message; throw error; }).finally(() => {
+    })().catch(error => { if (!this.closed) this.state.modelsError = (error as Error).message; throw error; }).finally(() => {
       this.state.modelsLoading = false; this.loadingModels = null; this.emit();
     });
     return this.loadingModels;
@@ -181,20 +223,23 @@ export class AgentSession {
     return { models: this.state.models, efforts: this.state.efforts, currentModel: this.state.model, currentEffort: this.state.effort };
   }
   applyProfile(profile: ExecutionProfile): Promise<void> {
+    this.assertOpen();
     if (this.applyingProfile) return this.applyingProfile;
     this.configure(profile);
     this.applyingProfile = (async () => {
       await this.start();
+      this.assertOpen();
       if (!this.profilePending) return;
       await this.refreshModels();
       if (profile.model) await this.setModel(profile.model, true);
       if (profile.effort) await this.setEffort(profile.effort, true);
       this.profilePending = false;
-    })().catch(error => { this.state.error = (error as Error).message; this.state.activity = 'error'; this.emit(); throw error; })
+    })().catch(error => { if (!this.closed) { this.state.error = (error as Error).message; this.state.activity = 'error'; this.emit(); } throw error; })
       .finally(() => { this.applyingProfile = null; });
     return this.applyingProfile;
   }
   private changeProfile(operation: () => Promise<void>, applying: boolean): Promise<void> {
+    this.assertOpen();
     if (this.changingProfile || (!applying && (this.applyingProfile || this.submission))) return Promise.reject(new Error('正在应用设置或发送，请稍后切换。'));
     this.state.controlsBusy = true; this.emit();
     this.changingProfile = operation().finally(() => { this.changingProfile = null; this.state.controlsBusy = false; this.emit(); });
@@ -205,14 +250,15 @@ export class AgentSession {
     if (this.applyingProfile && !applying) throw new Error('正在应用预设，请稍后切换。');
     if (['running', 'waiting'].includes(this.state.activity)) throw new Error('任务结束后才能切换模型。');
     await this.start(); await this.refreshModels();
+    this.assertOpen();
     const model = this.state.models.find(m => m.id === id);
     if (!model) throw new Error('指定模型不可用，请在预设设置中刷新模型列表；尚未发送。');
     if (this.state.target === 'pi') {
       const slash = id.indexOf('/');
-      const selected = await this.transport!.request('set_model', { provider: id.slice(0, slash), modelId: id.slice(slash + 1) });
+      const selected = await this.request('set_model', { provider: id.slice(0, slash), modelId: id.slice(slash + 1) });
       if (selected.provider !== id.slice(0, slash) || selected.id !== id.slice(slash + 1)) throw new Error('CLI 未确认模型切换；尚未发送。');
       await this.refreshPi();
-      this.state.efforts = (await this.transport!.request('get_available_thinking_levels')).levels;
+      this.state.efforts = (await this.request('get_available_thinking_levels')).levels;
     } else {
       this.state.efforts = model.efforts || [];
       if (this.state.model !== id) this.state.effort = model.defaultEffort || '';
@@ -232,10 +278,11 @@ export class AgentSession {
     if (this.applyingProfile && !applying) throw new Error('正在应用预设，请稍后切换。');
     if (['running', 'waiting'].includes(this.state.activity)) throw new Error('任务结束后才能切换思考强度。');
     await this.start();
+    this.assertOpen();
     if (!effort || !this.state.efforts.includes(effort)) throw new Error('当前模型不支持这个思考强度；尚未发送。');
     if (this.state.target === 'pi') {
-      await this.transport!.request('set_thinking_level', { level: effort });
-      const actual = await this.transport!.request('get_state');
+      await this.request('set_thinking_level', { level: effort });
+      const actual = await this.request('get_state');
       if (actual.thinkingLevel !== effort) throw new Error('CLI 未确认思考强度切换；尚未发送。');
     }
     this.state.effort = effort;
@@ -254,6 +301,7 @@ export class AgentSession {
   }
   private clearRequests() { for (const id of this.requestData.keys()) this.removeRequest(id); }
   async answer(id: string, answer: AgentAnswer) {
+    this.assertOpen();
     const request = this.requestData.get(id);
     if (!request || !this.transport) throw new Error('这个请求已经结束。');
     if (this.state.target === 'pi') this.transport.send({ type: 'extension_ui_response', id: request.id, ...answer });
@@ -269,6 +317,7 @@ export class AgentSession {
     this.removeRequest(id); this.emit();
   }
   private codexEvent(message: Wire) {
+    if (this.closed) return;
     const p = message.params || {}; const method = message.method;
     if (message.id !== undefined) {
       const id = String(message.id);
@@ -300,6 +349,7 @@ export class AgentSession {
     this.emit();
   }
   private piEvent(e: Wire) {
+    if (this.closed) return;
     if (e.type === 'extension_ui_request') {
       if (['confirm', 'select', 'input', 'editor'].includes(e.method)) this.addRequest({ id: e.id, kind: e.method, title: e.title || 'Pi 需要你的回答', detail: e.message, options: e.options, prefill: e.prefill }, e);
       else if (e.method === 'set_editor_text') { this.state.draftRevision++; this.setDraft(e.text || ''); }
@@ -313,7 +363,7 @@ export class AgentSession {
       if (!this.submission) this.settleInput();
       this.state.messages = this.state.messages.map(m => m.running ? { ...m, running: false } : m);
       this.state.activity = this.state.error ? 'error' : this.state.draft || this.image ? 'draft' : 'complete';
-      void this.refreshPi().then(() => this.emit()).catch(error => this.disconnected(error));
+      void this.refreshPi().then(() => this.emit()).catch(error => { if (!this.closed) this.disconnected(error); });
     } else if (e.type === 'message_start' && e.message.role === 'assistant') {
       this.assistantId = randomUUID(); this.upsert({ id: this.assistantId, role: 'assistant', text: '', running: true });
     } else if (e.type === 'message_update' && e.assistantMessageEvent.type === 'text_delta') {
@@ -330,20 +380,17 @@ export class AgentSession {
     this.emit();
   }
   get canRelease() {
-    return !this.submitted && !this.submission && !this.starting && !this.applyingProfile && !this.changingProfile && this.state.activity === 'complete' && !this.state.draft && !this.image && !this.state.requests.length && !this.queued
+    return !this.closed && !this.submitted && !this.submission && !this.starting && !this.loadingModels && !this.applyingProfile && !this.changingProfile && this.state.activity === 'complete' && !this.state.draft && !this.image && !this.state.requests.length && !this.queued
       && Boolean(this.state.target === 'codex' ? this.sessionId : this.sessionFile && existsSync(this.sessionFile));
   }
   release() {
-    if (this.state.target === 'pi') { const t = this.transport; this.transport = null; t?.close(); }
-    this.state.resident = false; this.emit();
+    this.detach(); this.emit();
   }
   dispose() {
+    if (this.closed) return;
     this.closed = true; this.clearRequests(); this.unwatch();
-    if (this.state.target === 'pi') { const t = this.transport; this.transport = null; t?.close(); }
-    else if (this.sessionId) {
-      this.runtime.listeners.delete(this.sessionId);
-      if (this.turn && this.transport?.alive) void this.transport.request('turn/interrupt', { threadId: this.sessionId, turnId: this.turn }).catch(() => {});
-    }
+    if (this.state.target === 'codex' && this.sessionId && this.turn && this.transport?.alive) this.interrupt(this.transport, this.sessionId, this.turn);
+    this.detach();
     this.images.remove(this.image); this.images.remove(this.submitted?.image || null); this.image = null; this.submitted = null;
   }
 }
