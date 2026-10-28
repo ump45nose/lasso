@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopAPI, ShellState, AgentEvent, PaletteEvent } from '../shared/contracts';
 const api: DesktopAPI = {
+  attachImage: prompt => ipcRenderer.invoke('shell:attach-image', prompt),
+  mediaConfig: () => ipcRenderer.invoke('shell:media-config'),
+  saveMediaConfig: input => ipcRenderer.invoke('shell:media-config-save', input),
+  mediaModels: () => ipcRenderer.invoke('shell:media-models'),
+  openImagePresets: () => ipcRenderer.invoke('shell:image-presets'),
   openLink: url => ipcRenderer.invoke('shell:external', url),
   getState: () => ipcRenderer.invoke('shell:state'),
   act: action => ipcRenderer.invoke('shell:action', action),
@@ -9,12 +14,15 @@ const api: DesktopAPI = {
   openLocalImage: () => ipcRenderer.invoke('shell:local-image-open'),
   saveCaptureShortcut: (mode, shortcut) => ipcRenderer.invoke('shell:capture-shortcut', mode, shortcut),
   saveShortcut: shortcut => ipcRenderer.invoke('shell:shortcut', shortcut),
+  saveScreenshot: options => ipcRenderer.invoke('shell:screenshot-settings', options),
+  ocrLanguages: () => ipcRenderer.invoke('shell:ocr-languages'),
   saveCapture: options => ipcRenderer.invoke('shell:capture', options),
   savePresets: presets => ipcRenderer.invoke('shell:presets-save', presets),
   runPreset: (id, options) => ipcRenderer.invoke('shell:preset-run', id, options),
   newTask: options => ipcRenderer.invoke('shell:new-task', options),
   saveIntegrations: value => ipcRenderer.invoke('shell:integrations', value),
   choosePath: kind => ipcRenderer.invoke('shell:choose-path', kind),
+  appIcon: bundleId => ipcRenderer.invoke('shell:app-icon', bundleId),
   readImage: id => ipcRenderer.invoke('shell:image', id),
   removeImage: id => ipcRenderer.invoke('shell:image-remove', id),
   editImage: id => ipcRenderer.invoke('shell:image-edit', id),

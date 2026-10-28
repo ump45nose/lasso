@@ -1,3 +1,4 @@
+import { validateScreenshotSettings, type ScreenshotSettings } from '../shared/screenshot-settings';
 import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle, WebContents } from 'electron';
 import { basename, isAbsolute, join } from 'node:path';
@@ -5,8 +6,10 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { CaptureManager } from './capture';
+import { prewarmNativeCapture } from './capture/native';
 import { readLocalImage } from './capture/local-images';
 import { Images, type ImageInput } from './images';
+import { applicationIcon } from './app-icons';
 import { MediaWindow } from './media-window';
 import { readSettings, writeSettings } from './settings';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
@@ -15,8 +18,9 @@ import { SelectionCapture } from './selection';
 import { WindowMotion } from './motion';
 import { ActionBar } from './action-bar';
 import { TaskManager } from './tasks';
-import { readPresets, writePresets, composePrompt } from './presets';
+import { readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
 import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
+import { isValidShortcut } from '../shared/shortcuts';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import type { CaptureDelay, EfficiencyCaptureMode } from '../shared/capture-efficiency';
 import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope } from '../shared/contracts';
@@ -52,7 +56,7 @@ async function receiveMediaFile(path: string) {
   if (!media) { pendingMediaFiles.push(path); return; }
   if (openingMediaFile) { state.notice = '正在打开图片，请稍后再选择'; layout(); publish(); return; }
   openingMediaFile = true;
-  try { await media.receiveFile(path); }
+  try { const { image } = await readLocalImage(path); openImage(images.add(image)); }
   catch (error) { state.notice = (error as Error).message; layout(); showWindow(); publish(); }
   finally { openingMediaFile = false; }
 }
@@ -197,10 +201,12 @@ function updateTray() {
     { label: `打开 ${targetLabels[state.settings.lastTarget]}`, click: () => openChat() },
     { label: `贴图（${screenshots?.pins.size || 0}）`, submenu: screenshots?.pins.trayItems() || [] },
     { label: '新任务…', click: () => void openPalette('new') },
-    { label: '图片生成…', click: () => { void media.show().catch(error => { state.notice = (error as Error).message; publish(); }); } },
+    { label: '图片生成…', click: () => { void openPalette('images'); } },
+    { label: '生图结果…', click: () => { void media.show(); } },
+    { label: captureModeLabels.rect, enabled:!capturePending, accelerator: state.settings.captureShortcuts.rect || undefined, click: () => void startScreenshot('rect') },
     { label: captureModeLabels.area, enabled:!capturePending, accelerator: state.settings.captureShortcuts.area || undefined, click: () => void startScreenshot('area') },
     { label: '更多截图方式', submenu: [
-      ...captureModes.filter(mode => mode !== 'area').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.captureShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
+      ...captureModes.filter(mode => mode !== 'area' && mode !== 'rect').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.captureShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
       {type:'separator'},
       {label:'重截上次截图区域',enabled:!capturePending,click:()=>void startScreenshot('repeat')},
       ...([3,5,10] as const).map(delay=>({label:`${delay}秒延时截图`,enabled:!screenshots?.active,click:()=>void startScreenshot('area',delay)})),
@@ -267,10 +273,22 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   if (options.imageId && options.imageId !== inputImage?.id) return { error: '图片已被替换，请重新选择。' };
   if(options.textId&&options.textId!==state.inputText?.id)return {error:'文字已被替换，请重新选择。'};
   if(options.imageId&&options.textId)return {error:'请选择图片或文字中的一种输入。'};
+  if (options.imagePrompt !== undefined && (preset.kind !== 'image' || typeof options.imagePrompt !== 'string' || options.imagePrompt.length > 24000)) return { error: '生图描述无效' };
+  if (preset.kind === 'image' && options.target && !['chatgpt', 'gemini'].includes(options.target)) return { error: '生图预设请选择 ChatGPT、Gemini 或沿用 New API' };
   if(options.textId)selection={text:state.inputText!.text,sourceApp:'',anchor:{x:0,y:0,width:0,height:0}};
   if (options.imageId) selection = null;
+  if (preset.kind === 'image' && options.imagePrompt !== undefined) selection = { text: options.imagePrompt, sourceApp: '', anchor: { x: 0, y: 0, width: 0, height: 0 } };
   if (preset.needsSelection && !selection?.text && !options.imageId) return { error: '请先选中文字' };
   const text = composePrompt(preset, selection, state.settings.appPrompts);
+  const target = options.target || preset.target;
+  if (target === 'api') {
+    try {
+      await media.prepare(preset, text, options.imageId ? nativeImage.createFromPath(inputImage!.path) : undefined);
+      if (options.imageId) { images.remove(inputImage); inputImage = null; state.inputImage = null; }
+      state.inputText = null; state.inputOpen = false; clearSelection(); actionBar.hide(); closePalette(false); layout(); publish();
+      return { error: null };
+    } catch (error) { state.notice = (error as Error).message; layout(); showWindow(); publish(); return { error: state.notice }; }
+  }
   actionBar.hide(); capture.suppress(); clearSelection(); closePalette(false);
   if (!options.imageId && inputImage) removeImage();
   if (!options.textId) state.inputText = null;
@@ -278,7 +296,7 @@ async function runPreset(id: string, selection: SelectionContext | null, options
     win.setBounds(placeNear(selection.anchor, screen.getDisplayNearestPoint(selection.anchor).workArea));
   }
   state.settingsOpen = false;
-  rememberTarget(options.target || preset.target);
+  rememberTarget(target);
   const result = tasks.runPreset(preset, text, options);
   if (options.imageId) { inputImage = null; state.inputImage = null; }
   state.inputText = null; state.inputOpen = false;
@@ -321,7 +339,8 @@ async function readImage(taskId?: string) {
   openImage(image);
 }
 /** A pending image or text is a temporary tab; selecting a task keeps it until it runs or is removed. The two replace each other. */
-function openImage(image: ImageInput) {
+function openImage(image: ImageInput, prompt = '') {
+  state.inputImagePrompt = prompt;
   images.remove(inputImage); inputImage = image; state.inputImage = images.preview(image); state.inputText = null; state.inputOpen = true;
   clearSelection(); closePalette(false); state.settingsOpen = false; layout(); showWindow(); win.webContents.focus(); publish();
 }
@@ -337,6 +356,22 @@ function removeImage(taskId?: string) {
 }
 
 function installIPC() {
+  ipcMain.handle('shell:app-icon', (event, bundleId: string) => { assertLocal(event); return applicationIcon(bundleId); });
+  ipcMain.handle('shell:media-config', event => { assertLocal(event); return media.service.connection(); });
+  ipcMain.handle('shell:media-config-save', (event, input) => { assertLocal(event); return media.service.configure(input); });
+  ipcMain.handle('shell:media-models', event => { assertLocal(event); return media.service.models(); });
+  ipcMain.handle('shell:attach-image', async (event, prompt?: string) => {
+    assertLocal(event);
+    if (prompt !== undefined && (typeof prompt !== 'string' || prompt.length > 24000)) return { error: '生图描述无效' };
+    nativeDialogs++;
+    try {
+      const text = prompt || lastSelection?.text || '';
+      const picked = await dialog.showOpenDialog(win, { properties: ['openFile'], filters: [{ name: 'PNG / JPEG 图片', extensions: ['png', 'jpg', 'jpeg'] }] });
+      if (picked.filePaths[0]) { const { image } = await readLocalImage(picked.filePaths[0]); openImage(images.add(image), text); }
+      return { error: null };
+    } catch (error) { return { error: (error as Error).message }; } finally { nativeDialogs--; }
+  });
+  ipcMain.handle('shell:image-presets', event => { assertLocal(event); return openPalette('images'); });
   ipcMain.handle('shell:external', (event, url: string) => { assertLocal(event); if (['https:', 'http:'].includes(new URL(url).protocol)) return shell.openExternal(url); });
   const result = async (action: () => unknown) => { try { await action(); return { error: null }; } catch (error) { return { error: (error as Error).message }; } };
   ipcMain.handle('shell:integrations', (event, value: Pick<Settings, 'local' | 'appPrompts'>) => {
@@ -408,6 +443,12 @@ function installIPC() {
   ipcMain.handle('agent:models-refresh', (event, id: string) => { assertLocal(event); return result(() => tasks.agentRefreshModels(id)); });
   ipcMain.handle('agent:model', (event, id: string, model: string) => { assertLocal(event); return result(() => tasks.agentModel(id, model)); });
   ipcMain.handle('agent:answer', (event, id: string, requestId: string, answer: AgentAnswer) => { assertLocal(event); return result(() => tasks.agentAnswer(id, requestId, answer)); });
+  ipcMain.handle('shell:ocr-languages', event => { assertLocal(event); return screenshots.supportedLanguages(); });
+  ipcMain.handle('shell:screenshot-settings', (event, options: ScreenshotSettings) => {
+    assertLocal(event);
+    try { validateScreenshotSettings(options, screenshots.supportedLanguages()); const next = { ...state.settings, screenshot: options }; writeSettings(settingsPath, next); state.settings = next; publish(); return { error: null }; }
+    catch (error) { return { error: (error as Error).message }; }
+  });
   ipcMain.handle('shell:capture', (event, options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>) => { assertLocal(event); return saveCaptureSettings(options); });
   ipcMain.handle('shell:presets-save', (event, presets: Preset[]) => {
     assertLocal(event);
@@ -422,7 +463,7 @@ function installIPC() {
   ipcMain.handle('shell:state', event => { assertLocal(event); return snapshot(); });
   ipcMain.handle('shell:task-select', (event, id: string) => { assertLocal(event); selectTask(id); });
   ipcMain.handle('shell:task-close', (event, id: string) => { assertLocal(event); return tasks.close(id); });
-  ipcMain.handle('shell:palette-open', (event, scope: PaletteScope) => { assertLocal(event); if (['all', 'tasks', 'new'].includes(scope)) return openPalette(scope); });
+  ipcMain.handle('shell:palette-open', (event, scope: PaletteScope) => { assertLocal(event); if (['all', 'tasks', 'new', 'images'].includes(scope)) return openPalette(scope); });
   ipcMain.handle('shell:palette-close', event => { assertLocal(event); closePalette(); });
   ipcMain.handle('shell:action', async (event, action: Action) => {
     assertLocal(event);
@@ -453,7 +494,7 @@ function installIPC() {
   ipcMain.handle('shell:capture-shortcut', (event, mode:CaptureMode, shortcut:string) => {
     assertLocal(event);
     if(!captureModes.includes(mode))return {error:'未知的截图方式'};
-    if(typeof shortcut!=='string'||(shortcut&&!/^(?:(?:Command|Control|CommandOrControl|Alt|Option|Shift|Super)\+)+(?:[A-Z0-9]|Space|F(?:[1-9]|1[0-9]|2[0-4]))$/i.test(shortcut)))return {error:'请输入带修饰键的快捷键。'};
+    if(!isValidShortcut(shortcut))return {error:'支持 F1–F24 单键，其他按键请搭配修饰键。'};
     const current=state.settings.captureShortcuts[mode];
     if(shortcut===current&&(!shortcut||globalShortcut.isRegistered(shortcut)))return {error:null};
     const error=registerCaptureShortcut(mode,shortcut);if(error)return {error};
@@ -464,8 +505,8 @@ function installIPC() {
   });
   ipcMain.handle('shell:shortcut', (event, shortcut: string) => {
     assertLocal(event);
-    if (typeof shortcut !== 'string' || (shortcut !== '' && !/^(?:(?:Command|Control|CommandOrControl|Alt|Option|Shift|Super)\+)+(?:[A-Z0-9]|Space|F(?:[1-9]|1[0-9]|2[0-4]))$/i.test(shortcut))) {
-      return { error: '请输入带修饰键的快捷键，例如 Control+Option+Space；留空则取消绑定。' };
+    if (!isValidShortcut(shortcut)) {
+      return { error: '支持 F1–F24 单键，其他按键请搭配修饰键；留空则取消绑定。' };
     }
     if (shortcut && Object.values(state.settings.captureShortcuts).includes(shortcut)) return { error: '唤起快捷键不能与截图相同。' };
     if (shortcut === state.settings.shortcut && !state.shortcutError) return { error: null };
@@ -484,6 +525,7 @@ function installIPC() {
   });
 }
 async function boot() {
+  prewarmNativeCapture();
   mkdirSync(app.getPath('userData'), { recursive: true });
   settingsPath = join(app.getPath('userData'), 'settings.json');
   presetsPath = join(app.getPath('userData'), 'presets.json');
@@ -561,7 +603,7 @@ async function boot() {
       { label: '指令面板', accelerator: 'Command+K', click: () => { if (palette) closePalette(); else void openPalette('all'); } },
       { label: '新任务…', accelerator: 'Command+N', click: () => void openPalette('new') },
       { type: 'separator' },
-      { label: '隐藏小窗', accelerator: 'Command+W', click: () => motion.hide() },
+      { label: '关闭当前窗口', accelerator: 'Command+W', click: () => {if(!screenshots?.closeFocused())motion.hide();} },
       { label: '贴图管理…', click:()=>Menu.buildFromTemplate(screenshots?.pins.trayItems()||[]).popup({window:BrowserWindow.getFocusedWindow()||win}) }, // ui-check-ignore: continues the native app menu bar
       { label: '放大 / 还原', click: expand }
     ] }
@@ -584,20 +626,14 @@ async function boot() {
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
-  }, () => { actionBar.hide(); capture.suppress(); clearSelection(); motion.hide(); win.hide(); }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, image => media.receive(image));
-  media = new MediaWindow(join(app.getPath('userData'), 'generated-media'), image => screenshots.openImage(image), async image => {
+  }, () => { const visible=win.isVisible()||actionBar.window.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings);
+  const mediaDirectory = join(app.getPath('userData'), 'generated-media');
+  mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
+  state.presets = migrateImagePresets(presetsPath, mediaDirectory);
+  media = new MediaWindow(mediaDirectory, image => screenshots.openImage(image), async image => {
     const size = image.getSize();
     await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
-  }, () => state.settings, async request => {
-    const image = request.reference ? images.add(nativeImage.createFromBuffer(request.reference)) : null;
-    const preset: Preset = { id: 'media-' + randomUUID(), name: '图片生成', template: request.prompt, target: request.target, mode: request.mode, enabled: true, needsSelection: false };
-    closePalette(false); state.settingsOpen = false; state.inputOpen = false;
-    rememberTarget(request.target);
-    const delivery = tasks.runPreset(preset, request.prompt, image ? { imageId: image.id } : {});
-    layout(); showWindow(); publish();
-    const result = await delivery;
-    if (result.error) throw Error(result.error);
-  });
+  }, () => state.settings, () => openPalette('images'));
   fileServices = require(join(__dirname, 'native/file-services.node'));
   fileServices!.start(path => { void receiveMediaFile(path); });
   if (pendingMediaFiles.length) {
@@ -605,11 +641,13 @@ async function boot() {
     if (files.length === 1) void receiveMediaFile(files[0]);
     else { state.notice = '请一次选择一张 PNG 或 JPEG 图片'; publish(); showWindow(); }
   }
+  let captureTrayPending=false;
   stopCaptureEfficiency=screenshots.efficiency.subscribe(next=>{
     const starting=next.phase==='countdown'&&state.captureEfficiency.phase!=='countdown';
     state.captureEfficiency=next;
     if(next.error)state.notice=next.error;
-    layout();updateTray();publish();
+    layout();publish();
+    if(!captureTrayPending){captureTrayPending=true;setImmediate(()=>{captureTrayPending=false;if(!quitting)updateTray();});}
     if(starting){actionBar.hide();motion.show(true);}
     if(next.error)showWindow();
   });
@@ -628,8 +666,8 @@ else {
   app.on('activate', showWindow);
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
-  app.on('before-quit', () => { quitting = true; });
-  app.on('will-quit', () => { fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); screenshots?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('before-quit', () => { quitting = true; screenshots?.dispose(); });
+  app.on('will-quit', () => { fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));
     quitting = true;

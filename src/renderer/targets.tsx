@@ -1,5 +1,6 @@
 import { targetLabels, taskActivityLabels } from '../shared/contracts';
-import type { LocalTarget, Target, TaskSummary } from '../shared/contracts';
+import { Image } from 'lucide-react';
+import type { LocalTarget, Target, TaskSummary, PresetTarget } from '../shared/contracts';
 import chatgptIcon from './assets/targets/chatgpt.png';
 import geminiIcon from './assets/targets/gemini.png';
 import codexIcon from './assets/targets/codex.png';
@@ -14,6 +15,7 @@ export const taskDot = (task: TaskSummary) => task.residency === 'released' ? 'r
 export const shortcutLabel = (value: string) => value.replace(/CommandOrControl|Command/gi, '⌘').replace(/Control/gi, '⌃').replace(/Alt|Option/gi, '⌥').replace(/Shift/gi, '⇧').replaceAll('+', ' ').replace('Space', '空格');
 export const folderName = (path: string) => path.split('/').filter(Boolean).at(-1) || path;
 
-export function Badge({ target }: { target: Target }) {
+export function Badge({ target }: { target: PresetTarget }) {
+  if (target === 'api') return <Image size={16} className="l-badge" aria-label="New API" />;
   return <img className="l-badge" src={targetIcons[target]} alt={targetLabels[target]} draggable={false} />;
 }

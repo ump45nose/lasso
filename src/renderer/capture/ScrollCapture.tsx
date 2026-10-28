@@ -4,6 +4,7 @@ import { ArrowDown, Check, Pause, Play, ScanLine, Square, Undo2, X } from 'lucid
 import type { ScreenshotState, ScrollCaptureAction } from '../../shared/capture';
 import { rise, Segmented } from '../motion';
 import './scroll-capture.css';
+import { CapturePixels } from './pixels';
 
 function useScrollAction() {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
@@ -40,7 +41,7 @@ export function ScrollControls({ state }: { state: ScreenshotState }) {
 export function ScrollReview({ state }: { state: ScreenshotState }) {
   const scroll = state.scroll!, { busy, error, act } = useScrollAction();
   const [zoom, setZoom] = useState<'width' | 'detail'>('width'), [selected, setSelected] = useState<number | null>(null), [availableWidth, setAvailableWidth] = useState(600);
-  const viewport = useRef<HTMLDivElement>(null), detailImage = useRef<HTMLImageElement>(null);
+  const viewport = useRef<HTMLDivElement>(null);
   const scale = (zoom === 'detail' ? scroll.width : Math.min(scroll.width, Math.max(1, availableWidth - 64))) / scroll.width;
   useEffect(() => {
     const node = viewport.current; if (!node) return;
@@ -52,14 +53,14 @@ export function ScrollReview({ state }: { state: ScreenshotState }) {
   function locate(y: number) {
     setSelected(y);
     const node = viewport.current;
-    if (node) node.scrollTo({ top: Math.max(0, (detailImage.current?.clientHeight || scroll.height * scale) * y / scroll.height + 24 - node.clientHeight / 2), left: 0 });
+    if (node) node.scrollTo({ top: Math.max(0, (scroll.height * scale) * y / scroll.height + 24 - node.clientHeight / 2), left: 0 });
   }
   return <div className="scroll-review">
     <header className="scroll-review-header"><ScanLine /><strong>检查滚动截图</strong><span className="mono">{scroll.width} × {scroll.height} · {scroll.segments} 段</span></header>
     <div className="scroll-review-body">
       <aside className="scroll-overview">
         <span className="scroll-label">总览</span>
-        <div className="scroll-thumbnail"><img src={state.image} alt="完整滚动截图缩略图" draggable={false} /></div>
+        <div className="scroll-thumbnail">{state.imageFrame&&<CapturePixels state={state} frameId={state.imageFrame} className="scroll-preview-pixels"/>}</div>
         <span className="scroll-label">接缝定位 <span className="mono">{scroll.seams.length}</span></span>
         <div className="scroll-seams" aria-label="拼接接缝">{scroll.seams.length ? scroll.seams.map((y, i) => <button key={y} aria-pressed={selected === y} onClick={() => locate(y)}><ArrowDown /><span>接缝 {i + 1}</span><span className="mono">{y}px</span></button>) : <p>当前只有一段</p>}</div>
       </aside>
@@ -67,7 +68,7 @@ export function ScrollReview({ state }: { state: ScreenshotState }) {
         <div className="scroll-detail-tools"><span>逐段检查内容与接缝</span><Segmented label="检查缩放" value={zoom} options={[["width", '适合宽度'], ["detail", '放大检查']]} onChange={setZoom} /></div>
         <div className="scroll-detail-viewport" ref={viewport}>
           <div className="scroll-detail-image" style={{ width: scroll.width * scale, height: scroll.height * scale }}>
-            <img ref={detailImage} src={state.image} alt="可滚动检查的拼接结果预览" draggable={false} />
+            {state.imageFrame&&<CapturePixels state={state} frameId={state.imageFrame} className="scroll-preview-pixels"/>}
             {scroll.seams.map(y => <i key={y} className={'scroll-seam-line' + (selected === y ? ' selected' : '')} style={{ top: `${y / scroll.height * 100}%` }}><span className="mono">{y}px</span></i>)}
           </div>
         </div>
@@ -75,7 +76,7 @@ export function ScrollReview({ state }: { state: ScreenshotState }) {
     </div>
     <footer className="scroll-review-footer">
       <div className="scroll-review-note" role={error ? 'alert' : 'status'}>{error || scroll.message || '确认内容连续后进入编辑，可标注、复制、保存、贴图或发送图片。'}</div>
-      <div className="scroll-review-actions"><button className="l-btn" onClick={() => void act('cancel')}><X />取消</button><button className="l-btn" disabled={busy || scroll.segments <= 1} onClick={() => void act('undo')}><Undo2 />撤回末段</button><button className="l-btn primary" disabled={busy || !state.image} onClick={() => void act('edit')}><Check />检查通过，进入编辑</button></div>
+      <div className="scroll-review-actions"><button className="l-btn" onClick={() => void act('cancel')}><X />取消</button><button className="l-btn" disabled={busy || scroll.segments <= 1} onClick={() => void act('undo')}><Undo2 />撤回末段</button><button className="l-btn primary" disabled={busy || !state.imageFrame} onClick={() => void act('edit')}><Check />检查通过，进入编辑</button></div>
     </footer>
   </div>;
 }

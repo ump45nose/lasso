@@ -49,7 +49,7 @@ function App() {
       <TitleBar state={state} />
       <main className="l-main"><AnimatePresence mode="wait" initial={false}><motion.div key={viewKey} className="l-view" {...rise}>
         {view === 'text' ? <TextEntry input={state.inputText!} presets={state.presets} />
-          : view === 'image' ? <ImageEntry image={state.inputImage!} presets={state.presets} />
+          : view === 'image' ? <ImageEntry key={state.inputImage!.id} image={state.inputImage!} presets={state.presets} initialPrompt={state.inputImagePrompt} />
           : view === 'chat' ? <AgentChat taskId={state.activeTaskId!} />
           : view === 'error' ? <div className="l-empty"><CircleAlert size={22} className="l-danger" /><h2>网页还没打开。</h2><p>{state.pageError}</p><button className="l-btn primary" onClick={() => void window.desktop.act('reload')}>重新加载</button></div>
           : view === 'launcher' ? <Launcher state={state} openPermission={() => { setSettingsTab('general'); void window.desktop.act('settings'); }} />

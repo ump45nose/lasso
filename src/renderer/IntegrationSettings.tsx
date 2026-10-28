@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Check } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AppWindow, Check } from 'lucide-react';
 import type { Settings, AppPrompt, LocalTarget } from '../shared/contracts';
 import { targetLabels } from '../shared/contracts';
 
@@ -39,7 +39,7 @@ export function IntegrationSettings({ settings, section }: { settings: Settings;
         <p className="l-field-help l-lead">只给来自这个应用的划词补充背景，放在预设内容之前，只注入一次。没有选区、图片和后续追问不会注入。</p>
         {rules.map((rule, i) => <ul className="l-group" key={i}><li className="col">
           <div className="l-row">
-            <span className="l-app-icon" aria-hidden="true">{rule.name.slice(0, 1) || '?'}</span>
+            <AppIcon bundleId={rule.bundleId} />
             <div className="l-row-label">
               <input className="l-inline-input" aria-label="应用名称" placeholder="应用名称" value={rule.name} onChange={e => update(i, { name: e.target.value })} />
               <input className="l-inline-input mono" aria-label="应用 bundle ID" placeholder="com.example.app" value={rule.bundleId} spellCheck={false} onChange={e => update(i, { bundleId: e.target.value })} />
@@ -58,4 +58,14 @@ export function IntegrationSettings({ settings, section }: { settings: Settings;
       {dirty && <><button className="l-btn small" onClick={() => { setLocal(structuredClone(settings.local)); setRules(structuredClone(settings.appPrompts)); edited(); }}>放弃</button><button className="l-btn small primary" onClick={() => void save()}>保存</button></>}
     </div>}
   </>;
+}
+
+function AppIcon({ bundleId }: { bundleId: string }) {
+  const [icon, setIcon] = useState<string | null>(null);
+  useEffect(() => {
+    let active = true; setIcon(null);
+    void window.desktop.appIcon(bundleId).then(value => { if (active) setIcon(value); }, () => { if (active) setIcon(null); });
+    return () => { active = false; };
+  }, [bundleId]);
+  return <span className="l-app-icon" aria-hidden="true">{icon ? <img src={icon} alt="" /> : <AppWindow size={20} />}</span>;
 }

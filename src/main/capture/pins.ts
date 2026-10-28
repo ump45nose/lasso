@@ -12,7 +12,7 @@ export class PinManager {
   private pins=new Map<string,Pin>();
   private vision:VisionOCR|null=null;
   private serial=0;
-  constructor(private edit:(doc:PinnedDocument,id:string)=>Promise<void>,private image:(image:NativeImage)=>Promise<void>,private text:(text:string)=>Promise<void>,private suppress:()=>void,private changed:()=>void){
+  constructor(private edit:(doc:PinnedDocument,id:string)=>Promise<void>,private image:(image:NativeImage)=>Promise<void>,private text:(text:string)=>Promise<void>,private suppress:()=>void,private changed:()=>void,private languages:()=>string[]){
     const owner=(event:IpcMainInvokeEvent)=>{
       const pin=[...this.pins.values()].find(p=>event.sender===p.win.webContents&&event.senderFrame===p.win.webContents.mainFrame);
       if(!pin)throw Error('贴图操作只允许对应贴图窗口调用');return pin;
@@ -54,7 +54,7 @@ export class PinManager {
   }
   private recognize(pin:Pin){
     pin.ocr.reset();const {id,revision}=pin.state;
-    void pin.ocr.recognize({id,revision,png:pin.document.image.toPNG(),mode:'text',enhance:false}).then(result=>{
+    void pin.ocr.recognize({id,revision,png:pin.document.image.toPNG(),mode:'text',enhance:false,languages:this.languages()}).then(result=>{
       if(this.pins.get(id)!==pin||pin.state.revision!==revision)return;
       // Only flattened pixels are recognized. Suppress whole privacy-mask lines too.
       const crop=pin.document.annotations.crop;
@@ -72,6 +72,7 @@ export class PinManager {
     if(action==='zoom-in'||action==='zoom-out'){this.resize(pin,action==='zoom-in'?1.2:1/1.2);return;}
     if(action==='passthrough'){pin.state.passthrough=true;pin.win.setIgnoreMouseEvents(true,{forward:true});this.publish(pin);this.changed();return;}
     this.suppress();
+    if(action==='recognize'){pin.state.revision++;pin.state.lines=[];pin.state.status='正在识别文字…';this.publish(pin);this.recognize(pin);return;}
     if(action==='edit'){await this.edit(pin.document,pin.state.id);return;}
     if(action==='image'){await this.image(pin.document.image);return;}
     if(action==='copy'){await clipboard.write([new ClipboardItem({'image/png':new Blob([new Uint8Array(pin.document.image.toPNG())],{type:'image/png'})})]);return;}

@@ -25,7 +25,7 @@ const clock: CaptureEfficiencyClock = {
   schedule: (callback, milliseconds) => setTimeout(callback, milliseconds),
   clear: handle => clearTimeout(handle as ReturnType<typeof setTimeout>)
 };
-const copyArea = (area: SuccessfulCaptureArea): SuccessfulCaptureArea => ({ display: { ...area.display, bounds: { ...area.display.bounds } }, rect: { ...area.rect } });
+const copyArea = (area: SuccessfulCaptureArea): SuccessfulCaptureArea => ({ kind: area.kind, display: { ...area.display, bounds: { ...area.display.bounds } }, rect: { ...area.rect } });
 const sameRect = (a: CaptureDisplayBinding['bounds'], b: CaptureDisplayBinding['bounds']) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 export const sameCaptureDisplay = (a: CaptureDisplayBinding, b: CaptureDisplayBinding) => a.id === b.id && a.scaleFactor === b.scaleFactor && a.rotation === b.rotation && sameRect(a.bounds, b.bounds);
 const validArea = ({ display, rect }: SuccessfulCaptureArea) => Number.isSafeInteger(display?.id) &&

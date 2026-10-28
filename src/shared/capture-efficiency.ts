@@ -11,6 +11,7 @@ export interface CaptureDisplayBinding {
 }
 /** The area is local to the bound display, in DIP, never global desktop coordinates or image pixels. */
 export interface SuccessfulCaptureArea {
+  kind?: 'rect' | 'area';
   display: CaptureDisplayBinding;
   rect: CaptureRect;
 }

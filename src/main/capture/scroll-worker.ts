@@ -1,7 +1,7 @@
-import { parentPort } from 'node:worker_threads';
+import { parentPort, workerData } from 'node:worker_threads';
 import { ScrollStitcher } from './scroll-stitch';
 
-const stitcher = new ScrollStitcher();
+const stitcher = new ScrollStitcher(workerData?.maxHeight);
 parentPort!.on('message', (message: { id: number; type: string; width?: number; height?: number; data?: Uint8Array }) => {
   const { id, type } = message;
   try {

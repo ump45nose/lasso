@@ -30,6 +30,6 @@ export function Segmented<T extends string>({ label, value, options, onChange }:
   const group = useId();
   return <LayoutGroup id={group}><div className="l-seg" role="radiogroup" aria-label={label}>
     {options.map(([id, text]) => <button key={id || '_'} type="button" role="radio" aria-checked={value === id} onClick={() => onChange(id)}>
-      {value === id && <Glide id="seg" className="l-seg-thumb" />}<span>{text}</span></button>)}
+      {value === id && <Glide id="seg" className="l-seg-thumb" />}<span className="l-seg-label">{text}</span></button>)}
   </div></LayoutGroup>;
 }

@@ -8,7 +8,7 @@ export interface ScrollReply {
 }
 /** One capture and one worker request at a time. No frame queue grows behind a slow matcher. */
 export class ScrollSession {
-  private worker = new Worker(join(__dirname, 'scroll-worker.cjs'));
+  private worker: Worker;
   private seq = 0;
   private requests = new Map<number, { resolve: (reply: ScrollReply) => void; reject: (error: Error) => void }>();
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -18,7 +18,8 @@ export class ScrollSession {
   status: 'running' | 'paused' | 'finished' = 'running';
   metadata: ScrollReply = { id: 0, type: 'frame', status: 'empty', width: 0, height: 0, segments: 0, seams: [] };
   message = '在选区内缓慢向下滚动，每次保留至少三分之一重叠';
-  constructor(private capture: () => Promise<ScrollFrame>, private changed: () => void, private stopped: () => void) {
+  constructor(private capture: () => Promise<ScrollFrame>, private changed: () => void, private stopped: () => void, maxHeight: number) {
+    this.worker = new Worker(join(__dirname, 'scroll-worker.cjs'), { workerData: { maxHeight } });
     this.worker.on('message', (reply: ScrollReply) => {
       const request = this.requests.get(reply.id); if (!request) return;
       this.requests.delete(reply.id);

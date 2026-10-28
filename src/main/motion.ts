@@ -25,7 +25,7 @@ export class WindowMotion {
     if (inactive) this.window.showInactive(); else this.window.show();
     this.fade(1);
   }
-  hide() { if (!this.window.isDestroyed() && this.window.isVisible()) this.fade(0, () => this.window.hide()); }
+  hide(immediate = false) { if (immediate) { this.cancel(); if (!this.window.isDestroyed()) this.window.hide(); } else if (!this.window.isDestroyed() && this.window.isVisible()) this.fade(0, () => this.window.hide()); }
   dispose() { this.cancel(); }
 }
 

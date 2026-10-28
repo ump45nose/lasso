@@ -121,6 +121,7 @@ export class TaskManager {
   private warmTargets() {
     const targets = new Set<WebTarget>();
     for (const target of [this.settings().lastTarget, ...this.presets().filter(p => p.enabled).map(p => p.target)]) {
+      if (target === 'api') continue;
       if (target === 'chatgpt' || target === 'gemini') targets.add(target);
     }
     return targets;
@@ -375,8 +376,12 @@ export class TaskManager {
   }
   openChat() { if (!this.active) this.newChat(false); }
   private async prepareNew(task: Task, signal: AbortSignal) {
-    if (task.warmNavigation) { await abortable(task.warmNavigation, signal); task.warmNavigation = undefined; }
-    else await abortable(this.navigate(task, task.target === 'gemini' ? homes.gemini : homes.chatgpt), signal);
+    const temporary = task.preset?.temporaryChat === true;
+    const home = task.target === 'gemini' ? homes.gemini : homes.chatgpt + (temporary ? '?temporary-chat=true' : '');
+    if (task.warmNavigation) {
+      await abortable(task.warmNavigation, signal); task.warmNavigation = undefined;
+      if (temporary && task.target === 'chatgpt') await abortable(this.navigate(task, home), signal);
+    } else await abortable(this.navigate(task, home), signal);
     signal.throwIfAborted();
     await task.adapter!.waitReady(signal, login => {
       task.preparing = !login;
@@ -385,6 +390,7 @@ export class TaskManager {
     // ChatGPT may restore a shared homepage draft into a fresh browser page.
     // Clear only this new page before showing it; never edit another task's document.
     await task.adapter!.clearNewDraft(signal);
+    if (temporary) await task.adapter!.enableTemporary(signal);
     task.preparing = false; this.notify(); this.scheduleWarm();
   }
   select(id: string) {
@@ -430,7 +436,9 @@ export class TaskManager {
     this.notify();
   }
   async runPreset(preset: Preset, text: string, options: LaunchOptions = {}): Promise<{ error: string | null }> {
-    const task = this.create(preset.name, true, { ...options, target: options.target || preset.target });
+    const target = options.target || preset.target;
+    if (target === 'api') return { error: 'API 生图应从图片入口执行' };
+    const task = this.create(preset.name, true, { ...options, target });
     // A temporary target override uses that target's defaults, never another provider's model ID.
     task.preset = task.target === preset.target ? preset : { ...preset, target: task.target, model: '', effort: '' }; task.pendingText = text;
     task.image = options.imageId ? this.images.get(options.imageId) || null : null;
@@ -468,6 +476,7 @@ export class TaskManager {
         await adapter.applyProfile(task.preset!, controller.signal);
       }
       if (!task.filled) {
+        if (task.preset!.temporaryChat) await adapter.verifyTemporary(controller.signal);
         step = 'fill';
         this.delivery(task, { phase: 'filling', message: `正在完整填入 ${text.length.toLocaleString()} 字…`, canCopy: Boolean(text), step });
         await adapter.fill(text, controller.signal); task.filled = true;
@@ -480,6 +489,7 @@ export class TaskManager {
       }
       if (task.preset!.mode === 'send') {
         await adapter.verifyProfile(task.preset!, controller.signal);
+        if (task.preset!.temporaryChat) await adapter.verifyTemporary(controller.signal);
         step = 'send';
         this.delivery(task, { phase: 'sending', message: '正在发送…', canCopy: Boolean(text), step });
         await adapter.submit(text, controller.signal);
@@ -562,7 +572,7 @@ export class TaskManager {
     }
   }
   private eligible(task: Task) {
-    return this.tasks.has(task.id) && isIdleCandidate({
+    return this.tasks.has(task.id) && !task.preset?.temporaryChat && isIdleCandidate({
       active: task.id === this.activeId, resident: Boolean(task.view), activity: this.status(task),
       hasDraft: task.hasDraft, pending: Boolean(task.controller || task.pendingText || task.resumeUrl || task.image), hasPopup: task.popups.size > 0,
       restoreUrl: task.restoreUrl, lastActivityAt: task.lastActivityAt

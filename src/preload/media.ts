@@ -8,14 +8,11 @@ const api: MediaAPI = {
     ipcRenderer.on('media:changed', listener);
     return () => ipcRenderer.removeListener('media:changed', listener);
   },
-  configure: input => ipcRenderer.invoke('media:configure', input),
-  checkConnection: () => ipcRenderer.invoke('media:check-connection'),
-  models: () => ipcRenderer.invoke('media:models'),
-  openFile: () => ipcRenderer.invoke('media:open-file'),
   setReference: id => ipcRenderer.invoke('media:set-reference', id),
-  prepareReference: () => ipcRenderer.invoke('media:prepare-reference'),
+  restore: (id, edit, imageId) => ipcRenderer.invoke('media:restore', id, edit, imageId),
+  choosePreset: () => ipcRenderer.invoke('media:choose-preset'),
   generate: request => ipcRenderer.invoke('media:generate', request),
-  output: (id, action) => ipcRenderer.invoke('media:output', id, action),
+  output: (id, action, imageId) => ipcRenderer.invoke('media:output', id, action, imageId),
   remove: id => ipcRenderer.invoke('media:remove', id),
   hide: () => ipcRenderer.invoke('media:hide')
 };

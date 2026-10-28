@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Copy, Ellipsis, EyeOff, GripVertical, MousePointerClick, PenLine, Pin, Send, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { ScanText, Copy, Ellipsis, EyeOff, GripVertical, MousePointerClick, PenLine, Pin, Send, X, ZoomIn, ZoomOut } from 'lucide-react';
 import type { PinAPI, PinAction, PinState } from '../../shared/capture';
 import { spring } from '../motion';
 import { selectedOCRText } from './selected-text';
@@ -48,7 +48,8 @@ export function Pinned(){
     </motion.header>}</AnimatePresence>
     <AnimatePresence>{(hover||moving)&&options&&<motion.div key="options" className="pin-bar pin-options" role="toolbar" aria-label="贴图选项" initial={{opacity:0,y:-6,scale:.96}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-4,transition:{duration:.1}}} transition={spring}>
       <button title={state.topmost?'取消置顶':'置顶'} aria-label="置顶" aria-pressed={state.topmost} onClick={()=>void action('topmost')}><Pin/></button>
-      <button title="透明度，点击切换" aria-label="透明度" className="pin-opacity" onClick={()=>void action('opacity')}><span className="mono">{Math.round(state.opacity*100)}%</span></button>
+      <button aria-label="重新识别文字" data-tip="重新识别文字" onClick={()=>void action('recognize')}><ScanText/></button>
+        <button title="透明度，点击切换" aria-label="透明度" className="pin-opacity" onClick={()=>void action('opacity')}><span className="mono">{Math.round(state.opacity*100)}%</span></button>
       <button title="缩小" aria-label="缩小贴图" onClick={()=>void action('zoom-out')}><ZoomOut/></button>
       <button title="放大" aria-label="放大贴图" onClick={()=>void action('zoom-in')}><ZoomIn/></button>
       <button title="鼠标穿透（从菜单栏恢复）" aria-label="鼠标穿透" onClick={()=>void action('passthrough')}><MousePointerClick/></button>

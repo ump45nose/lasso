@@ -36,7 +36,8 @@ function geminiBridge(command: PageCommand, expected = ''): PageSnapshot {
   const hasAttachment = Boolean(attachment && visible(attachment));
   const uploadError = [...(input?.querySelectorAll('[role="alert"], .error-message') || [])].filter(visible).map(e => e.textContent).join('\n');
   const ready = Boolean(editor && !login);
-  const restoreUrl = location.hostname === 'gemini.google.com' && /^\/app\/[\w-]+$/.test(location.pathname) ? location.origin + location.pathname : null;
+  const temporary = Boolean(document.querySelector('chat-window.is-temporary-chat'));
+  const restoreUrl = !temporary && location.hostname === 'gemini.google.com' && /^\/app\/[\w-]+$/.test(location.pathname) ? location.origin + location.pathname : null;
   const responseId = last?.getAttribute('data-response-id') || last?.id || (last?.innerText.trim() || null);
   const waiting = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some(visible);
   const hasDraft = Boolean(draft || hasAttachment || uploading);
@@ -45,16 +46,23 @@ function geminiBridge(command: PageCommand, expected = ''): PageSnapshot {
     userMessages: document.querySelectorAll('user-query').length, emptyHome: ready && !restoreUrl && !hasDraft && !running,
     canSend: Boolean(send && !send.disabled && send.getAttribute('aria-disabled') !== 'true'),
     activity: !ready ? login ? 'waiting' : 'unknown' : running ? 'running' : waiting ? 'waiting' : hasDraft ? 'draft' : completed ? 'complete' : !restoreUrl ? 'idle' : 'unknown',
-    restoreUrl, responseId, historyLoaded: Boolean(restoreUrl && last && completed), recoveryError: false,
+    restoreUrl, responseId, historyLoaded: Boolean(restoreUrl && last && completed), recoveryError: false, temporary,
     lastInputAt: context.__quickAskActivity.lastInputAt, progress: `${responses.length}:${last?.innerText.length || 0}:${running}`,
     attachmentReady: hasAttachment && !uploading && !uploadError && Boolean(send && !send.disabled && send.getAttribute('aria-disabled') !== 'true'), attachmentPresent: hasAttachment, uploadError
   };
   if (command === 'read' || command === 'retry-restore') return snapshot;
   if (!ready || !editor) return { ...snapshot, refusal: 'Gemini 输入框尚未就绪，请先完成登录。' };
+  if (command === 'temporary') {
+    if (temporary) return snapshot;
+    if (snapshot.userMessages || snapshot.hasDraft) return { ...snapshot, refusal: '当前不是空白新对话，已停止切换临时对话。' };
+    const toggle = buttons.find(button => /^(临时对话|临时聊天|Temporary chat)$/i.test(button.getAttribute('aria-label') || ''));
+    if (!toggle) return { ...snapshot, refusal: '此账号没有可用的 Gemini 临时对话入口；尚未填入或发送。' };
+    toggle.click(); return snapshot;
+  }
   if (command === 'attachment') {
     const upload = [...document.querySelectorAll<HTMLElement>('[role="menuitem"], [role="button"], button')].find(b => visible(b) && /(?:^|\s)(文件|Files|上传文件|Upload files|Upload from computer)$/i.test(label(b)));
     if (upload) upload.click();
-    else buttons.find(b => /添加文件|上传文件|上传和工具|Add files|Upload files|Uploads and tools/i.test(label(b)))?.click();
+    else buttons.find(b => b.getAttribute('aria-expanded') !== 'true' && /添加文件|上传文件|上传和工具|Add files|Upload files|Uploads and tools/i.test(label(b)))?.click();
     return snapshot;
   }
   if (command === 'focus' || command === 'clear-new') {

@@ -3,8 +3,9 @@ import { X } from 'lucide-react';
 import type { ShellState } from '../shared/contracts';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import { shortcutLabel } from './targets';
+import { isValidShortcut } from '../shared/shortcuts';
 
-const captureHelp: Record<CaptureMode, string> = { area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口' };
+const captureHelp: Record<CaptureMode, string> = { rect: '直接拖动框选，不自动吸附窗口或识别区域', area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口' };
 
 /** Records on keydown and saves right away; main validates and rejects reserved combinations such as ⌥ Space. */
 function ShortcutField({ id, label, help, value, save, error: external }: { id: string; label: string; help: string; value: string; save: (value: string) => Promise<{ error: string | null }>; error?: string | null }) {
@@ -17,8 +18,9 @@ function ShortcutField({ id, label, help, value, save, error: external }: { id: 
     if (event.key === 'Escape') { setRecording(false); return; }
     if (['Meta', 'Alt', 'Control', 'Shift'].includes(event.key)) return;
     const modifiers = [event.metaKey && 'Command', event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift'].filter(Boolean);
-    if (!modifiers.length) { setError('需要加上 ⌘、⌥、⌃ 或 ⇧。'); return; }
-    void commit([...modifiers, event.code === 'Space' ? 'Space' : event.code.replace(/^(Key|Digit)/, '')].join('+'));
+    const shortcut = [...modifiers, event.code === 'Space' ? 'Space' : event.code.replace(/^(Key|Digit)/, '')].join('+');
+    if (!isValidShortcut(shortcut)) { setError('支持 F1–F24 单键，其他按键请搭配 ⌘、⌥、⌃ 或 ⇧。'); return; }
+    void commit(shortcut);
   }
   const message = error || external;
   return <li className="col">
@@ -56,7 +58,7 @@ export function GeneralSettings({ state }: { state: ShellState }) {
         <button className="l-switch" role="switch" aria-checked={settings.clipboardFallback} aria-label="允许模拟复制取词" onClick={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })}><span /></button></li>
     </ul>
     {error && <p className="l-field-help error" role="alert">{error}</p>}
-    <div className="l-set-row-head l-gap"><h3>快捷键</h3><span>默认不绑定</span></div>
+    <div className="l-set-row-head l-gap"><h3>快捷键</h3><span>支持 F1–F24 单键 · 默认不绑定</span></div>
     <ul className="l-group">
       <ShortcutField id="shortcut-open" label="唤起小窗" help="有选区时同时打开指令面板；不绑定也可从菜单栏打开" value={settings.shortcut} save={window.desktop.saveShortcut} error={state.shortcutError} />
       {captureModes.map(mode => <ShortcutField key={mode} id={'shortcut-' + mode} label={captureModeLabels[mode]} help={captureHelp[mode]} value={settings.captureShortcuts[mode]} save={shortcut => window.desktop.saveCaptureShortcut(mode, shortcut)} />)}

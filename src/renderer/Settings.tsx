@@ -1,3 +1,4 @@
+import { ScreenshotSettings } from './ScreenshotSettings';
 import { ChevronLeft } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Glide, rise } from './motion';
@@ -7,8 +8,8 @@ import { GeneralSettings } from './GeneralSettings';
 import { IntegrationSettings } from './IntegrationSettings';
 import { PresetSettings } from './PresetSettings';
 
-export type SettingsTab = 'presets' | 'apps' | 'local' | 'general' | 'appearance';
-const tabs: [SettingsTab, string][] = [['presets', '预设'], ['apps', '应用背景'], ['local', '本地 CLI'], ['general', '通用'], ['appearance', '外观']];
+export type SettingsTab = 'screenshot' | 'presets' | 'apps' | 'local' | 'general' | 'appearance';
+const tabs: [SettingsTab, string][] = [['presets', '预设'], ['screenshot', '截图'], ['apps', '应用背景'], ['local', '本地 CLI'], ['general', '通用'], ['appearance', '外观']];
 
 /** Replaces the title bar while open; the web view is hidden by main. */
 export function Settings({ state, tab, setTab }: { state: ShellState; tab: SettingsTab; setTab: (tab: SettingsTab) => void }) {
@@ -19,7 +20,7 @@ export function Settings({ state, tab, setTab }: { state: ShellState; tab: Setti
     </header>
     <nav className="l-set-nav" aria-label="设置分类">{tabs.map(([id, label]) => <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => setTab(id)}>{label}{tab === id && <Glide id="set-nav" className="l-set-nav-line" />}</button>)}</nav>
     <AnimatePresence mode="wait" initial={false}><motion.div key={tab} className="l-view" {...rise}>
-      {tab === 'presets' ? <PresetSettings presets={state.presets} /> : tab === 'general' ? <GeneralSettings state={state} /> : tab === 'appearance' ? <FontSettings settings={state.settings} />
+      {tab === 'screenshot' ? <ScreenshotSettings settings={state.settings.screenshot} shortcuts={() => setTab('general')} /> : tab === 'presets' ? <PresetSettings presets={state.presets} /> : tab === 'general' ? <GeneralSettings state={state} /> : tab === 'appearance' ? <FontSettings settings={state.settings} />
         : <IntegrationSettings settings={state.settings} section={tab} />}
     </motion.div></AnimatePresence>
   </>;

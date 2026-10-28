@@ -35,7 +35,7 @@ export class AnnotationEditor {
   private shift = false;
   constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void) {
     this.crop = { x:0,y:0,width:source.width,height:source.height };
-    this.canvas = new Canvas(element, { width:source.width,height:source.height,enableRetinaScaling:false,preserveObjectStacking:true,selection:false,altActionKey:undefined,backgroundColor:'#fff',renderOnAddRemove:false });
+    this.canvas = new Canvas(element, { width:source.width,height:source.height,enableRetinaScaling:false,preserveObjectStacking:true,selection:false,altActionKey:undefined,backgroundColor:'',renderOnAddRemove:false });
     this.canvas.backgroundImage = new FabricImage(source,{originX:'left',originY:'top'});
     this.canvas.on('mouse:down',e=>this.down(e.scenePoint,e.target));
     this.canvas.on('mouse:move',e=>{this.shift=e.e.shiftKey;this.move(e.scenePoint);});
@@ -236,5 +236,5 @@ export class AnnotationEditor {
     const blob=await new Promise<Blob>((resolve,reject)=>flat.toBlob(b=>b?resolve(b):reject(Error('图片合成失败')),'image/png'));
     return new Uint8Array(await blob.arrayBuffer());
   }
-  dispose(){this.disposed=true;this.objectClipboard=null;void this.canvas.dispose();this.history=[];}
+  dispose(){this.disposed=true;this.objectClipboard=null;void this.canvas.dispose().then(()=>{this.source.width=this.source.height=0;});this.history=[];}
 }

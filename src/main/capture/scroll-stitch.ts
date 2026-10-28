@@ -22,6 +22,7 @@ type Score = { error: number; inliers: number; texture: number };
 
 /** Stores only the first/last viewport and newly revealed rows, never a history of full frames. */
 export class ScrollStitcher {
+  constructor(private maxHeight = SCROLL_MAX_HEIGHT) {}
   private first?: ScrollFrame;
   private last?: ScrollFrame;
   private parts: Segment[] = [];
@@ -30,6 +31,7 @@ export class ScrollStitcher {
   private resultHeight = 0;
   private limited = false;
 
+  private limitReason(width: number) { return this.maxHeight <= Math.floor(SCROLL_MAX_PIXELS / width) ? '已达到设置的最大高度，结果已保留' : '已达到 2000 万总像素上限，结果已保留'; }
   reset(): StitchResult {
     this.first = this.last = undefined;
     this.parts = [];
@@ -52,8 +54,8 @@ export class ScrollStitcher {
       width * height > SCROLL_MAX_PIXELS * 2 || data.byteLength !== width * height * 4) {
       return this.result('unreliable', '采集帧尺寸无效，已保留之前的结果');
     }
-    if (this.limited) return this.result('limit', '已达到滚动截图资源上限');
-    const maximum = Math.min(SCROLL_MAX_HEIGHT, Math.floor(SCROLL_MAX_PIXELS / width));
+    if (this.limited) return this.result('limit', this.limitReason(this.first?.width || 1));
+    const maximum = Math.min(this.maxHeight, Math.floor(SCROLL_MAX_PIXELS / width));
     if (!maximum) return this.result('unreliable', '选区过宽，请缩小选区');
     if (!this.first) {
       const keptHeight = Math.min(height, maximum);
@@ -61,7 +63,7 @@ export class ScrollStitcher {
       this.first = this.last = keptHeight === height ? frame : { width, height: keptHeight, data: data.slice(0, keptHeight * width * 4) };
       this.resultHeight = keptHeight;
       this.limited = keptHeight >= maximum;
-      return this.result(this.limited ? 'limit' : 'matched', this.limited ? '已达到高度或总像素上限，已保留上限以内的原始像素' : undefined);
+      return this.result(this.limited ? 'limit' : 'matched', this.limited ? this.limitReason(width) : undefined);
     }
     const previous = this.last!;
     if (width !== previous.width || height !== previous.height) {
@@ -107,7 +109,7 @@ export class ScrollStitcher {
       this.last = frame;
     }
     this.limited = rows < best.shift || this.resultHeight >= maximum;
-    return this.result(this.limited ? 'limit' : 'matched', this.limited ? '已达到高度或总像素上限，已保留上限以内的原始像素' : undefined);
+    return this.result(this.limited ? 'limit' : 'matched', this.limited ? this.limitReason(width) : undefined);
   }
 
   undo(): StitchResult {

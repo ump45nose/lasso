@@ -1,5 +1,5 @@
 import { ChevronRight, FolderOpen, Image, ScanLine } from 'lucide-react';
-import { targetLabels } from '../shared/contracts';
+import { presetTargetLabels as targetLabels } from '../shared/contracts';
 import type { ShellState } from '../shared/contracts';
 import { Badge, folderName, isLocal, shortcutLabel, targets } from './targets';
 
@@ -34,6 +34,7 @@ export function Launcher({ state, openPermission }: { state: ShellState; openPer
     </div>
     <footer className="l-launch-foot">
       <button className="l-ghost dashed" disabled={captureBusy} onClick={() => void window.desktop.readImage()}><Image size={14} />粘贴图片<span className="l-kbd">⌘V</span></button>
+      <button className="l-ghost" disabled={captureBusy} onClick={() => void window.desktop.screenshot('rect')}><ScanLine size={14} />框选截图</button>
       <button className="l-ghost" disabled={captureBusy} onClick={() => void window.desktop.screenshot('area')}><ScanLine size={14} />截图</button>
       <button className="l-ghost" disabled={captureBusy} onClick={() => void window.desktop.openLocalImage()}><FolderOpen size={14} />打开图片</button>
       <span className="l-hint">{settings.shortcut ? <>随时按 <span className="l-kbd">{shortcutLabel(settings.shortcut)}</span> 唤起</> : '从菜单栏随时打开'}</span>

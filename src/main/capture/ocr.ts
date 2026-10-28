@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 import type { OCRLine, OCRMode, OCRResult } from '../../shared/capture';
 
 export interface VisionOCR {
-  recognize(png: Buffer, token: number, mode: OCRMode, enhance: boolean): Promise<OCRLine[]>;
+  recognize(png: Buffer, token: number, mode: OCRMode, enhance: boolean, languages: string[]): Promise<OCRLine[]>;
+  supportedLanguages(): string[];
   cancel(token: number): void;
 }
-type Input = {id: string; revision: number; png: Buffer; mode: OCRMode; enhance: boolean; force?: boolean};
+type Input = {id: string; revision: number; png: Buffer; mode: OCRMode; enhance: boolean; force?: boolean; languages: string[]};
 type Job = Input & {key: string; token: number; canceled: boolean; settle(result: OCRResult): void; fail(error: unknown): void};
 let nextToken=0;
 
@@ -18,7 +19,7 @@ export class OCRService {
   private cacheBytes=0;
   constructor(private driver:()=>VisionOCR, private current:(id:string,revision:number)=>boolean){}
   recognize(input:Input):Promise<OCRResult>{
-    const key=createHash('sha256').update(input.png).update(input.mode+Number(input.enhance)).digest('hex');
+    const key=createHash('sha256').update(input.png).update(input.mode+Number(input.enhance)).update(JSON.stringify(input.languages)).digest('hex');
     if(!this.current(input.id,input.revision))return Promise.resolve({id:input.id,revision:input.revision,lines:[]});
     this.invalidate(input.id,input.revision);
     const cached=!input.force&&this.cache.get(key);
@@ -44,7 +45,7 @@ export class OCRService {
     const job=this.pending;this.pending=null;this.active=job;
     void(async()=>{
       try{
-        const lines=await this.driver().recognize(job.png,job.token,job.mode,job.enhance);
+        const lines=await this.driver().recognize(job.png,job.token,job.mode,job.enhance,job.languages);
         if(job.canceled||!this.current(job.id,job.revision)){job.settle({id:job.id,revision:job.revision,lines:[]});return;}
         const bytes=JSON.stringify(lines).length*2;
         if(bytes<=2_000_000){const previous=this.cache.get(job.key);if(previous)this.cacheBytes-=previous.bytes;this.cache.delete(job.key);this.cache.set(job.key,{lines,bytes});this.cacheBytes+=bytes;

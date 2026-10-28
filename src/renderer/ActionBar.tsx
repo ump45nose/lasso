@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useAnimationControls } from 'motion/react';
 import { Ellipsis, Settings2 } from 'lucide-react';
-import { BAR_MENU, targetLabels, type ActionBarAPI, type ActionBarLayout, type ActionBarState } from '../shared/contracts';
+import { BAR_MENU, presetTargetLabels as targetLabels, type ActionBarAPI, type ActionBarLayout, type ActionBarState } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
 import { useFonts } from './fonts';
 import { Glide, spring } from './motion';

@@ -2,7 +2,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { AppWindow, AppWindowMac, Image, Maximize2, Minimize2, Minus, Monitor, Pin, RotateCw, ScanLine, Search, Settings2, Timer, X } from 'lucide-react';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
-import { targetLabels } from '../shared/contracts';
+import { presetTargetLabels as targetLabels } from '../shared/contracts';
 import type { Action, PaletteScope, Preset, ShellState, Target, TaskSummary } from '../shared/contracts';
 import { Badge, isLocal, shortcutLabel, taskDot, taskStatus, targets } from './targets';
 import { motion } from 'motion/react';
@@ -19,13 +19,14 @@ type Row = { key: string; label: string; disabled?: boolean } & (
 
 const close = () => window.desktop.closePalette();
 const act = (action: Action) => () => window.desktop.act(action);
-const captureIcons: Record<CaptureMode, ReactNode> = { area: <ScanLine size={14} />, window: <AppWindow size={14} />, screen: <Monitor size={14} />, front: <AppWindowMac size={14} /> };
+const captureIcons: Record<CaptureMode, ReactNode> = { rect: <ScanLine size={14} />, area: <ScanLine size={14} />, window: <AppWindow size={14} />, screen: <Monitor size={14} />, front: <AppWindowMac size={14} /> };
 
 /** Main owns open/close (⌘K works while a web page has focus); this only renders and runs the chosen row. */
 export function Palette({ state, scope, backdrop }: { state: ShellState; scope: PaletteScope; backdrop: string | null }) {
   const [query, setQuery] = useState('');
+  const [imagePrompt, setImagePrompt] = useState('');
   const [index, setIndex] = useState(0);
-  const [overrides, setOverrides] = useState<Record<string, Target>>({});
+  const [overrides, setOverrides] = useState<Record<string, Target | undefined>>({});
   const [error, setError] = useState('');
   const list = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLInputElement>(null);
@@ -36,15 +37,15 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     const q = query.trim().toLowerCase();
     const match = (text: string) => !q || text.toLowerCase().includes(q);
     const out: { title: string; rows: Row[] }[] = [];
-    if (scope === 'all') {
-      const rows: Row[] = state.presets.filter(preset => preset.enabled && match(preset.name)).map(preset => ({ key: 'p-' + preset.id, kind: 'preset', preset, label: preset.name, disabled: preset.needsSelection && !selection }));
+    if (scope === 'all' || scope === 'images') {
+      const rows: Row[] = state.presets.filter(preset => preset.enabled && (scope !== 'images' || preset.kind === 'image') && match(preset.name)).map(preset => ({ key: 'p-' + preset.id, kind: 'preset', preset, label: preset.name, disabled: preset.needsSelection && !selection && !(scope === 'images' && imagePrompt.trim()) }));
       if (rows.length) out.push({ title: '预设', rows });
     }
-    if (scope !== 'new') {
+    if (scope !== 'new' && scope !== 'images') {
       const rows: Row[] = state.tasks.filter(task => (scope === 'tasks' || task.id !== state.activeTaskId) && match(task.title)).map(task => ({ key: 't-' + task.id, kind: 'task', task, label: task.title }));
       if (rows.length) out.push({ title: scope === 'tasks' ? '全部任务' : '切换任务', rows });
     }
-    if (scope !== 'tasks') {
+    if (scope !== 'tasks' && scope !== 'images') {
       const rows: Row[] = [
         ...targets.map(target => ({ key: 'n-' + target, kind: 'new' as const, target, label: targetLabels[target] + ' 新对话' })),
         ...targets.filter(isLocal).map(target => ({ key: 'c-' + target, kind: 'new' as const, target, cwd: true, label: targetLabels[target] + ' · 选择工作目录…' }))
@@ -68,7 +69,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
       if (rows.length) out.push({ title: '图片与窗口', rows });
     }
     return out;
-  }, [query, scope, state.presets, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.captureShortcuts, captureBusy, state.captureEfficiency.phase]);
+  }, [query, imagePrompt, scope, state.presets, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.captureShortcuts, captureBusy, state.captureEfficiency.phase]);
   const flat = groups.flatMap(group => group.rows).filter(row => !row.disabled);
   const current = flat[Math.min(index, flat.length - 1)];
   useEffect(() => { setIndex(0); setError(''); }, [query, scope]);
@@ -80,7 +81,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     setError('');
     if (row.kind === 'preset') {
       const target = targetOf(row.preset);
-      const result = await window.desktop.runPreset(row.preset.id, target === row.preset.target ? {} : { target });
+      const result = await window.desktop.runPreset(row.preset.id, { ...(target !== row.preset.target && target !== 'api' ? { target } : {}), ...(scope === 'images' && imagePrompt.trim() ? { imagePrompt } : {}) });
       if (result.error) setError(result.error);
     } else if (row.kind === 'task') await window.desktop.selectTask(row.task.id);
     else if (row.kind === 'new') {
@@ -100,8 +101,11 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     else if (event.key === 'Enter') { event.preventDefault(); void run(current); }
     else if (event.key === 'Tab' && current?.kind === 'preset') {
       event.preventDefault();
-      const preset = current.preset, at = targets.indexOf(targetOf(preset));
-      setOverrides({ ...overrides, [preset.id]: targets[(at + (event.shiftKey ? targets.length - 1 : 1)) % targets.length] });
+      const preset = current.preset;
+      if (preset.target === 'api') return;
+      const available = preset.kind === 'image' ? (['chatgpt', 'gemini'] as Target[]) : targets;
+      const at = available.indexOf(targetOf(preset) as Target);
+      setOverrides({ ...overrides, [preset.id]: available[(at + (event.shiftKey ? available.length - 1 : 1)) % available.length] });
     }
   }
   return <motion.div className="l-pal-layer" initial="hidden" animate="shown" exit="hidden">
@@ -110,11 +114,12 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     <motion.div className="l-palette" role="dialog" aria-label="指令面板" variants={panelMotion}>
       <label className="l-pal-search"><Search size={16} />
         <input ref={input} aria-label="搜索预设、任务或指令" aria-controls="palette-list" aria-activedescendant={current ? 'pal-' + current.key : undefined}
-          placeholder={scope === 'tasks' ? '搜索任务' : scope === 'new' ? '选择新任务的目标' : '搜索预设、任务或指令'} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={key} spellCheck={false} />
+          placeholder={scope === 'tasks' ? '搜索任务' : scope === 'new' ? '选择新任务的目标' : scope === 'images' ? '搜索生图预设' : '搜索预设、任务或指令'} value={query} onChange={event => setQuery(event.target.value)} onKeyDown={key} spellCheck={false} />
         <span className="l-keycap">esc</span></label>
       {scope === 'all' && <div className="l-pal-ctx">{selection
         ? <><span className="l-mark">已选 <span className="mono">{selection.length.toLocaleString()}</span> 字</span><span>来自 {rule ? rule.name : selection.sourceApp || '未知应用'}{rule && ' · 已匹配应用背景'}</span></>
         : <span>没有选区 · 需要选区的预设暂不可用</span>}</div>}
+      {scope === 'images' && <div className="l-field l-pal-image-prompt"><label htmlFor="palette-image-prompt">生图描述</label><textarea id="palette-image-prompt" className="l-textarea" rows={3} placeholder={selection ? '留空使用选中文字' : '描述要生成的画面'} value={imagePrompt} onChange={event => setImagePrompt(event.target.value)} /><button className="l-text-btn" onClick={() => void window.desktop.attachImage(imagePrompt).then(result => setError(result.error || ''))}>附加参考图…</button></div>}
       {error && <div className="l-pal-error" role="alert">{error}</div>}
       <div className="l-pal-list" id="palette-list" ref={list} role="listbox" aria-label="指令">
         {groups.map(group => <Fragment key={group.title}>
@@ -134,16 +139,16 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
             </button>;
           })}
         </Fragment>)}
-        {!flat.length && <p className="l-pal-empty">{query ? `没有匹配「${query}」的预设或指令。` : '没有可用的项目。'}</p>}
+        {!groups.some(group => group.rows.length) && <p className="l-pal-empty">{query ? `没有匹配「${query}」的预设或指令。` : '没有可用的项目。'}</p>}
       </div>
       <div className="l-pal-foot"><span><span className="mono">↑↓</span> 选择</span><span><span className="mono">↵</span> 运行</span>{scope === 'all' && <span><span className="mono">⇥</span> 临时换目标</span>}<span className="push"><span className="mono">⌘,</span> 设置</span></div>
     </motion.div>
   </motion.div>;
 }
-function PresetMeta({ preset, target, selected, disabled }: { preset: Preset; target: Target; selected: boolean; disabled?: boolean }) {
+function PresetMeta({ preset, target, selected, disabled }: { preset: Preset; target: import('../shared/contracts').PresetTarget; selected: boolean; disabled?: boolean }) {
   const changed = target !== preset.target;
   return <>
-    {selected ? <span className={'l-pal-target push' + (changed ? ' changed' : '')}>{targetLabels[target]}<kbd>⇥</kbd></span> : <small className="push">{targetLabels[target]}</small>}
-    <small>{disabled ? '需要选区' : changed && (preset.model || preset.effort) ? '跟随目标默认' : preset.mode === 'edit' ? '先编辑' : '直接发送'}</small>
+    {selected ? <span className={'l-pal-target push' + (changed ? ' changed' : '')}>{targetLabels[target]}{target !== 'api' && <kbd>⇥</kbd>}</span> : <small className="push">{targetLabels[target]}</small>}
+    <small>{disabled ? preset.kind === 'image' ? '需要内容' : '需要选区' : changed && (preset.model || preset.effort) ? '跟随目标默认' : preset.mode === 'edit' ? '先编辑' : '直接发送'}</small>
   </>;
 }

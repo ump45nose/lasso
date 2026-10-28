@@ -131,3 +131,9 @@
 
 @keyframes ed-ring { 0% { outline-color: rgba(217, 119, 87, 0); outline-offset: 6px; } 60% { outline-color: var(--clay); } 100% { outline-color: var(--clay); outline-offset: 0; } }
 .ed-text.ed-armed, .ed-text.ed-armed:hover:not(:disabled) { background: var(--clay); color: #FFFFFF; }
+
+.ed-toast { max-width: calc(100% - 32px); overflow-wrap: anywhere; }
+.ed-toast-success { color: var(--ink); background: var(--bg); border-color: var(--line); }
+
+/* Transparency checker is a display-only pattern; it never enters the image canvas. */
+.ed-stage { background-color: var(--surface); background-image: conic-gradient(var(--sand) 25%, transparent 0 50%, var(--sand) 0 75%, transparent 0); background-size: 16px 16px; }

@@ -16,7 +16,7 @@ struct Glyph { std::string text; double x,y,w,h; };
 struct TextLine { std::string text; double x,y,w,h,confidence; std::vector<Glyph> glyphs; };
 struct OCRWork {
   napi_async_work work; napi_deferred deferred; int32_t token=0;
-  std::vector<unsigned char> bytes; std::vector<TextLine> lines; std::string error,mode;
+  std::vector<std::string> languages; std::vector<unsigned char> bytes; std::vector<TextLine> lines; std::string error,mode;
   bool enhance=false; std::atomic<bool> canceled{false};
   std::mutex requestMutex; VNRecognizeTextRequest* __strong request=nil;
 };
@@ -113,9 +113,9 @@ static void execute(napi_env,void*data){@autoreleasepool {@try{
   const double width=CGImageGetWidth(original.image),height=CGImageGetHeight(original.image);
   VNRecognizeTextRequest*request=[[VNRecognizeTextRequest alloc] init];
   request.recognitionLevel=VNRequestTextRecognitionLevelAccurate;
-  NSArray*preferred=q->mode=="code"?@[@"en-US",@"zh-Hans",@"zh-Hant"]:@[@"zh-Hans",@"en-US",@"zh-Hant"];
+  NSMutableArray*preferred=[NSMutableArray array]; if(q->mode=="code")[preferred addObject:@"en-US"]; for(const auto&language:q->languages){NSString*value=[NSString stringWithUTF8String:language.c_str()];if(![preferred containsObject:value])[preferred addObject:value];}
   NSArray*supported=[request supportedRecognitionLanguagesAndReturnError:nil];NSMutableArray*languages=[NSMutableArray array];for(NSString*language in preferred)if([supported containsObject:language])[languages addObject:language];
-  if(languages.count)request.recognitionLanguages=languages;
+  if(!languages.count){q->error="没有本机支持的 OCR 语言，请修改截图设置";return;} request.recognitionLanguages=languages;
   request.usesLanguageCorrection=q->mode!="code";
   if(request.usesLanguageCorrection)request.customWords=@[@"Lasso",@"Codex",@"ChatGPT",@"Gemini",@"GitHub",@"TypeScript",@"JavaScript",@"SwiftUI"];
   NSError*error=nil;BOOL ok=perform(q,request,image,&error);
@@ -134,6 +134,7 @@ static void execute(napi_env,void*data){@autoreleasepool {@try{
   NSArray<VNRecognizedTextObservation*>*geometry=@[];
   if(std::any_of(q->lines.begin(),q->lines.end(),hasSharedBoxes)){
     VNRecognizeTextRequest*fast=[[VNRecognizeTextRequest alloc] init];fast.recognitionLevel=VNRequestTextRecognitionLevelFast;fast.usesLanguageCorrection=NO;
+    NSArray*fastLanguages=[fast supportedRecognitionLanguagesAndReturnError:nil]; for(NSString*language in languages)if(![fastLanguages containsObject:language]){fast.recognitionLevel=VNRequestTextRecognitionLevelAccurate;break;} fast.recognitionLanguages=languages;
     if(perform(q,fast,image,nil))geometry=fast.results?:@[];
   }
   for(auto&line:q->lines){
@@ -149,9 +150,12 @@ static void complete(napi_env e,napi_status status,void*data){
   napi_delete_async_work(e,q->work);delete q;
 }
 static napi_value recognize(napi_env e,napi_callback_info info){
-  size_t n=4;napi_value args[4];napi_get_cb_info(e,info,&n,args,nullptr,nullptr);void*bytes=nullptr;size_t size=0;bool buffer=false,enhance=false;int32_t token=0;char mode[16]={};size_t length=0;
-  if(n!=4||napi_is_buffer(e,args[0],&buffer)!=napi_ok||!buffer||napi_get_buffer_info(e,args[0],&bytes,&size)!=napi_ok||size==0||size>64*1024*1024||napi_get_value_int32(e,args[1],&token)!=napi_ok||token<=0||napi_get_value_string_utf8(e,args[2],mode,sizeof(mode),&length)!=napi_ok||napi_get_value_bool(e,args[3],&enhance)!=napi_ok||(strcmp(mode,"text")&&strcmp(mode,"code"))){napi_throw_type_error(e,nullptr,"需要有效的 PNG 和识别选项");return nullptr;}
+  size_t n=5;napi_value args[5];napi_get_cb_info(e,info,&n,args,nullptr,nullptr);void*bytes=nullptr;size_t size=0;bool buffer=false,enhance=false;int32_t token=0;char mode[16]={};size_t length=0;
+  if(n!=5||napi_is_buffer(e,args[0],&buffer)!=napi_ok||!buffer||napi_get_buffer_info(e,args[0],&bytes,&size)!=napi_ok||size==0||size>64*1024*1024||napi_get_value_int32(e,args[1],&token)!=napi_ok||token<=0||napi_get_value_string_utf8(e,args[2],mode,sizeof(mode),&length)!=napi_ok||napi_get_value_bool(e,args[3],&enhance)!=napi_ok||(strcmp(mode,"text")&&strcmp(mode,"code"))){napi_throw_type_error(e,nullptr,"需要有效的 PNG 和识别选项");return nullptr;}
   auto*q=new OCRWork();q->token=token;q->mode=mode;q->enhance=enhance;q->bytes.assign((unsigned char*)bytes,(unsigned char*)bytes+size);napi_value promise,name;
+  bool array=false;uint32_t count=0;napi_is_array(e,args[4],&array);if(array)napi_get_array_length(e,args[4],&count);
+  if(!array||count==0||count>100){delete q;napi_throw_type_error(e,nullptr,"需要 OCR 语言列表");return nullptr;}
+  for(uint32_t i=0;i<count;i++){napi_value item;char language[80]={};size_t len=0;napi_get_element(e,args[4],i,&item);if(napi_get_value_string_utf8(e,item,language,sizeof(language),&len)!=napi_ok||!len||len>=sizeof(language)-1){delete q;napi_throw_type_error(e,nullptr,"OCR 语言无效");return nullptr;}q->languages.emplace_back(language);}
   napi_create_promise(e,&q->deferred,&promise);napi_create_string_utf8(e,"capture-vision",NAPI_AUTO_LENGTH,&name);napi_create_async_work(e,nullptr,name,execute,complete,q,&q->work);{std::lock_guard<std::mutex>lock(jobsMutex);jobs[token]=q;}napi_queue_async_work(e,q->work);return promise;
 }
 static napi_value cancel(napi_env e,napi_callback_info info){
@@ -159,5 +163,11 @@ static napi_value cancel(napi_env e,napi_callback_info info){
   if(n==1&&napi_get_value_int32(e,arg,&token)==napi_ok){std::lock_guard<std::mutex>lock(jobsMutex);auto found=jobs.find(token);if(found!=jobs.end()){auto*q=found->second;q->canceled=true;std::lock_guard<std::mutex>requestLock(q->requestMutex);request=q->request;}}
   [request cancel];napi_get_undefined(e,&undefined);return undefined;
 }
-static napi_value init(napi_env e,napi_value exports){napi_property_descriptor d[]={{"recognize",nullptr,recognize,nullptr,nullptr,nullptr,napi_default,nullptr},{"cancel",nullptr,cancel,nullptr,nullptr,nullptr,napi_default,nullptr}};napi_define_properties(e,exports,2,d);return exports;}
+static napi_value supportedLanguages(napi_env e,napi_callback_info){@autoreleasepool {
+  VNRecognizeTextRequest*request=[[VNRecognizeTextRequest alloc] init];request.recognitionLevel=VNRequestTextRecognitionLevelAccurate;
+  NSError*error=nil;NSArray*languages=[request supportedRecognitionLanguagesAndReturnError:&error];
+  if(!languages){napi_throw_error(e,nullptr,error.localizedDescription.UTF8String?:"无法读取 OCR 语言");return nullptr;}
+  napi_value result;napi_create_array_with_length(e,languages.count,&result);for(NSUInteger i=0;i<languages.count;i++){napi_value value;napi_create_string_utf8(e,[languages[i] UTF8String],NAPI_AUTO_LENGTH,&value);napi_set_element(e,result,i,value);}return result;
+}}
+static napi_value init(napi_env e,napi_value exports){napi_property_descriptor d[]={{"recognize",nullptr,recognize,nullptr,nullptr,nullptr,napi_default,nullptr},{"cancel",nullptr,cancel,nullptr,nullptr,nullptr,napi_default,nullptr},{"supportedLanguages",nullptr,supportedLanguages,nullptr,nullptr,nullptr,napi_default,nullptr}};napi_define_properties(e,exports,3,d);return exports;}
 NAPI_MODULE(NODE_GYP_MODULE_NAME,init)

@@ -1,7 +1,7 @@
 import type { NativeImage } from 'electron';
 import type { AnnotationSnapshot, CaptureRect } from '../../shared/capture';
 
-export interface PinnedDocument { source: NativeImage; image: NativeImage; annotations: AnnotationSnapshot }
+export interface PinnedDocument { pixelScale?: { x: number; y: number }; source: NativeImage; image: NativeImage; annotations: AnnotationSnapshot }
 export function validateAnnotations(value: AnnotationSnapshot | undefined, source: NativeImage, crop: CaptureRect): AnnotationSnapshot {
   if(!value||!Array.isArray(value.objects)||value.objects.length>3000||!Number.isSafeInteger(value.nextNumber)||value.nextNumber<1||value.nextNumber>1000000)throw Error('贴图标注数据无效');
   const size=source.getSize(),r=value.crop;

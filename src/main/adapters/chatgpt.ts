@@ -3,7 +3,7 @@ import type { ExecutionCatalog, ExecutionProfile, TaskActivity } from '../../sha
 import { WebProfile } from './web-profile';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export type PageCommand = 'read' | 'focus' | 'clear-new' | 'retry-restore' | 'submit' | 'attachment';
+export type PageCommand = 'read' | 'focus' | 'clear-new' | 'retry-restore' | 'submit' | 'attachment' | 'temporary';
 export interface PageSnapshot {
   url: string;
   title: string;
@@ -22,6 +22,7 @@ export interface PageSnapshot {
   responseId: string | null;
   historyLoaded: boolean;
   recoveryError: boolean;
+  temporary?: boolean;
   attachmentReady?: boolean;
   attachmentPresent?: boolean;
   uploadError?: string;
@@ -77,7 +78,10 @@ function pageBridge(command: PageCommand, expected = ''): PageSnapshot {
   const emptyHome = Boolean(ready && !hasDraft && location.pathname === '/' && !running && !waiting);
   const activity: TaskActivity = !ready ? (login ? 'waiting' : 'unknown') : running ? 'running' : waiting ? 'waiting'
     : hasDraft ? 'draft' : turnState === 'complete' ? 'complete' : emptyHome ? 'idle' : 'unknown';
-  const restoreUrl = location.protocol === 'https:' && location.hostname === 'chatgpt.com' && /^(?:\/g\/[^/]+)?\/c\/[a-zA-Z0-9-]+\/?$/.test(location.pathname)
+  // Once sent, temporary chats use a local conversation URL and lose the home-page close button.
+  const temporary = new URLSearchParams(location.search).get('temporary-chat') === 'true'
+    || [...document.querySelectorAll<HTMLElement>('button')].some(button => visible(button) && /^(关闭临时聊天|关闭临时对话|Turn off temporary chat|Close temporary chat)$/i.test(button.getAttribute('aria-label') || ''));
+  const restoreUrl = !temporary && location.protocol === 'https:' && location.hostname === 'chatgpt.com' && /^(?:\/g\/[^/]+)?\/c\/[a-zA-Z0-9-]+\/?$/.test(location.pathname)
     ? location.origin + location.pathname : null;
   const conversationId = restoreUrl?.split('/').filter(Boolean).at(-1);
   const historyRequests = conversationId ? performance.getEntriesByType('resource').filter(entry => {
@@ -90,7 +94,7 @@ function pageBridge(command: PageCommand, expected = ''): PageSnapshot {
   const snapshot: PageSnapshot = {
     url: location.href, title: document.title, ready, login, draft, running, hasDraft,
     userMessages: userBubbles.length || document.querySelectorAll('[data-message-author-role="user"]').length,
-    emptyHome, activity, restoreUrl, historyLoaded, recoveryError, lastInputAt: context.__quickAskActivity.lastInputAt,
+    emptyHome, activity, restoreUrl, historyLoaded, recoveryError, temporary, lastInputAt: context.__quickAskActivity.lastInputAt,
     progress: `${lastTurn?.getAttribute('data-content-search-turn-key') || ''}:${turnState || ''}:${lastTurn?.textContent?.length || 0}`,
     responseId: [...(lastTurn?.querySelectorAll('[data-chatgpt-selection-message-id]') || [])].at(-1)?.getAttribute('data-chatgpt-selection-message-id') || null,
     attachmentPresent: attachments,
@@ -99,12 +103,13 @@ function pageBridge(command: PageCommand, expected = ''): PageSnapshot {
     canSend: Boolean(send && visible(send) && !send.disabled && send.getAttribute('aria-disabled') !== 'true')
   };
   if (command === 'read') return snapshot;
+  if (command === 'temporary') return temporary ? snapshot : { ...snapshot, refusal: '网页尚未进入临时聊天；请检查网页，尚未填入或发送。' };
   if (command === 'attachment') {
     const actions = [...document.querySelectorAll<HTMLElement>('button, [role="button"], [role="menuitem"]')].filter(visible);
     const label = (element: HTMLElement) => (element.getAttribute('aria-label') || element.textContent || '').trim();
     const upload = actions.find(element => /^(添加照片和文件|Add photos (?:and|&) files|Upload from computer)/i.test(label(element)));
     if (upload) upload.click();
-    else actions.find(element => /^(添加文件等内容|添加文件|Add files|Add files and more)/i.test(label(element)) || element.matches('[data-testid="composer-plus-btn"]'))?.click();
+    else actions.find(element => element.getAttribute('aria-expanded') !== 'true' && (/^(添加文件等内容|添加文件|Add files|Add files and more)/i.test(label(element)) || element.matches('[data-testid="composer-plus-btn"]')))?.click();
     return snapshot;
   }
   if (command === 'retry-restore') {
@@ -142,6 +147,22 @@ export class ChatGPTAdapter {
     return this.contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `(${this.bridge.toString()})(${JSON.stringify(command)}, ${JSON.stringify(expected)})` }], command === 'attachment');
   }
   snapshot() { return this.read(); }
+  async enableTemporary(signal: AbortSignal) {
+    signal.throwIfAborted();
+    const result = await this.read('temporary');
+    if (result.refusal) throw Error(result.refusal);
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      signal.throwIfAborted();
+      if ((await this.snapshot()).temporary) return;
+      await delay(100, undefined, { signal });
+    }
+    throw Error('未能确认临时对话已开启；尚未填入或发送。');
+  }
+  async verifyTemporary(signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (!(await this.snapshot()).temporary) throw Error('临时对话已关闭，已停止自动发送；原文仍保留。');
+  }
   async waitReady(signal: AbortSignal, onLogin: (login: boolean) => void) {
     let loadingSince = Date.now();
     while (!signal.aborted) {
@@ -220,23 +241,20 @@ export class ChatGPTAdapter {
         const inputs = async (): Promise<number[]> => {
           const { root } = await debuggerAPI.sendCommand('DOM.getDocument');
           const nodeIds: number[] = (await debuggerAPI.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type="file"]' })).nodeIds;
-          if (nodeIds.length === 1 || this.target !== 'chatgpt') return nodeIds;
-          // ChatGPT also mounts camera, video and generic-file inputs. The
+          if (nodeIds.length === 1) return nodeIds;
+          // Both sites mount image and generic-file inputs. The
           // non-camera image input is the single reference-photo upload control.
           const photos: number[] = (await debuggerAPI.sendCommand('DOM.querySelectorAll', { nodeId: root.nodeId, selector: 'input[type="file"][accept="image/*"]:not([capture])' })).nodeIds;
           return photos.length === 1 ? photos : nodeIds;
         };
         let nodeIds = await inputs();
-        if (nodeIds.length !== 1) {
+        // The upload menu lazy-loads its file control. Wait for that control instead
+        // of treating two fixed animation delays as proof that it does not exist.
+        const chooserDeadline = Date.now() + 10_000;
+        while (!chooserNode && nodeIds.length !== 1 && Date.now() < chooserDeadline) {
           await this.read('attachment');
-          await delay(300, undefined, { signal });
+          await delay(250, undefined, { signal });
           nodeIds = await inputs();
-          if (!chooserNode && nodeIds.length !== 1) {
-            // Site menus render asynchronously; the second step selects their file action.
-            await this.read('attachment');
-            await delay(300, undefined, { signal });
-            nodeIds = await inputs();
-          }
         }
         signal.throwIfAborted();
         if (chooserNode) await debuggerAPI.sendCommand('DOM.setFileInputFiles', { backendNodeId: chooserNode, files: [path] });

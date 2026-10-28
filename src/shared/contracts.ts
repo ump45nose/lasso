@@ -1,3 +1,5 @@
+import type { ScreenshotSettings } from './screenshot-settings';
+import type { ImageOptions, MediaConfig, MediaConfigInput } from './media';
 import type { CaptureMode } from './capture';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
 export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
@@ -11,7 +13,7 @@ export interface LocalConfig { executable: string; cwd: string }
 export interface ImagePreview { id: string; thumbnail: string; width: number; height: number }
 export interface ExecutionProfile { model?: string; effort?: string }
 export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; currentModel: string; currentEffort: string }
-export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string; textId?: string }
+export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string; textId?: string; imagePrompt?: string }
 export interface ChatMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'notice'; text: string; title?: string; running?: boolean; image?: string }
 export interface AgentModel { id: string; label: string; images?: boolean; efforts?: string[]; defaultEffort?: string }
 export interface AgentQuestion { id: string; question: string; options?: string[]; secret?: boolean }
@@ -23,6 +25,7 @@ export type FontRole = 'display' | 'text' | 'ui' | 'mono';
 export interface ImportedFont { family: string; file: string }
 export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
 export interface Settings {
+  screenshot: ScreenshotSettings;
   /** Empty means no global shortcut. */
   shortcut: string;
   /** Empty means unbound, per capture mode. */
@@ -35,12 +38,18 @@ export interface Settings {
   fonts: Record<FontRole, string>;
   importedFonts: ImportedFont[];
 }
+export type PresetTarget = Target | 'api';
+export const presetTargetLabels = { ...targetLabels, api: 'New API' };
 export interface Preset extends ExecutionProfile {
+  kind?: 'chat' | 'image';
+  image?: ImageOptions;
   id: string;
   name: string;
   template: string;
-  target: Target;
+  target: PresetTarget;
   mode: 'edit' | 'send';
+  /** Web presets can start a temporary chat in the same signed-in account. */
+  temporaryChat?: boolean;
   needsSelection: boolean;
   enabled: boolean;
 }
@@ -81,6 +90,7 @@ export interface ShellState {
   hasPage: boolean;
   activeTarget: Target | null;
   inputImage: ImagePreview | null;
+  inputImagePrompt?: string;
   /** OCR or handed-off text waiting for a preset; replaces any pending image. */
   inputText: { id: string; text: string } | null;
   /** The pending image or text is shown as a temporary tab in front of the tasks. */
@@ -101,9 +111,14 @@ export interface ShellState {
 }
 export type Action = 'dismiss-notice' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
   | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-input' | 'retry-delivery';
-export type PaletteScope = 'all' | 'tasks' | 'new';
+export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
+  mediaConfig(): Promise<MediaConfig>;
+  saveMediaConfig(input: MediaConfigInput): Promise<MediaConfig>;
+  mediaModels(): Promise<string[]>;
+  openImagePresets(): Promise<void>;
+  attachImage(prompt?: string): Promise<{ error: string | null }>;
   openLink(url: string): Promise<void>;
   getState(): Promise<ShellState>;
   act(action: Action): Promise<void>;
@@ -112,12 +127,15 @@ export interface DesktopAPI {
   openLocalImage(): Promise<{ error: string | null }>;
   saveCaptureShortcut(mode: CaptureMode, shortcut: string): Promise<{ error: string | null }>;
   saveShortcut(shortcut: string): Promise<{ error: string | null }>;
+  saveScreenshot(options: ScreenshotSettings): Promise<{ error: string | null }>;
+  ocrLanguages(): Promise<string[]>;
   saveCapture(options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>): Promise<{ error: string | null }>;
   savePresets(presets: Preset[]): Promise<{ error: string | null }>;
   runPreset(id: string, options?: LaunchOptions): Promise<{ error: string | null }>;
   newTask(options: LaunchOptions): Promise<void>;
   saveIntegrations(settings: Pick<Settings, 'local' | 'appPrompts'>): Promise<{ error: string | null }>;
   choosePath(kind: 'directory' | 'executable' | 'application'): Promise<{ path: string; bundleId?: string; name?: string } | null>;
+  appIcon(bundleId: string): Promise<string | null>;
   readImage(taskId?: string): Promise<{ error: string | null }>;
   removeImage(taskId?: string): Promise<void>;
   editImage(imageId: string): Promise<{error:string|null}>;

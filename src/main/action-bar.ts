@@ -96,6 +96,6 @@ export class ActionBar {
     if (this.menuOpen) return point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height;
     return point.x >= this.bar.x + SIDE && point.x <= this.bar.x + SIDE + this.width && point.y >= this.bar.top && point.y <= this.bar.top + BAR;
   }
-  hide() { this.selection = null; this.menuOpen = false; this.window.setIgnoreMouseEvents(true, { forward: true }); this.motion.hide(); }
+  hide(immediate = false) { this.selection = null; this.menuOpen = false; this.window.setIgnoreMouseEvents(true, { forward: true }); this.motion.hide(immediate); }
   destroy() { this.motion.dispose(); this.window.destroy(); }
 }

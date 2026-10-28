@@ -9,6 +9,7 @@ import { toolForKey, toolKeys } from './editor-shortcuts';
 import './text-layer.css';
 import './editor.css';
 import { selectedOCRText } from './selected-text';
+import { captureCanvas, CapturePixels } from './pixels';
 
 const tools: [Tool, string, ReactNode][][] = [
   [['text-select', '选字 · 图上拖选文字', <TextSelect />], ['select', '选择 · 移动、调整标注', <MousePointer2 />]],
@@ -24,7 +25,7 @@ const ocrTone = (status: string) => status.startsWith('正在') ? 'loading' : st
 export function Editor({state}:{state:ScreenshotState}){
   const canvasRef=useRef<HTMLCanvasElement>(null),viewportRef=useRef<HTMLDivElement>(null),textRef=useRef<HTMLDivElement>(null),engine=useRef<AnnotationEditor|null>(null);
   const [ready,setReady]=useState(false),[tool,setTool]=useState<Tool>('text-select'),[style,setStyle]=useState<Style>({color:colors[0],width:4,fontSize:32}),[revision,setRevision]=useState(0),[zoom,setZoom]=useState(1),[crop,setCrop]=useState<CaptureRect|null>(null),[preview,setPreview]=useState<CaptureRect|null>(null);
-  const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<'png'|'jpeg'>('png');
+  const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<'png'|'jpeg'>(state.saveFormat??'png');
   const [ocrMode,setOCRMode]=useState<OCRMode>('text'),[enhance,setEnhance]=useState(false);
   // Screen captures are edited in place, at their placement over the frozen screen; clipboard and pin images get a desk window with zoom.
   const place=state.placement,inline=Boolean(place);
@@ -42,18 +43,25 @@ export function Editor({state}:{state:ScreenshotState}){
   const showLines=(next:OCRLine[])=>{setLines(next);setOCRStatus(!next.length?'未识别到文字，可试小字增强':next.some(line=>line.confidence<.8)?'拖选图中文字；部分结果需核对':'拖选图中文字，可跨行复制');};
   useEffect(()=>{
     alive.current=true;let editor:AnnotationEditor|null=null;let canceled=false;
-    const img=new Image();img.onload=()=>{void(async()=>{
+    void(async()=>{
+      if(!state.imageFrame)throw Error('截图图片已失效');
+      const input=await captureCanvas(state,state.imageFrame);
       if(canceled||!canvasRef.current)return;
-      const r=pixelRect(state.selection!,state.width,state.height,img.naturalWidth,img.naturalHeight),source=document.createElement('canvas');source.width=r.width;source.height=r.height;
-      source.getContext('2d')!.drawImage(img,r.x,r.y,r.width,r.height,0,0,r.width,r.height);
+      const r=state.imageCrop??pixelRect(state.selection!,state.width,state.height,input.width,input.height);
+      const full=r.x===0&&r.y===0&&r.width===input.width&&r.height===input.height;
+      const source=full?input:document.createElement('canvas');
+      if(!full){source.width=r.width;source.height=r.height;source.getContext('2d')!.drawImage(input,r.x,r.y,r.width,r.height,0,0,r.width,r.height);}
+      if(state.backdropFrame)await captureCanvas(state,state.backdropFrame);
+      if(canceled)return;
       editor=new AnnotationEditor(canvasRef.current,source,changed,invalidate,setPreview);engine.current=editor;
       if(state.annotations)await editor.load(state.annotations);
       if(canceled)return;
       const area=viewportRef.current!;setZoom(place?place.width/r.width:Math.min(1,Math.max(.05,Math.min((area.clientWidth-120)/r.width,(area.clientHeight-200)/r.height))));
-      setReady(true);changed();
-    })().catch(e=>setError('图片编辑未能加载：'+(e as Error).message));};img.onerror=()=>setError('截图加载失败，请重新选区。');img.src=state.image;
+      editor.canvas.renderAll();setReady(true);changed();
+    })().catch(e=>{if(!canceled){setError('图片编辑未能加载：'+(e as Error).message);window.screenshot.loadError(state.editId);}});
     return()=>{canceled=true;alive.current=false;version.current++;engine.current=null;editor?.dispose();};
   },[]);
+  useEffect(()=>{if(ready)window.screenshot.ready(state.id,state.editId);},[ready,error,state.id,state.editId]);
   useEffect(()=>{
     if(!ready||!crop)return;
     const current=version.current;let canceled=false;
@@ -149,7 +157,7 @@ export function Editor({state}:{state:ScreenshotState}){
     :panelKind==='crop'?<><span className="ed-hint">拖动画面或边角裁剪</span><button className="ed-text" disabled={busy} onClick={()=>editor?.resetCrop()}>恢复裁剪</button></>:null;
   const toolButton=(id:Tool,label:string,icon:ReactNode)=><button key={id} className="ed-tool" data-tip={`${label} ${toolKeys[id]}${id==='select'?' · ⌘C / ⌘V / ⌘D':['rectangle','ellipse','line','arrow'].includes(id)?' · ⇧ 约束':''}`} aria-label={label} aria-keyshortcuts={toolKeys[id]} aria-pressed={tool===id} disabled={!ready||busy} onClick={()=>choose(id)}>{tool===id&&<Glide id="ed-tool" className="ed-tool-on"/>}{icon}</button>;
   return <section className={'ed '+(inline?'ed-inline':'ed-window')} aria-label="截图编辑器" aria-busy={busy}>
-    {inline?<>{state.backdrop&&<img className="cap-background" src={state.backdrop} draggable={false} alt=""/>}
+    {inline?<>{state.backdropFrame&&<CapturePixels state={state} frameId={state.backdropFrame} className="cap-background"/>}
       <div className="cap-rect ed-hole" style={{left:sel.x,top:sel.y,width:sel.width,height:sel.height}}><span className={'cap-size'+(labelsInside?' inside':'')}><span className="mono">{crop?`${crop.width} × ${crop.height}`:'…'}</span><span className="cap-source">像素</span></span></div></>
       :<header className="ed-drag"><strong>图片编辑</strong><span className="mono">{crop?`${crop.width} × ${crop.height}`:'正在加载…'}</span></header>}
     <div className="ed-viewport" ref={viewportRef} inert={busy} onPointerDown={closeMenus}>
@@ -163,7 +171,7 @@ export function Editor({state}:{state:ScreenshotState}){
             {lines.map((line,index)=><div className="editor-text-line" key={index} style={{left:line.x,top:line.y,width:line.width,height:line.height}}>{line.glyphs.map((g,i)=><span key={i} style={{left:g.x-line.x,top:g.y-line.y,width:g.width,height:g.height,fontSize:g.height*.95,lineHeight:`${g.height}px`}}>{g.text}</span>)}</div>)}
           </div>
           {activeCrop&&crop&&<div className="editor-shade" aria-hidden="true"><i style={{left:activeCrop.x,top:activeCrop.y,width:activeCrop.width,height:activeCrop.height}}/></div>}
-          {activeCrop&&crop&&<div className="editor-crop" style={{left:activeCrop.x,top:activeCrop.y,width:activeCrop.width,height:activeCrop.height,outlineWidth:1.5/zoom}}
+          {tool==='crop'&&activeCrop&&crop&&<div className="editor-crop" style={{left:activeCrop.x,top:activeCrop.y,width:activeCrop.width,height:activeCrop.height,outlineWidth:1.5/zoom}}
             onPointerDown={e=>{const handle=(e.target as HTMLElement).dataset.handle;if(!handle||!editor)return;e.preventDefault();e.stopPropagation();invalidate();resize.current={x:e.clientX,y:e.clientY,handle,original:{...crop},current:{...crop}};e.currentTarget.setPointerCapture(e.pointerId);}}
             onPointerMove={e=>{const g=resize.current;if(!g||!editor)return;const dx=(e.clientX-g.x)/zoom,dy=(e.clientY-g.y)/zoom,r={...g.original};if(g.handle.includes('w')){r.x=Math.max(0,Math.min(r.x+r.width-2,r.x+dx));r.width=g.original.x+g.original.width-r.x;}if(g.handle.includes('e'))r.width=Math.max(2,Math.min(editor.source.width-r.x,r.width+dx));if(g.handle.includes('n')){r.y=Math.max(0,Math.min(r.y+r.height-2,r.y+dy));r.height=g.original.y+g.original.height-r.y;}if(g.handle.includes('s'))r.height=Math.max(2,Math.min(editor.source.height-r.y,r.height+dy));g.current=r;setPreview(r);}}
             onPointerUp={()=>{const g=resize.current;resize.current=null;setPreview(null);if(g)editor?.applyCrop(g.current);}}
@@ -179,7 +187,7 @@ export function Editor({state}:{state:ScreenshotState}){
         <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void copyText()}><Copy/>复制文字</button>
         <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void sendText()}><Send/>文字预设</button></motion.span>}</AnimatePresence>
       <AnimatePresence>{ocrOpen&&<motion.div className="ed-pop" initial={{opacity:0,y:-4,scale:.98}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,transition:{duration:.1}}} transition={spring}>
-        <Segmented label="文字识别模式" value={ocrMode} onChange={mode=>changeOCR(mode,enhance)} options={[['text','中英正文'],['code','代码 / 网址']]}/>
+        <Segmented label="文字识别模式" value={ocrMode} onChange={mode=>changeOCR(mode,enhance)} options={[['text','正文'],['code','代码 / 网址']]}/>
         <div className="ed-pop-row"><span>小字增强</span><button className="l-switch" role="switch" aria-checked={enhance} aria-label="小字增强" disabled={!ready||busy} onClick={()=>changeOCR(ocrMode,!enhance)}><span/></button></div>
         <button className="ed-text" disabled={!ready||busy} onClick={()=>{setOCROpen(false);changeOCR(ocrMode,enhance,true);}}>重新识别</button>
       </motion.div>}</AnimatePresence>
@@ -213,6 +221,6 @@ export function Editor({state}:{state:ScreenshotState}){
     </motion.div>
     {!inline&&<div className="ed-zoom"><button aria-label="缩小" onClick={()=>setZoom(z=>Math.max(.05,+(z-.1).toFixed(2)))}><Minus/></button><span className="mono">{Math.round(zoom*100)}%</span><button aria-label="放大" onClick={()=>setZoom(z=>Math.min(3,+(z+.1).toFixed(2)))}><Plus/></button></div>}
     {tool==='picker'&&sample&&<aside className={'ed-loupe'+(sampleLocked?' locked':'')} style={{left:sample.left,top:sample.top}} aria-label="像素放大镜"><div className="ed-loupe-pixels"><img src={sample.image} alt="放大的原始像素"/><i/></div><span className="ed-color-value"><b style={{background:sample.color}}/><code className={colorFormat==='rgb'?'ed-rgb':undefined}>{colorFormat==='hex'?sample.color:sample.rgb.replaceAll(', ', ',')}</code></span><div className="ed-loupe-controls"><Segmented label="取色格式" value={colorFormat} onChange={setColorFormat} options={ [['hex','HEX'],['rgb','RGB']] }/><button className="ed-tool" aria-label="复制颜色" disabled={busy} onClick={()=>void copyColor()}><Copy/></button></div><small role="status">{colorCopied?`已复制 ${colorFormat.toUpperCase()}`:`${sample.x}, ${sample.y} · ${sampleLocked?'点击画面重选':'点击固定取色'}`}</small></aside>}
-    <AnimatePresence>{error&&<motion.div className="ed-toast" role="alert" initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,transition:{duration:.12}}} transition={spring}>{error}<button aria-label="关闭提示" onClick={()=>setError('')}><X/></button></motion.div>}</AnimatePresence>
+    <AnimatePresence>{(error||state.outputError||state.outputStatus)&&<motion.div className={'ed-toast'+(!error&&!state.outputError?' ed-toast-success':'')} role={error||state.outputError?'alert':'status'} initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,transition:{duration:.12}}} transition={spring}>{[error,state.outputStatus,state.outputError].filter(Boolean).join('；')}{error&&!ready&&<button className="ed-text" onClick={()=>void window.screenshot.action('retry')}>重新加载图片</button>}{error&&<button aria-label="关闭提示" onClick={()=>setError('')}><X/></button>}</motion.div>}</AnimatePresence>
   </section>;
 }
