@@ -1,8 +1,13 @@
 {
   "name": "mac-ai-prompt",
   "productName": "Lasso",
-  "version": "0.6.1",
+  "version": "0.8.0",
   "private": true,
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ump45nose/lasso.git"
+  },
   "description": "Mac 上不打断当前工作的 AI 小窗",
   "main": "dist/main.cjs",
   "scripts": {
