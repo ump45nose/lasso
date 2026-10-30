@@ -57,7 +57,17 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$app" "outputs/release/$name.zip"
           ditto "$app" "outputs/dmg/Lasso.app"
           ln -s /Applications outputs/dmg/Applications
-          hdiutil create -volname Lasso -srcfolder outputs/dmg -fs HFS+ -format UDZO "outputs/release/$name.dmg"
+          for attempt in 1 2 3 4 5; do
+            if dmg_output=$(hdiutil create -volname Lasso -srcfolder outputs/dmg -fs HFS+ -format UDZO -ov "outputs/release/$name.dmg" 2>&1); then
+              printf '%s\n' "$dmg_output"
+              break
+            fi
+            printf '%s\n' "$dmg_output" >&2
+            if [[ "$dmg_output" != *"Resource busy"* || "$attempt" == 5 ]]; then
+              exit 1
+            fi
+            sleep 5
+          done
           cd outputs/release
           shasum -a 256 "$name.zip" "$name.dmg" > "$name.sha256"
       - uses: actions/upload-artifact@v7
