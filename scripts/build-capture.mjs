@@ -2,6 +2,8 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, existsSync, realpathSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+process.env.MACOSX_DEPLOYMENT_TARGET = '14.2';
+
 // Official Node, Homebrew and version-manager installs keep headers under their
 // installation prefix. A custom headers directory can be selected explicitly.
 const candidates = process.env.NODE_INCLUDE_DIR

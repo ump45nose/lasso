@@ -4,17 +4,19 @@ import { join, resolve } from 'node:path';
 import { sign } from '@electron/osx-sign';
 import { packager } from '@electron/packager';
 import './icons.mjs';
-const identity = 'Lasso Local Development';
+const releaseBuild = process.argv.includes('--release');
+const identity = releaseBuild ? '-' : 'Lasso Local Development';
 // Fail closed: never silently replace the stable identity with ad-hoc signing.
-try { execFileSync('/usr/bin/security', ['find-certificate', '-c', identity], { stdio: 'ignore' }); }
+try { if (!releaseBuild) execFileSync('/usr/bin/security', ['find-certificate', '-c', identity], { stdio: 'ignore' }); }
 catch { throw new Error('请先运行 npm run signing:setup 创建本机固定开发签名。'); }
 const paths = await packager({
   icon: 'assets/lasso.icns',
   dir: '.', out: process.env.LASSO_PACKAGE_OUT || 'release', name: 'Lasso', executableName: 'MacAIPrompt',
   appBundleId: 'local.mac-ai-prompt', appCategoryType: 'public.app-category.productivity',
   platform: 'darwin', arch: process.arch, overwrite: true, asar: false, prune: true,
-  ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /^\/\.(?:claude|worktree)(?:\/|$)/, /\.tsbuildinfo$/],
+  ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /^\/\.(?:github|claude|worktree)(?:\/|$)/, /\.tsbuildinfo$/],
   extendInfo: {
+    LSUIElement: true,
     LSMinimumSystemVersion: '14.2',
     NSScreenCaptureUsageDescription: '选择屏幕区域并截图。', NSMicrophoneUsageDescription: '在 AI 网页中使用语音输入。', NSCameraUsageDescription: '在 AI 网页中添加相机内容。',
     CFBundleDocumentTypes: [{ CFBundleTypeName: 'PNG / JPEG 图片', CFBundleTypeRole: 'Viewer', LSHandlerRank: 'Alternate', LSItemContentTypes: ['public.png', 'public.jpeg'] }],

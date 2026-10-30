@@ -1,0 +1,95 @@
+name: macOS build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            arch: arm64
+          - runner: macos-15-intel
+            arch: x64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Check release version
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            [[ "$GITHUB_REF_NAME" == "v$version" ]] || { echo 'Tag must match package.json version' >&2; exit 1; }
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - run: npm ci
+      - name: Build release app
+        run: npm run package -- --release
+      - name: Archive app
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          app="release/Lasso-darwin-${ARCH}/Lasso.app"
+          name="Lasso-${VERSION}-macos-${ARCH}"
+          codesign --verify --deep --strict "$app"
+          mkdir -p outputs/release outputs/dmg
+          ditto -c -k --sequesterRsrc --keepParent "$app" "outputs/release/$name.zip"
+          ditto "$app" "outputs/dmg/Lasso.app"
+          ln -s /Applications outputs/dmg/Applications
+          hdiutil create -volname Lasso -srcfolder outputs/dmg -fs HFS+ -format UDZO "outputs/release/$name.dmg"
+          cd outputs/release
+          shasum -a 256 "$name.zip" "$name.dmg" > "$name.sha256"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Lasso-macos-${{ matrix.arch }}
+          path: outputs/release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: Lasso-macos-*
+          merge-multiple: true
+          path: outputs/release
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" outputs/release/* --clobber
+          else
+            gh release create "$TAG" outputs/release/* --verify-tag --title "Lasso $TAG" --generate-notes
+          fi

@@ -33,6 +33,8 @@ open release/Lasso-darwin-$(node -p process.arch)
 
 打包签名需要登录钥匙串处于解锁且允许 `codesign` 使用本机证书的状态。
 
+GitHub Actions 在主线推送、PR 和手动触发时构建 Apple Silicon、Intel 两套 ZIP / DMG，并附 SHA-256 校验文件。推送与 `package.json` 版本一致的 `v*` 标签（例如 `v0.8.5`）后，自动发布到 GitHub Releases。CI 使用显式的 `npm run package -- --release` 临时签名，不读取本机证书；下载包尚未经过 Apple 公证。本机构建继续复用固定签名。
+
 将产物 `Lasso.app` 放到 `~/Applications/`，从 Finder 启动。首次授予辅助功能权限，使用截图时再授予屏幕录制权限；在各网站登录，并配置本机 Codex / Pi CLI 的绝对路径。详细的数据取舍与验收顺序见 [迁移步骤](docs/handoff.md#新-mac-迁移步骤)。
 
 源码调试用 `npm start`，已有构建用 `npm run start:built`。调试进程使用 Electron 身份，但与安装版共用数据目录；不能用调试运行替代安装版的权限验收，也不要同时运行两者。
