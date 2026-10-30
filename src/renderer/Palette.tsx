@@ -55,6 +55,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     if (scope === 'all') {
       const rows: Row[] = ([
         ...captureModes.map(mode => ({ key: 'shot-' + mode, kind: 'cmd' as const, icon: captureIcons[mode], label: captureModeLabels[mode], disabled: captureBusy, hint: settings.captureShortcuts[mode] ? shortcutLabel(settings.captureShortcuts[mode]) : undefined, run: () => window.desktop.screenshot(mode) })),
+        {key:'shot-custom',kind:'cmd',icon:<ScanLine size={14}/>,label:'自定义截图',disabled:captureBusy,run:()=>window.desktop.act('custom-capture')},
         { key: 'shot-repeat', kind: 'cmd', icon: <ScanLine size={14} />, label: '重截上次截图区域', disabled: captureBusy, run: () => window.desktop.screenshot('repeat') },
         ...([3, 5, 10] as const).map(delay => ({ key: 'shot-delay-' + delay, kind: 'cmd' as const, icon: <Timer size={14} />, label: `${delay}秒延时截图`, disabled: captureBusy, run: () => window.desktop.screenshot('area', delay) })),
         ...(captureBusy ? [{ key: 'shot-cancel', kind: 'cmd' as const, icon: <X size={14} />, label: '取消延时截图', disabled: state.captureEfficiency.phase === 'canceling', run: () => window.desktop.cancelScreenshot() }] : []),

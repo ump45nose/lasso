@@ -1,6 +1,11 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopAPI, ShellState, AgentEvent, PaletteEvent } from '../shared/contracts';
 const api: DesktopAPI = {
+  saveMemory: options => ipcRenderer.invoke('shell:memory', options),
+  captureRegions:()=>ipcRenderer.invoke('shell:regions'),
+  customScreenshot:r=>ipcRenderer.invoke('shell:custom-screenshot',r),
+  saveRegionPreset:p=>ipcRenderer.invoke('shell:region-save',p),
+  deleteRegionPreset:id=>ipcRenderer.invoke('shell:region-delete',id),
   attachImage: prompt => ipcRenderer.invoke('shell:attach-image', prompt),
   mediaConfig: () => ipcRenderer.invoke('shell:media-config'),
   saveMediaConfig: input => ipcRenderer.invoke('shell:media-config-save', input),

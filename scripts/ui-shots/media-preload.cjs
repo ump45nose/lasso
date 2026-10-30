@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('media', {
   setReference: id => ipcRenderer.invoke('ui-shots:media-reference', id),
   restore: (id, edit, imageId) => ipcRenderer.invoke('ui-shots:media-restore', id, edit, imageId),
   choosePreset: async () => {},
+  saveDraft: async () => {},
   generate: request => ipcRenderer.invoke('ui-shots:media-generate', request),
   output: async () => ({ error: null }),
   remove: () => ipcRenderer.invoke('ui-shots:media-state'),

@@ -17,6 +17,7 @@ export class OCRService {
   private pending: Job | null=null;
   private cache=new Map<string, {lines:OCRLine[];bytes:number}>();
   private cacheBytes=0;
+  get busy(){return Boolean(this.active||this.pending);}
   constructor(private driver:()=>VisionOCR, private current:(id:string,revision:number)=>boolean){}
   recognize(input:Input):Promise<OCRResult>{
     const key=createHash('sha256').update(input.png).update(input.mode+Number(input.enhance)).update(JSON.stringify(input.languages)).digest('hex');

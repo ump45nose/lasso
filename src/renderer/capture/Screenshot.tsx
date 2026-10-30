@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ScreenshotAPI, ScreenshotState } from '../../shared/capture';
 import { ScrollControls, ScrollReview } from './ScrollCapture';
-import { clearCapturePixels } from './pixels';
+import { clearCapturePixels, retainCapturePixels } from './pixels';
 import './capture.css';
 type EditorView=typeof import('./Editor')['Editor'];
 declare global { interface Window { screenshot: ScreenshotAPI } }
@@ -11,7 +11,7 @@ export function Screenshot(){
   const [Editor,setEditor]=useState<EditorView|null>(null),[loadError,setLoadError]=useState(false);
   useEffect(()=>{
     let current=true,received=false;
-    const update=(next:ScreenshotState|null)=>{if(!next)clearCapturePixels();setState(next);};
+    const update=(next:ScreenshotState|null)=>{if(!next)clearCapturePixels();else retainCapturePixels(next);setState(next);};
     const off=window.screenshot.onState(next=>{received=true;update(next);});
     void window.screenshot.state().then(initial=>{if(current&&!received)update(initial);});
     return()=>{current=false;off();clearCapturePixels();};

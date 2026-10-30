@@ -1,4 +1,6 @@
+import type { CustomCaptureRequest, RegionConfiguration, RegionPreset } from './capture-regions';
 import type { ScreenshotSettings } from './screenshot-settings';
+import type { MemorySettings } from './memory';
 import type { ImageOptions, MediaConfig, MediaConfigInput } from './media';
 import type { CaptureMode } from './capture';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
@@ -12,7 +14,7 @@ export interface AppPrompt { bundleId: string; name: string; prompt: string; ena
 export interface LocalConfig { executable: string; cwd: string }
 export interface ImagePreview { id: string; thumbnail: string; width: number; height: number }
 export interface ExecutionProfile { model?: string; effort?: string }
-export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; currentModel: string; currentEffort: string }
+export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; effortOptions?: { id: string; label: string }[]; currentModel: string; currentEffort: string }
 export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string; textId?: string; imagePrompt?: string }
 export interface ChatMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'notice'; text: string; title?: string; running?: boolean; image?: string }
 export interface AgentModel { id: string; label: string; images?: boolean; efforts?: string[]; defaultEffort?: string }
@@ -25,6 +27,7 @@ export type FontRole = 'display' | 'text' | 'ui' | 'mono';
 export interface ImportedFont { family: string; file: string }
 export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
 export interface Settings {
+  memory: MemorySettings;
   screenshot: ScreenshotSettings;
   /** Empty means no global shortcut. */
   shortcut: string;
@@ -82,6 +85,7 @@ export const taskActivityLabels: Record<TaskActivity, string> = {
   draft: '有草稿', complete: '已完成', unknown: '状态待确认', error: '页面异常'
 };
 export interface ShellState {
+  customCaptureOpen?:boolean;
   tasks: TaskSummary[];
   activeTaskId: string | null;
   pinned: boolean;
@@ -109,11 +113,16 @@ export interface ShellState {
   selection: { length: number; sourceApp: string } | null;
   delivery: DeliveryStatus | null;
 }
-export type Action = 'dismiss-notice' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
+export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
   | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-input' | 'retry-delivery';
 export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
+  saveMemory(options: MemorySettings): Promise<{ error: string | null }>;
+  captureRegions():Promise<RegionConfiguration>;
+  customScreenshot(request:CustomCaptureRequest):Promise<{error:string|null}>;
+  saveRegionPreset(preset:RegionPreset):Promise<void>;
+  deleteRegionPreset(id:string):Promise<void>;
   mediaConfig(): Promise<MediaConfig>;
   saveMediaConfig(input: MediaConfigInput): Promise<MediaConfig>;
   mediaModels(): Promise<string[]>;

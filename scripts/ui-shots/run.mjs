@@ -138,6 +138,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(m, "window.desktop.act('settings')"); await wait(700); names.push(await save(m, 'settings'));
     await page(m, `Array.from(document.querySelectorAll('.l-set-nav button')).find(button => button.textContent === '截图').click()`); await wait(450);
     names.push(await save(m, 'settings-screenshot-actions'));
+    await page(m,`window.desktop.act('custom-capture')`);await wait(400);names.push(await save(m,'custom-capture'));await page(m,`window.desktop.act('close-custom-capture')`);await wait(250);
     await page(m, `document.querySelector('[aria-label="全屏截图后复制"]').click(); document.querySelector('[aria-label="全屏截图后保存"]').click(); document.querySelector('[aria-label="截图保存格式"] button:last-child').click()`); await wait(250);
     await page(m, `document.getElementById('screenshot-directory').scrollIntoView({block:'center'})`); await wait(200); names.push(await save(m, 'settings-screenshot-save'));
     await page(m, `document.querySelector('[aria-label="窗口截图背景"] button:last-child').click(); document.querySelector('[aria-label="保留窗口阴影"]').click()`); await wait(200); await page(m, `document.getElementById('screenshot-color').scrollIntoView({block:'center'})`); await wait(350); names.push(await save(m, 'settings-screenshot-background'));
@@ -150,6 +151,10 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     names.push(await save(m, 'settings-shortcuts'));
     await page(m, `document.getElementById('shortcut-rect').scrollIntoView({block:'center'})`); await wait(150); names.push(await save(m, 'settings-rect-shortcut'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true });
+    await page(m, `document.getElementById('memory-settings').scrollIntoView({block:'start'})`); await wait(250);
+    names.push(await save(m, 'settings-memory'));
+    m.webContents.send('shell:changed', { ...shell, settingsOpen: true, settings: { ...shell.settings, memory: {enabled:false,idleMinutes:45} } }); await wait(200);
+    names.push(await save(m, 'settings-memory-disabled'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true, settings: { ...shell.settings, appPrompts: [
       { name: 'Safari', bundleId: 'com.apple.Safari', prompt: '这段内容来自浏览器。', enabled: true },
       { name: '未安装的应用', bundleId: 'local.lasso.not-installed', prompt: '', enabled: true }
@@ -161,7 +166,23 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(m, `Array.from(document.querySelectorAll('.l-set-nav button')).find(button => button.textContent === '预设').click()`); await wait(350);
     names.push(await save(m, 'preset-list'));
     await page(m, `document.querySelector('.l-preset').focus()`); await wait(150); names.push(await save(m, 'preset-list-selected'));
+    const catalogIPC = global.uiShots.ipcMain;
+    const originalCatalog = catalogIPC._invokeHandlers.get('shell:execution-catalog');
+    catalogIPC.removeHandler('shell:execution-catalog');
+    catalogIPC.handle('shell:execution-catalog', (event, target, ...args) => target === 'chatgpt' ? { catalog: {
+      models: [{ id: '6', label: '6' }], efforts: [0, 1, 2, 3, 4].map(index => `slider:0:4:${index}`),
+      effortOptions: ['6 即时', '6 中', '6 高', '6 极高', '6 Pro'].map((label, index) => ({ id: `slider:0:4:${index}`, label })),
+      currentModel: '6', currentEffort: 'slider:0:4:0'
+    }, error: null } : originalCatalog(event, target, ...args));
+    m.webContents.send('shell:changed', { ...shell, settingsOpen: true, presets: shell.presets.map((preset, index) => index ? preset : { ...preset, model: '6', effort: '6 Instant' }) }); await wait(150);
     await page(m, `document.querySelector('.l-preset').click()`); await wait(450);
+    await page(m, `document.getElementById('preset-effort').scrollIntoView({block:'center'})`); await wait(150);
+    if (!await page(m, `document.getElementById('preset-effort').value === 'slider:0:4:0' && document.getElementById('preset-effort').selectedOptions[0].textContent === '6 即时'`)) throw Error('Legacy effort label did not resolve across website locales');
+    names.push(await save(m, 'preset-effort-localized'));
+    await page(m, `(() => { const select = document.getElementById('preset-effort'); select.value = 'slider:0:4:2'; select.dispatchEvent(new Event('change', {bubbles:true})); })()`); await wait(150);
+    if (!await page(m, `document.getElementById('preset-effort').selectedOptions[0].textContent === '6 高'`)) throw Error('Native effort ID leaked into the displayed option');
+    names.push(await save(m, 'preset-effort-native'));
+    catalogIPC.removeHandler('shell:execution-catalog'); catalogIPC.handle('shell:execution-catalog', originalCatalog);
     await page(m, `document.getElementById('preset-template').scrollIntoView({block:'center'})`); await wait(150);
     if (!await page(m, `document.querySelector('.l-prompt-source')?.textContent.includes('Google')`)) throw Error('Built-in prompt source was not displayed');
     names.push(await save(m, 'preset-prompt-source'));
@@ -320,6 +341,56 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     return names;
   }));
 
+  // Region presets: configuration IPC and form interactions; acquisition is stubbed.
+  saved.push(...await main(async () => {
+    const {find,page,wait,save,ipcMain,app,fs,path,out}=global.uiShots,names=[],checks=[];let m;
+    await wait(1800);
+    m=global.uiShots.BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('/renderer/index.html')&&!w.webContents.getURL().includes('surface='));
+    if(!m)throw Error('Main renderer unavailable');m.show();m.focus();await wait(300);
+    await page(m,`(async()=>{const s=await window.desktop.getState();if(!s.pinned)await window.desktop.act('pin');for(const t of s.tasks)await window.desktop.closeTask(t.id);})()`);await wait(800);
+    const expect=(value,message)=>{if(!value)throw Error(message);};
+    const fill=async(label,value)=>{await page(m,`(()=>{const el=document.querySelector('[aria-label="${label}"]');if(!el)throw Error('Missing ${label}');const proto=el.tagName==='SELECT'?HTMLSelectElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(el,${JSON.stringify(value)});el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(100);};
+    const click=async(text)=>{await page(m,`(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b)throw Error('Missing button ${text}');b.click();})()`);await wait(250);};
+    const val=label=>page(m,`document.querySelector('[aria-label="${label}"]').value`);
+    const presets=()=>page(m,'window.desktop.captureRegions().then(c=>c.presets)');
+    await page(m,"window.desktop.act('custom-capture')");await wait(500);
+    expect(await val('截图宽度')==='800'&&await val('截图高度')==='600','Initial dimensions');
+    expect(Boolean(await val('目标显示器')),'Default display must be selected');
+    await fill('自定义区域名称','预设回归');await click('保存预设');
+    let items=await presets();expect(items.length===1,'Create preset');const id=items[0].id;
+    expect(await val('选择区域预设')===id,'Saved preset must become selected');
+    await click('更新预设');items=await presets();expect(items.length===1&&items[0].id===id,'Second save must update same preset');checks.push('新建后连续保存保持同一 ID');
+    await click('1:1');expect(await val('截图高度')==='800','Ratio updates height');
+    await fill('截图宽度','600');expect(await val('截图高度')==='600','Locked ratio updates dimension');
+    await click('16:9');expect(await val('截图高度')==='338','Ratio rounds to integer pixels');
+    await fill('截图高度','450');expect(await val('截图宽度')==='800','Height updates locked width');
+    await fill('自定义截图宽高比','2:3');await click('应用比例');expect(await val('截图高度')==='1200','Custom ratio updates dimensions');
+    await fill('自定义区域名称','已重命名');await page(m,`[...document.querySelectorAll('[aria-label="自定义截图延时"] button')].find(b=>b.textContent==='5秒').click()`);await click('更新预设');
+    items=await presets();expect(items.length===1&&items[0].name==='已重命名'&&items[0].ratio===2/3&&items[0].delay===5,'Rename ratio delay persist');checks.push('尺寸双向联动、常用/自定义比例、重命名和延时更新');names.push(await save(m,'custom-preset-saved'));
+    await fill('选择区域预设','');expect(await val('截图宽度')==='800'&&await val('截图高度')==='600'&&await val('自定义区域名称')==='','New region resets form');
+    expect(await page(m,`document.querySelector('[aria-label="锁定当前宽高比"]').getAttribute('aria-pressed')`)==='false','New region unlocks ratio');checks.push('切换新区域重置尺寸名称比例延时');
+    await fill('选择区域预设',id);expect(await val('截图高度')==='1200','Select restores preset');
+    let requests=[];ipcMain.removeHandler('shell:custom-screenshot');ipcMain.handle('shell:custom-screenshot',(_e,r)=>{requests.push(r);return {error:null};});
+    await fill('截图宽度','900');await click('开始截图');expect(requests.length===1&&!requests[0].presetId&&requests[0].height===1350,'Unsaved size must not overwrite preset placement');
+    await fill('选择区域预设',id);await click('开始截图');expect(requests.length===2&&requests[1].presetId===id,'Saved dimensions reuse binding');checks.push('未保存尺寸不关联原位置、已保存尺寸继续携带预设 ID');
+    await fill('选择区域预设','');await click('开始截图');expect(requests.length===3&&requests[2].width===800&&!requests[2].presetId,'Unnamed custom capture allowed');checks.push('空名称可直接截图，保存仍要求名称');
+    await fill('截图宽度','100000');await click('开始截图');expect(requests.length===3,'Oversize must not start capture');expect((await page(m,`document.querySelector('[role="alert"]').textContent`)).includes('换显示器'),'Oversize recovery message');expect(await page(m,`(()=>{const r=document.querySelector('[role="alert"]').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})()`),'Oversize error should be visible');names.push(await save(m,'custom-preset-oversize'));checks.push('超出屏幕尺寸时保留参数并提示换屏或修改');
+    await fill('选择区域预设',id);await click('删除');expect((await presets()).length===0&&await val('选择区域预设')==='','Delete clears selected preset');checks.push('删除后清空选择并恢复新区域');
+    // The optional display mapping is provided by the output owner's integration hook.
+    const cfg=await page(m,'window.desktop.captureRegions()');const mapped={id:'display-preset',name:'显示器预设',width:400,height:300,ratio:null,delay:0};
+    ipcMain.removeHandler('shell:regions');ipcMain.handle('shell:regions',()=>({...cfg,presets:[mapped],displays:[...cfg.displays,{...cfg.displays[0],id:999,label:'映射测试显示器'}],presetDisplayIds:{[mapped.id]:999}}));
+    await page(m,"window.desktop.act('close-custom-capture')");for(let i=0;i<40&&await page(m,`Boolean(document.querySelector('.custom-capture'))`);i++)await wait(50);await page(m,"window.desktop.act('custom-capture')");for(let i=0;i<40&&!await page(m,`Boolean(document.querySelector('option[value="display-preset"]'))`);i++)await wait(50);await fill('选择区域预设',mapped.id);expect(await val('目标显示器')==='999','Valid local display mapping');checks.push('显示器映射契约 fixture 选择有效本机绑定');
+    await page(m,"window.desktop.act('close-custom-capture')");for(let i=0;i<40&&await page(m,`Boolean(document.querySelector('.custom-capture'))`);i++)await wait(50);
+    await page(m,"window.desktop.act('settings')");await wait(250);await click('截图');
+    await page(m,`document.querySelector('[aria-label="重启后记住上次区域"]').click()`);await wait(100);
+    const external={id:'external',name:'外部添加',width:800,height:600,ratio:null,delay:0};await page(m,`window.desktop.saveRegionPreset(${JSON.stringify(external)})`);await wait(200);
+    await page(m,`[...document.querySelectorAll('.l-save-bar button')].find(b=>b.textContent==='保存').click()`);await wait(300);
+    const settings=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)');expect(settings.regionPresets.some(p=>p.id==='external'),'Screenshot settings must preserve concurrently updated preset list');expect(settings.rememberRegionAcrossLaunches===false,'Memory setting saved');checks.push('截图设置草稿保留外部新增预设并保存记忆开关');await page(m,`document.querySelector('[aria-label="重启后记住上次区域"]').scrollIntoView({block:'center'})`);await wait(150);names.push(await save(m,'preset-memory-settings'));
+    const disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8'));expect(disk.screenshot.regionPresets.some(p=>p.id==='external'),'Persisted settings');
+    fs.writeFileSync(path.join(out,'presets-results.json'),JSON.stringify({status:'passed',checks,configurationPersistence:'real isolated Electron IPC and settings.json',capture:'stubbed to avoid initiating screen acquisition',localDisplayMapping:'fixture pending owner integration'},null,2));
+    return names;
+  }));
+
   // Capture surfaces from fixture states over a frame of the main window.
   saved.push(...await main(async ({ nativeImage }) => {
     const { find, wait, move, center, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs, out } = global.uiShots, names = [];
@@ -341,13 +412,18 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const states = {
       'overlay-loupe-retina': { ...base, image:'',backdrop:retinaBackdrop,width:W,height:H,pixelWidth:W*2,pixelHeight:H*2,pointer:{x:200.5,y:150.5},candidates:[],windows:[],mode:'rect',phase:'selecting',origin:'screen' },
       'overlay-handoff-error': { ...base,image:'',backdrop,width:W,height:H,windows,candidates:[{...sel,source:'element'}],mode:'area',phase:'selecting',origin:'screen' },
+      'overlay-fixed-region': { ...base,image:'',backdrop,width:W,height:H,mode:'rect',fixedSize:{width:400,height:240},phase:'selecting',origin:'screen'},
       'overlay-rect': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, candidates: [], windows: [], mode: 'rect', phase: 'selecting', origin: 'screen' },
       'overlay-area': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, candidates: [{ ...sel, source: 'element' }, { ...windows[0], source: 'window' }], windows, mode: 'area', phase: 'selecting', origin: 'screen' },
       'overlay-window': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, windows, mode: 'window', phase: 'selecting', origin: 'screen' },
       'overlay-scroll': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, candidates:[{...sel,source:'element'}],windows,mode:'scroll',phase:'selecting',origin:'screen' },
+      'overlay-cross-display-small': { ...base, image: '', backdrop:frame.crop({x:0,y:0,width:960,height:680}).toDataURL(),width:960,height:680,candidates:[],windows:[],mode:'rect',phase:'selecting',origin:'screen' },
+      'overlay-cross-display-return': { ...base, image: '', backdrop,width:W,height:H,candidates:[],windows:[],mode:'rect',phase:'selecting',origin:'screen' },
       'scroll-running': {...base,image:'',width:W,height:H,pixelWidth:W,pixelHeight:H,phase:'scrolling',scroll:scrolling,origin:'screen'},
       'scroll-paused': {...base,image:'',width:W,height:H,pixelWidth:W,pixelHeight:H,phase:'scrolling',scroll:{...scrolling,status:'paused',message:'匹配不可靠，已暂停并保留结果。请向上回到上次采集位置，再继续慢滚。'},origin:'screen'},
       'scroll-review': {...base,image:long.toDataURL(),width:W,height:H*3,pixelWidth:W,pixelHeight:H*3,phase:'review',scroll:{...scrolling,status:'review',message:'已结束采集。检查接缝后进入编辑；可撤回末段。'},origin:'screen'},
+      'editor-region': {...base,image:backdrop,backdrop,placement:sel,width:sel.width,height:sel.height,pixelWidth:sel.width,pixelHeight:sel.height,selection:{x:0,y:0,width:sel.width,height:sel.height},phase:'result',origin:'screen',editableRegion:{display:{id:1,bounds:{x:0,y:0,width:W,height:H},scaleFactor:1,rotation:0},sourceSize:{width:W,height:H},initialCrop:sel,currentCrop:sel,ratio:null}},
+      'editor-region-size': {...base,image:backdrop,backdrop,placement:sel,width:sel.width,height:sel.height,pixelWidth:sel.width,pixelHeight:sel.height,selection:{x:0,y:0,width:sel.width,height:sel.height},phase:'result',origin:'screen',editableRegion:{display:{id:1,bounds:{x:0,y:0,width:W,height:H},scaleFactor:1,rotation:0},sourceSize:{width:W,height:H},initialCrop:sel,currentCrop:sel,ratio:null}},
       'editor-inline': { ...base, image: crop.toDataURL(), backdrop, placement: sel, width: sel.width, height: sel.height, pixelWidth: sel.width, pixelHeight: sel.height, selection: { x: 0, y: 0, width: sel.width, height: sel.height }, phase: 'result', origin: 'screen' },
       'editor-transparent': { ...base, image: transparentImage.toDataURL(), width: 300, height: 200, pixelWidth: 300, pixelHeight: 200, selection: {x:0,y:0,width:300,height:200}, phase:'result', origin:'screen', presentation:'window' },
       'editor-capture-window': { ...base, image: backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, selection: { x: 0, y: 0, width: W, height: H }, phase: 'result', origin: 'screen', presentation: 'window', captureKind: 'screen' },
@@ -365,9 +441,30 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         crop: { x: 0, y: 0, width: W, height: H }, nextNumber: 1, privacy: []
       } }
     };
-    let state = null, exports = [];
+    states['editor-region-retina']={...states['editor-region'],image:retinaBackdrop,backdrop:retinaBackdrop,editableRegion:{...states['editor-region'].editableRegion,display:{...states['editor-region'].editableRegion.display,scaleFactor:2},sourceSize:{width:W*2,height:H*2},initialCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2},currentCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2}}};
+    states['editor-region-marks']={...states['editor-region'],annotations:{crop:sel,nextNumber:1,privacy:[],objects:[
+      {type:'Rect',left:430,top:220,width:100,height:60,fill:'transparent',stroke:'#e24a35',strokeWidth:4,lassoTool:'rectangle'},
+      {type:'Path',path:[['M',0,0],['L',120,40]],left:600,top:260,fill:'transparent',stroke:'#e24a35',strokeWidth:4,lassoTool:'arrow'},
+      {type:'Group',left:700,top:350,width:80,height:60,objects:[{type:'Rect',left:-40,top:-30,width:80,height:60,fill:'#171717',strokeWidth:0}],lassoTool:'number'}
+    ]}};
+    const layouts=[
+      ['bottom',{x:600,y:530,width:900,height:900},W,H],
+      ['top-left',{x:0,y:0,width:800,height:500},W,H],
+      ['top-right',{x:1760,y:0,width:800,height:500},W,H],
+      ['bottom-left',{x:0,y:1100,width:800,height:500},W,H],
+      ['bottom-right',{x:1760,y:1100,width:800,height:500},W,H],
+      ['large',{x:8,y:8,width:2544,height:1584},W,H],
+      ['narrow',{x:40,y:700,width:1400,height:500},760,650]
+    ];
+    for(const [name,crop,width,height] of layouts){
+      const image=frame.resize({width:width*2,height:height*2}).toDataURL();
+      states['editor-layout-'+name]={...states['editor-region'],image,backdrop:image,viewSize:{width,height},editableRegion:{display:{id:1,bounds:{x:0,y:0,width,height},scaleFactor:2,rotation:0},sourceSize:{width:width*2,height:height*2},initialCrop:crop,currentCrop:crop,ratio:null}};
+    }
+    let state = null, exports = [], regionUpdates=[],exportDelay=0;
+    ipcMain.removeHandler('ui-shots:region');ipcMain.handle('ui-shots:region',(_e,r)=>{regionUpdates.push(r);});
+    ipcMain.removeHandler('ui-shots:clear-region');ipcMain.handle('ui-shots:clear-region',e=>{const old=state;const w=BrowserWindow.fromWebContents(e.sender);w.webContents.send('ui-shots:changed',{...old,phase:'selecting'});setTimeout(()=>{state={...old,editId:'after-clear',annotations:undefined};w.webContents.send('ui-shots:changed',{...state,imageFrame:'fixture-image',backdropFrame:'fixture-backdrop'});},150);});
     ipcMain.removeHandler('ui-shots:state'); ipcMain.handle('ui-shots:state', () => state);
-    ipcMain.removeHandler('ui-shots:export'); ipcMain.handle('ui-shots:export', (_event, frame, action, format) => { exports.push({ frame, action, format }); return { error: null }; });
+    ipcMain.removeHandler('ui-shots:export'); ipcMain.handle('ui-shots:export', async (_event, frame, action, format) => { exports.push({ frame, action, format });if(exportDelay)await wait(exportDelay);return { error: null }; });
     ipcMain.removeHandler('ui-shots:pixels');ipcMain.handle('ui-shots:pixels',(_event,id)=>{
       const image=nativeImage.createFromDataURL(id==='fixture-backdrop'?state.backdrop:state.image),size=image.getSize(),data=image.toBitmap();
       for(let i=0;i<data.length;i+=4){const a=data[i+3],b=data[i],r=data[i+2];data[i]=a?Math.min(255,Math.round(r*255/a)):0;data[i+1]=a?Math.min(255,Math.round(data[i+1]*255/a)):0;data[i+2]=a?Math.min(255,Math.round(b*255/a)):0;}
@@ -375,22 +472,24 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     });
     const native=process.mainModule.require(path.join(process.cwd(),'dist/native/capture-native.node'));
     for (const [name, value] of Object.entries(states)) {
-      state = value; exports = [];
+      state = value; exports = [];regionUpdates=[];
       if(name.startsWith('overlay-')){
-        const source=nativeImage.createFromDataURL(value.backdrop),size=source.getSize(),frame=native.createFrame({...size,data:source.toBitmap(),logicalWidth:W,logicalHeight:H});
-        const options={frameId:frame.id,session:'ui-shots-native',mode:value.mode,windows:value.windows||[],candidates:value.candidates||[],pointer:value.pointer||{x:420,y:240}};
+        const source=nativeImage.createFromDataURL(value.backdrop),size=source.getSize(),frame=native.createFrame({...size,data:source.toBitmap(),logicalWidth:value.width,logicalHeight:value.height});
+        const options={fixedSize:value.fixedSize,frameId:frame.id,session:'ui-shots-native',mode:value.mode,windows:value.windows||[],candidates:value.candidates||[],pointer:value.pointer||{x:420,y:240}};
         native.show(options);if(name==='overlay-handoff-error')native.update({session:'ui-shots-native',message:'编辑器未能准备好，请重试或取消'});await wait(150);
         const saveNative=name=>{const pixels=native.render();fs.writeFileSync(path.join(out,name+'.png'),nativeImage.createFromBitmap(pixels.data,{width:pixels.width,height:pixels.height}).toPNG());names.push(name);};
         if(name==='overlay-loupe-retina'){
+          // Reapply the fixture pointer and sample synchronously, before live desktop mouse events run.
+          native.show(options);
           const sample=native.snapshot();if(sample.color!=='#EFCDAB'||!sample.position.includes('X 401 · Y 301'))throw Error('Native Retina loupe sampled the wrong pixel: '+JSON.stringify(sample));
           saveNative(name);
-          for(const [x,y] of [[1,1],[W-1,1],[1,H-1],[W-1,H-1]]){native.show({...options,pointer:{x,y}});await wait(30);const r=native.snapshot().loupe;if(r.x<0||r.y<0||r.x+r.width>W||r.y+r.height>H)throw Error('Native loupe leaves viewport');}
+          for(const [x,y] of [[1,1],[W-1,1],[1,H-1],[W-1,H-1]]){native.show({...options,pointer:{x,y}});const r=native.snapshot().loupe;await wait(30);if(r.x<0||r.y<0||r.x+r.width>W||r.y+r.height>H)throw Error('Native loupe leaves viewport');}
           saveNative('overlay-loupe-edge');
-        }else saveNative(name);
+        }else{native.show(options);if(name==='overlay-handoff-error')native.update({session:'ui-shots-native',message:'编辑器未能准备好，请重试或取消'});saveNative(name);}
         native.hide();native.release(frame.id);continue;
       }
 
-      const w = new BrowserWindow({ x: 40, y: 40, width: name.startsWith('scroll-')&&name!=='scroll-review'?700:W, height:name.startsWith('scroll-')&&name!=='scroll-review'?118:H, frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
+      const w = new BrowserWindow({ x: 40, y: 40, width: value.viewSize?.width??(name.startsWith('scroll-')&&name!=='scroll-review'?700:W), height:value.viewSize?.height??(name.startsWith('scroll-')&&name!=='scroll-review'?118:H), frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
       await w.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'screenshot' } });
       await wait(900);
       if (name === 'scroll-review') {await page(w,`document.querySelector('.scroll-seams button')?.click()`);await wait(300);}
@@ -398,6 +497,104 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       if (name === 'editor-transparent' && await page(w, `document.querySelector('canvas.lower-canvas').getContext('2d').getImageData(0,0,1,1).data[3]`) !== 0) throw Error('Transparent image was flattened in editor');
       if (name === 'editor-capture-window' && await page(w, `Boolean(document.querySelector('.editor-crop'))`)) throw Error('Capture result unexpectedly shows crop handles');
       if (name === 'editor-crop-active') { await page(w, `document.querySelector('.ed-tool[data-tip^="裁剪"]').click()`); await wait(250); if (!await page(w, `Boolean(document.querySelector('.editor-crop'))`)) throw Error('Crop tool did not show handles'); }
+      if(name==='editor-region'){
+        const regionRect=()=>page(w,`(()=>{const r=document.querySelector('.region-border').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()`);
+        const before=await regionRect();
+        w.webContents.sendInputEvent({type:'keyDown',keyCode:'Right'});w.webContents.sendInputEvent({type:'keyUp',keyCode:'Right'});await wait(150);
+        let r=await regionRect();if(r.x!==before.x+1||r.width!==before.width)throw Error('Region 1px nudge failed');
+        w.webContents.sendInputEvent({type:'keyDown',keyCode:'z',modifiers:['meta']});w.webContents.sendInputEvent({type:'keyUp',keyCode:'z',modifiers:['meta']});await wait(150);
+        r=await regionRect();if(r.x!==before.x)throw Error('Region undo failed');
+        const handle=await center(w,'.region-border [data-region-handle="w"]');
+        await move(w,...handle);
+        w.webContents.sendInputEvent({type:'mouseDown',x:Math.round(handle[0]),y:Math.round(handle[1]),button:'left',clickCount:1});await wait(80);
+        w.webContents.sendInputEvent({type:'mouseMove',x:Math.round(handle[0]-70),y:Math.round(handle[1]),modifiers:['leftButtonDown']});await wait(80);
+        w.webContents.sendInputEvent({type:'mouseUp',x:Math.round(handle[0]-70),y:Math.round(handle[1]),button:'left',clickCount:1});await wait(200);
+        r=await regionRect();if(r.x!==before.x-70||r.width!==before.width+70)throw Error('Outward region resize failed: '+JSON.stringify({before,r}));
+        await page(w,`document.querySelector('[aria-label="用于生图"]').click()`);for(let i=0;i<30&&!exports.length;i++)await wait(100);
+        if(exports.length!==1||exports[0].frame.crop.width!==before.width+70||exports[0].frame.crop.x!==before.x-70)throw Error('Expanded region output differs from geometry '+JSON.stringify({before,r,exports:exports.map(o=>({action:o.action,crop:o.frame.crop})),toast:await page(w,`document.querySelector('.ed-toast')?.textContent`)}));
+        fs.writeFileSync(path.join(out,'region-interactions.json'),JSON.stringify({nudge:true,undo:true,outwardResize:true,outputCrop:exports[0].frame.crop},null,2));
+      }
+      if(name==='editor-region-size'){
+        const result={};
+        const query=script=>page(w,script);
+        const rect=()=>query(`(()=>{const r=document.querySelector('.region-border').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height};})()`);
+        const click=async selector=>{await query(`document.querySelector(${JSON.stringify(selector)}).click()`);await wait(150);};
+        const press=async(key,modifiers=[])=>{w.webContents.sendInputEvent({type:'keyDown',keyCode:key,modifiers});w.webContents.sendInputEvent({type:'keyUp',keyCode:key,modifiers});await wait(150);};
+        const setInput=async(selector,text)=>{app.focus({steal:true});w.focus();w.webContents.focus();await wait(80);await query(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});el.focus();el.select();})()`);await w.webContents.insertText(String(text));await wait(100);};
+        const dims=()=>query(`Array.from(document.querySelectorAll('[aria-label="选区宽度"],[aria-label="选区高度"]')).map(e=>Number(e.value))`);
+        const expect=(ok,text)=>{if(!ok)throw Error(text);};
+        await click('[aria-label="设置选区尺寸"]');
+        await click('[aria-label="选区比例"] [role="radio"]:nth-child(2)');
+        let d=await dims();expect(d[0]===520&&d[1]===520,'Ratio did not synchronize inputs: '+JSON.stringify(d));
+        await setInput('[aria-label="自定义比例"]','1:2');
+        await query(`Array.from(document.querySelectorAll('.region-panel button')).find(b=>b.textContent==='应用比例').click()`);await wait(150);
+        d=await dims();const fitted=await rect();expect(d[0]===315&&d[1]===630&&fitted.y+fitted.height===800,'Ratio did not fit screen bottom: '+JSON.stringify({d,fitted}));
+        await query(`Array.from(document.querySelectorAll('.region-panel button')).find(b=>b.textContent==='恢复选区').click()`);await wait(150);
+        expect(await query(`document.querySelector('[aria-label="锁定当前宽高比"]').getAttribute('aria-pressed')`)==='false','Restore did not restore initial ratio');
+        await click('[aria-label="设置选区尺寸"]');await click('[aria-label="选区比例"] [role="radio"]:nth-child(2)');
+        await setInput('[aria-label="选区宽度"]','480');await query(`document.querySelector('[aria-label="选区宽度"]').blur()`);await wait(150);
+        d=await dims();expect(d[0]===480&&d[1]===480,'Locked input pair differs: '+JSON.stringify(d));
+        const focused=await rect();const updates=regionUpdates.length;
+        await query(`document.querySelector('[aria-label="选区宽度"]').focus()`);await press('Right');
+        expect(JSON.stringify(await rect())===JSON.stringify(focused)&&regionUpdates.length===updates,'Input arrow changed region');
+        await setInput('[aria-label="选区高度"]','333');await press('Escape');
+        expect(!await query(`Boolean(document.querySelector('.region-panel'))`),'Escape did not close dimensions');
+        await click('[aria-label="设置选区尺寸"]');d=await dims();expect(d[0]===480&&d[1]===480,'Escape applied uncommitted input: '+JSON.stringify(d));
+        result.ratioInputEscape=true;
+        names.push(await save(w,'region-dimensions-verified'));
+        await press('Escape');
+        await query(`document.querySelector('[aria-label="锁定当前宽高比"]').click()`);await wait(150);
+        const before=await rect(),commits=regionUpdates.length;
+        for(let i=0;i<3;i++){w.webContents.sendInputEvent({type:'keyDown',keyCode:'Right',isAutoRepeat:i>0});await wait(50);}
+        expect(regionUpdates.length===commits,'Key repeats committed before keyup');
+        expect((await rect()).x===before.x+3,'Repeat preview failed');
+        w.webContents.sendInputEvent({type:'keyUp',keyCode:'Right'});await wait(150);
+        expect(regionUpdates.length===commits+1,'Keyboard gesture did not commit once');
+        await press('z',['meta']);expect(JSON.stringify(await rect())===JSON.stringify(before),'Keyboard repeats were not one undo');
+        await press('Right',['shift']);expect((await rect()).width===before.width-1,'Shift shrink failed');
+        await press('Right',['meta']);expect((await rect()).width===before.width,'Command expansion failed');
+        result.keyboardBatchAndUndo=true;
+        const drag=async(dx,dy,{cancel=false,alt=false}={})=>{
+          if(alt){w.webContents.sendInputEvent({type:'keyDown',keyCode:'Alt',modifiers:['alt']});await wait(100);}
+          const r=await rect(),x=r.x+r.width/2,y=r.y+r.height/2;
+          await move(w,x,y);w.webContents.sendInputEvent({type:'mouseDown',x,y,button:'left',clickCount:1,modifiers:alt?['alt']:[]});await wait(80);
+          w.webContents.sendInputEvent({type:'mouseMove',x:x+dx,y:y+dy,modifiers:alt?['leftButtonDown','alt']:['leftButtonDown']});await wait(100);
+          if(cancel)await press('Escape');
+          w.webContents.sendInputEvent({type:'mouseUp',x:x+dx,y:y+dy,button:'left',clickCount:1,modifiers:alt?['alt']:[]});await wait(150);
+          if(alt){w.webContents.sendInputEvent({type:'keyUp',keyCode:'Alt'});await wait(80);}
+          return {before:r,after:await rect()};
+        };
+        const moved=await drag(20,10,{alt:true});expect(moved.after.x===moved.before.x+20&&moved.after.y===moved.before.y+10,'Option move failed '+JSON.stringify(moved));
+        expect(await query(`document.querySelector('[aria-label^="选字"]').getAttribute('aria-pressed')`)==='true','Option changed active tool');
+        await press('c');const canceled=await drag(30,15,{cancel:true});expect(JSON.stringify(canceled.after)===JSON.stringify(canceled.before),'Escape failed to roll back drag');
+        result.optionAndGestureCancel=true;
+        await click('[aria-label="设置选区尺寸"]');
+        await query(`document.querySelector('[aria-label="选区比例"] [role="radio"]:nth-child(2)').click()`);await wait(100);
+        await click('[aria-label="关闭尺寸面板"]');await press('o');
+        names.push(await save(w,'region-moved-verified'));
+        await query(`document.querySelector('.ed').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}))`);await wait(1000);
+        expect(await query(`Boolean(document.querySelector('.region-border'))`),'Same-frame reselect failed');
+        expect(await query(`document.querySelector('canvas.lower-canvas').width`)===1280,'Cached source was cleared when editor disposed');
+        result.sameFrameReselect=true;
+        exportDelay=700;await click('[aria-label="用于生图"]');
+        expect(await query(`document.querySelector('.region-size').inert`),'Output did not make dimensions inert');
+        const frozen=await rect();await press('Right');expect(JSON.stringify(await rect())===JSON.stringify(frozen),'Output allowed geometry mutation');
+        for(let i=0;i<100&&await query(`document.querySelector('.ed').getAttribute('aria-busy')==='true'`);i++)await wait(50);
+        expect(await query(`document.querySelector('.ed').getAttribute('aria-busy')==='false'`),'Output did not finish');exportDelay=0;result.outputBusy=true;
+        exports=[];await click('[aria-label="设置选区尺寸"]');
+        await query(`document.querySelector('[aria-label="选区宽度"]').focus()`);await press('Return');
+        expect(exports.length===0,'Dimension Enter triggered output');await press('Escape');
+        app.focus({steal:true});w.focus();w.webContents.focus();await press('Return');for(let i=0;i<100&&!exports.length;i++)await wait(50);
+        expect(exports.length===1&&exports[0].action==='copy','Enter did not copy current region once: '+JSON.stringify({exports:exports.map(e=>e.action),ui:await query(`({busy:document.querySelector('.ed').getAttribute('aria-busy'),focus:document.activeElement?.tagName,error:document.querySelector('.ed-toast')?.textContent})`)}));
+        for(let i=0;i<100&&await query(`document.querySelector('.ed').getAttribute('aria-busy')==='true'`);i++)await wait(50);
+        exports=[];const copyBox=await rect(),cx=copyBox.x+copyBox.width*.8,cy=copyBox.y+copyBox.height*.8;
+        await move(w,cx,cy);w.webContents.sendInputEvent({type:'mouseDown',x:cx,y:cy,button:'left',clickCount:2});w.webContents.sendInputEvent({type:'mouseUp',x:cx,y:cy,button:'left',clickCount:2});
+        for(let i=0;i<100&&!exports.length;i++)await wait(50);
+        expect(exports.length===1&&exports[0].action==='copy','Double click did not copy current region once');result.enterAndDoubleClick=true;
+
+
+        fs.writeFileSync(path.join(out,'interaction-verification.json'),JSON.stringify(result,null,2));
+      }
       if (name === 'editor-inline') { await wait(800); await page(w, `document.querySelector('[aria-label="箭头"]')?.click()`); await wait(500); }
       if (name.startsWith('editor-picker-') || name === 'editor-selected-annotation') {
         const picker = name.startsWith('editor-picker-');
@@ -412,7 +609,49 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         await wait(450);
         if (picker && !await page(w, `Boolean(document.querySelector('[aria-label="复制颜色"]'))`)) throw Error(name + ': picker controls did not appear');
       }
+      if(name==='editor-region-retina'){
+        const left=await page(w,`document.querySelector('.region-border').getBoundingClientRect().x`);
+        w.webContents.sendInputEvent({type:'keyDown',keyCode:'Right'});w.webContents.sendInputEvent({type:'keyUp',keyCode:'Right'});await wait(150);
+        const after=await page(w,`document.querySelector('.region-border').getBoundingClientRect().x`);
+        if(after-left!==.5)throw Error('Retina region did not move one physical pixel');
+        fs.writeFileSync(path.join(out,'retina-region-verification.json'),JSON.stringify({sourcePixelStep:1,displayPointStep:after-left},null,2));
+      }
+      if(name==='editor-region-marks'){
+        await page(w,`document.querySelector('[aria-label="贴图"]').click()`);for(let i=0;i<30&&!exports.length;i++)await wait(100);
+        const first=exports[0]?.frame.annotations; if(first?.objects.length!==3)throw Error('Marked source lost objects');exports=[];
+        w.webContents.sendInputEvent({type:'keyDown',keyCode:'Right',modifiers:['meta']});w.webContents.sendInputEvent({type:'keyUp',keyCode:'Right',modifiers:['meta']});await wait(150);
+        await page(w,`document.querySelector('[aria-label="贴图"]').click()`);for(let i=0;i<30&&!exports.length;i++)await wait(100);
+        const second=exports[0]?.frame.annotations;
+        if(second.crop.width!==first.crop.width+1||JSON.stringify(second.objects)!==JSON.stringify(first.objects))throw Error('Region resizing moved annotation coordinates');
+        fs.writeFileSync(path.join(out,'annotation-region-verification.json'),JSON.stringify({objects:second.objects.map(o=>o.type),samePositions:true,crop:second.crop},null,2));
+      }
+      if(name.startsWith('editor-layout-')){
+        const checks=[];
+        const inspect=async label=>{
+          await wait(400);
+          const result=await page(w,`(()=>{const selectors=['.region-size','.ed-chip','.ed-dock > .ed-panel','[aria-label="标注工具"]','[aria-label="输出"]','.ed-format-panel'];const boxes=selectors.flatMap(s=>[...document.querySelectorAll(s)].map(e=>{const r=e.getBoundingClientRect();return {s,x:r.x,y:r.y,width:r.width,height:r.height};}));const overlaps=[];for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++){const a=boxes[i],b=boxes[j];if(a.x<b.x+b.width-.5&&a.x+a.width>b.x+.5&&a.y<b.y+b.height-.5&&a.y+a.height>b.y+.5)overlaps.push([a.s,b.s]);}const outside=boxes.filter(b=>b.x<0||b.y<0||b.x+b.width>innerWidth+.5||b.y+b.height>innerHeight+.5);const blocked=[...document.querySelectorAll('.ed-dock button:not(:disabled),.ed-dock input')].filter(e=>{const r=e.getBoundingClientRect();return r.width&&r.height&&!e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}).map(e=>e.getAttribute('aria-label')||e.textContent);return {boxes,overlaps,outside,blocked};})()`);
+          if(result.overlaps.length||result.outside.length||result.blocked.length)throw Error(name+' '+label+' '+JSON.stringify(result));
+          checks.push({label,...result});
+        };
+        const click=async selector=>{const p=await center(w,selector);const hit=await page(w,`(()=>{const e=document.querySelector(${JSON.stringify(selector)}),r=e.getBoundingClientRect();return e.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));})()`);if(!hit)throw Error(name+' cannot hit '+selector);w.webContents.sendInputEvent({type:'mouseDown',x:Math.round(p[0]),y:Math.round(p[1]),button:'left',clickCount:1});w.webContents.sendInputEvent({type:'mouseUp',x:Math.round(p[0]),y:Math.round(p[1]),button:'left',clickCount:1});await wait(350);};
+        await click('[aria-label="矩形"]');await inspect('style');
+        await click('[aria-label="设置选区尺寸"]');await inspect('dimensions');names.push(await save(w,name+'-dimensions'));
+        await click('[aria-label="文字识别选项"]');await inspect('OCR');names.push(await save(w,name+'-ocr'));
+        await click('[aria-label="保存格式"]');await inspect('format');
+        await click('[role="menuitemradio"]');await inspect('closed');
+        fs.writeFileSync(path.join(out,name+'.json'),JSON.stringify(checks,null,2));
+      }
       names.push(await save(w, name));
+      if (name === 'editor-window') {
+        const checks=[];
+        for (const width of [760,1020]) {
+          w.setSize(width,650);await wait(250);
+          const layout=await page(w,`(()=>{const z=document.querySelector('.ed-zoom').getBoundingClientRect(),b=document.querySelector('.ed-primary').getBoundingClientRect();return {zoom:{x:z.x,y:z.y,width:z.width,height:z.height},copy:{x:b.x,y:b.y,width:b.width,height:b.height},copyUncovered:Boolean(document.elementFromPoint(b.x+b.width/2,b.y+b.height/2)?.closest('.ed-primary'))&&b.x>=0&&b.y>=0&&b.right<=innerWidth&&b.bottom<=innerHeight,overlap:z.x<b.right&&z.right>b.x&&z.y<b.bottom&&z.bottom>b.y};})()`);
+          if(layout.overlap||!layout.copyUncovered)throw Error('Window zoom obscures output at '+width+': '+JSON.stringify(layout));
+          checks.push({width,...layout});names.push(await save(w,'editor-window-'+width));
+        }
+        fs.writeFileSync(path.join(out,'window-output-layout.json'),JSON.stringify(checks,null,2));
+      }
       if (name === 'editor-local-file') {
         await page(w, `(() => { const button = document.querySelector('[aria-label="用于生图"]'); if (!button || button.disabled) throw Error('Editor generation entry is unavailable'); button.click(); })()`);
         for (let pass = 0; pass < 40 && !exports.length; pass++) await wait(100);

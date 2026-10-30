@@ -1,3 +1,4 @@
+import type { CustomCaptureRequest,RegionPreset } from '../shared/capture-regions';
 import { validateScreenshotSettings, type ScreenshotSettings } from '../shared/screenshot-settings';
 import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle, WebContents } from 'electron';
@@ -16,6 +17,8 @@ import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts,
 import { fitToWorkArea, placeNear } from './position';
 import { SelectionCapture } from './selection';
 import { WindowMotion } from './motion';
+import { initializeWindowPresence, setWindowPresence } from './window-presence';
+import { validMemorySettings, type MemorySettings } from '../shared/memory';
 import { ActionBar } from './action-bar';
 import { TaskManager } from './tasks';
 import { readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
@@ -84,7 +87,7 @@ function layout() {
   const [width, height] = win.getContentSize();
   // Footer rows sit below the page: the app notice, then the active task's delivery progress.
   const rows = (state.notice || state.captureEfficiency.phase!=='idle' ? 1 : 0) + (tasks.snapshot().delivery ? 1 : 0);
-  tasks.layout({ x: 0, y: HEADER_HEIGHT, width, height: Math.max(0, height - HEADER_HEIGHT - rows * FOOTER_ROW) }, !state.settingsOpen && !state.inputOpen && !palette);
+  tasks.layout({ x: 0, y: HEADER_HEIGHT, width, height: Math.max(0, height - HEADER_HEIGHT - rows * FOOTER_ROW) }, !state.customCaptureOpen && !state.settingsOpen && !state.inputOpen && !palette);
 }
 async function openPalette(scope: PaletteScope) {
   showWindow();
@@ -103,6 +106,7 @@ function closePalette(restore = true) {
 }
 function showWindow() {
   if (!win) return;
+  setWindowPresence(win, true);
   // A display may have been disconnected while the window was hidden.
   const area = screen.getDisplayMatching(win.getBounds()).workArea;
   win.setBounds(state.expanded ? area : fitToWorkArea(win.getBounds(), area));
@@ -110,8 +114,13 @@ function showWindow() {
   motion.show();
   app.focus({ steal: true });
   win.focus();
-  if (!state.settingsOpen && !state.inputOpen && !palette) tasks.focus();
+  if (!state.customCaptureOpen && !state.settingsOpen && !state.inputOpen && !palette) {
+    tasks.focus();
+    // Start the preferred page after the launcher is shown; reuse it on the next web action.
+    setImmediate(() => { if (!quitting) tasks.warmPreferred(); });
+  }
 }
+function openCustomCapture(){closePalette(false);state.customCaptureOpen=true;layout();showWindow();win.webContents.focus();publish();}
 function openSettings() {
   capture?.configure(state.settings);
   closePalette(false);
@@ -203,8 +212,10 @@ function updateTray() {
     { label: '新任务…', click: () => void openPalette('new') },
     { label: '图片生成…', click: () => { void openPalette('images'); } },
     { label: '生图结果…', click: () => { void media.show(); } },
+    ...(screenshots?.sleeping?[{label:'恢复休眠中的图片编辑',click:()=>screenshots.focus()}]:[]),
     { label: captureModeLabels.rect, enabled:!capturePending, accelerator: state.settings.captureShortcuts.rect || undefined, click: () => void startScreenshot('rect') },
     { label: captureModeLabels.area, enabled:!capturePending, accelerator: state.settings.captureShortcuts.area || undefined, click: () => void startScreenshot('area') },
+    { label:'自定义截图…',click:()=>openCustomCapture() },
     { label: '更多截图方式', submenu: [
       ...captureModes.filter(mode => mode !== 'area' && mode !== 'rect').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.captureShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
       {type:'separator'},
@@ -444,9 +455,18 @@ function installIPC() {
   ipcMain.handle('agent:model', (event, id: string, model: string) => { assertLocal(event); return result(() => tasks.agentModel(id, model)); });
   ipcMain.handle('agent:answer', (event, id: string, requestId: string, answer: AgentAnswer) => { assertLocal(event); return result(() => tasks.agentAnswer(id, requestId, answer)); });
   ipcMain.handle('shell:ocr-languages', event => { assertLocal(event); return screenshots.supportedLanguages(); });
+  ipcMain.handle('shell:memory',(event,options:MemorySettings)=>{
+    assertLocal(event);
+    try{
+      if(!validMemorySettings(options))throw Error('休眠时间请输入 1–1440 的整数分钟');
+      const next={...state.settings,memory:{enabled:options.enabled,idleMinutes:options.idleMinutes}};
+      writeSettings(settingsPath,next);state.settings=next;
+      screenshots.memoryChanged();tasks.memoryChanged();publish();return {error:null};
+    }catch(error){return {error:(error as Error).message};}
+  });
   ipcMain.handle('shell:screenshot-settings', (event, options: ScreenshotSettings) => {
     assertLocal(event);
-    try { validateScreenshotSettings(options, screenshots.supportedLanguages()); const next = { ...state.settings, screenshot: options }; writeSettings(settingsPath, next); state.settings = next; publish(); return { error: null }; }
+    try { validateScreenshotSettings(options, screenshots.supportedLanguages()); const next = { ...state.settings, screenshot: options }; writeSettings(settingsPath, next); state.settings = next; screenshots.syncRegionPreferences(); publish(); return { error: null }; }
     catch (error) { return { error: (error as Error).message }; }
   });
   ipcMain.handle('shell:capture', (event, options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>) => { assertLocal(event); return saveCaptureSettings(options); });
@@ -475,6 +495,8 @@ function installIPC() {
       case 'expand': expand(); break;
       case 'hide': motion.hide(); break;
       case 'settings': openSettings(); break;
+      case 'custom-capture':openCustomCapture();break;
+      case 'close-custom-capture':state.customCaptureOpen=false;layout();publish();break;
       case 'close-settings': state.settingsOpen = false; layout(); publish(); break;
       case 'reload': await tasks.reload(); break;
       case 'quit': requestQuit(); break;
@@ -489,6 +511,10 @@ function installIPC() {
       default: throw new Error('不支持的窗口操作');
     }
   });
+  ipcMain.handle('shell:regions',event=>{assertLocal(event);return screenshots.regionConfiguration();});
+  ipcMain.handle('shell:region-save',(event,p:RegionPreset)=>{assertLocal(event);screenshots.saveRegionPreset(p);});
+  ipcMain.handle('shell:region-delete',(event,id:string)=>{assertLocal(event);screenshots.deleteRegionPreset(id);});
+  ipcMain.handle('shell:custom-screenshot',async(event,r:CustomCaptureRequest)=>{assertLocal(event);try{const result=await screenshots.customCapture(r);if(result.status==='failed'||result.status==='reselect-required')return {error:result.error};state.customCaptureOpen=false;layout();publish();return {error:null};}catch(error){return {error:(error as Error).message};}});
   ipcMain.handle('shell:screenshot', async (event, mode: EfficiencyCaptureMode,delay:CaptureDelay=0) => { assertLocal(event); if ((mode==='repeat'||captureModes.includes(mode))&&[0,3,5,10].includes(delay)) await startScreenshot(mode,delay); });
   ipcMain.handle('shell:screenshot-cancel',event=>{assertLocal(event);screenshots.efficiency.cancel();});
   ipcMain.handle('shell:capture-shortcut', (event, mode:CaptureMode, shortcut:string) => {
@@ -525,6 +551,7 @@ function installIPC() {
   });
 }
 async function boot() {
+  initializeWindowPresence();
   prewarmNativeCapture();
   mkdirSync(app.getPath('userData'), { recursive: true });
   settingsPath = join(app.getPath('userData'), 'settings.json');
@@ -546,14 +573,15 @@ async function boot() {
     icon: join(app.getAppPath(), 'assets/lasso-icon.png'),
     webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true }
   });
+  setWindowPresence(win, true);
   motion = new WindowMotion(win);
-  tasks = new TaskManager(win, secureRemote, () => { layout(); publish(); }, () => state.settings, images, event => win.webContents.send('agent:changed', event), () => state.presets);
+  tasks = new TaskManager(win, secureRemote, () => { layout(); publish(); }, () => state.settings, images, event => win.webContents.send('agent:changed', event));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', event => event.preventDefault());
   win.on('resize', layout);
   win.on('hide', () => closePalette());
   win.on('close', event => {
-    if (!quitting) { event.preventDefault(); motion.hide(); }
+    if (!quitting) { event.preventDefault(); setWindowPresence(win, false); motion.hide(); }
     else tasks.dispose();
   });
   app.on('browser-window-blur', deferHide);
@@ -626,7 +654,7 @@ async function boot() {
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
-  }, () => { const visible=win.isVisible()||actionBar.window.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings);
+  }, () => { const visible=win.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{writeSettings(settingsPath,{...state.settings,screenshot:preferences});state.settings={...state.settings,screenshot:preferences};publish();});
   const mediaDirectory = join(app.getPath('userData'), 'generated-media');
   mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
   state.presets = migrateImagePresets(presetsPath, mediaDirectory);
@@ -648,7 +676,7 @@ async function boot() {
     if(next.error)state.notice=next.error;
     layout();publish();
     if(!captureTrayPending){captureTrayPending=true;setImmediate(()=>{captureTrayPending=false;if(!quitting)updateTray();});}
-    if(starting){actionBar.hide();motion.show(true);}
+    if(starting){actionBar.hide();setWindowPresence(win,true);motion.show(true);}
     if(next.error)showWindow();
   });
   for (const mode of captureModes) {
@@ -656,14 +684,13 @@ async function boot() {
     if (error) console.warn('[screenshot]', mode, error);
   }
   capture.configure(state.settings);
-  tasks.warmPreferred();
-  if (!state.settingsOpen) tasks.newChat(true, { target: state.settings.lastTarget });
+  // The launcher stays task-free; showWindow prepares one reusable preferred webpage.
   showWindow();
 }
 if (!hasLock) app.quit();
 else {
   app.on('second-instance', showWindow);
-  app.on('activate', showWindow);
+  app.on('activate', () => { if (!BrowserWindow.getAllWindows().some(window => window.isVisible() || window.isMinimized())) showWindow(); });
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
   app.on('before-quit', () => { quitting = true; screenshots?.dispose(); });

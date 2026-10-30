@@ -106,6 +106,7 @@
 
 /* Zoom, loupe, toast */
 .ed-zoom { position: absolute; z-index: 3; right: 20px; bottom: 26px; display: flex; align-items: center; gap: 2px; height: 32px; padding: 0 3px; border-radius: 10px; }
+.ed-window .ed-zoom { top: 48px; bottom: auto; }
 .ed-zoom button { width: 26px; height: 26px; display: grid; place-items: center; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); }
 .ed-zoom button:hover { background: var(--clay-wash); color: var(--clay-ink); }
 .ed-zoom svg { width: 13px; height: 13px; }
@@ -137,3 +138,35 @@
 
 /* Transparency checker is a display-only pattern; it never enters the image canvas. */
 .ed-stage { background-color: var(--surface); background-image: conic-gradient(var(--sand) 25%, transparent 0 50%, var(--sand) 0 75%, transparent 0); background-size: 16px 16px; }
+
+/* Editable screen regions use source pixels and keep annotation positions fixed. */
+.region-events { position:absolute; inset:0; z-index:2; }
+.region-border { position:absolute; outline:1.5px solid var(--clay); pointer-events:none; }
+.region-border .editor-crop-handle { width:9px; height:9px; margin:-4.5px; border-radius:2px; }
+.region-edge { position:absolute; pointer-events:auto; }
+.region-edge.n,.region-edge.s { left:0; right:0; height:6px; cursor:ns-resize; }
+.region-edge.n { top:-3px; } .region-edge.s { bottom:-3px; }
+.region-edge.e,.region-edge.w { top:0; bottom:0; width:6px; cursor:ew-resize; }
+.region-edge.e { right:-3px; } .region-edge.w { left:-3px; }
+.region-size { position:absolute; z-index:4; display:flex; background:var(--bg); border-radius:8px; box-shadow:var(--shadow-window); }
+.region-size .ed-tool[aria-pressed="true"] { color:var(--clay-ink); background:var(--clay-wash); }
+.region-panel { position:absolute; top:36px; left:0; width:340px; max-height:calc(100vh - 72px); overflow:auto; padding:12px; display:flex; flex-direction:column; gap:10px; background:var(--bg); color:var(--ink); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow-window); }
+.region-panel label { display:flex; align-items:center; gap:6px; }
+.region-panel input { min-width:0; width:100%; }
+.region-panel .l-row { display:flex; align-items:center; gap:8px; }
+.region-panel svg { width:14px; height:14px; }
+.ed-inline .ed-stage { background:none; }
+.ed-region .ed-hole { transition:none; animation:none; }
+
+/* Inline controls share one measured stack; expanded panels take space in that stack. */
+.ed-inline .ed-dock, .ed-inline .ed-dock.up { flex-direction:column; align-items:stretch; max-height:calc(100vh - 16px); overflow:auto; }
+.ed-meta { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:8px; }
+.ed-size-host { flex-shrink:0; }
+.ed-inline .region-size { position:static; flex-wrap:wrap; max-width:340px; }
+.ed-inline .region-panel { position:static; flex:0 0 100%; max-height:none; margin-top:8px; }
+.ed-inline .ed-chip { position:relative; flex-wrap:wrap; align-self:flex-start; height:auto; min-height:32px; max-width:100%; }
+.ed-inline .ed-chip.open { width:260px; }
+.ed-inline .ed-chip-main { max-width:100%; min-width:0; }
+.ed-inline .ed-chip .ed-pop { position:static; flex:0 0 100%; width:100%; margin-top:8px; }
+.ed-inline .ed-panel { align-self:flex-end; flex-shrink:0; }
+.ed-inline .ed-format-panel { position:static; display:flex; align-self:flex-end; width:auto; }

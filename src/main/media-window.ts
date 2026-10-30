@@ -8,6 +8,7 @@ import { writeFile } from 'node:fs/promises';
 import { MediaService } from './media-service';
 import type { MediaFontSettings, MediaGenerateRequest, MediaOutputAction, MediaState, MediaDraft } from '../shared/media';
 import { fitToWorkArea } from './position';
+import { setWindowPresence } from './window-presence';
 
 /** Owns the local media surface; jobs live in the service even when this window is hidden. */
 export class MediaWindow {
@@ -19,6 +20,8 @@ export class MediaWindow {
   private channels: string[] = [];
   private draft: MediaDraft | null = null;
   private preparing = false;
+  private ready: Promise<void> | null = null;
+  private closeAfterOutput = false;
   constructor(directory: string, private edit: (image: NativeImage) => Promise<void>, private pin: (image: NativeImage) => Promise<void>, private fontSettings: () => Readonly<MediaFontSettings>, private choosePreset: () => Promise<void>) {
     app.on('before-quit', this.beforeQuit);
     this.service = new MediaService(directory, {
@@ -35,12 +38,17 @@ export class MediaWindow {
       ipcMain.handle(name, (event, ...args) => { this.assertLocal(event); return fn(...args); });
     };
     handle('media:state', () => this.snapshot());
+    handle('media:draft', (id:string,prompt:string) => {
+      if(this.draft?.id!==id)return;
+      if(typeof prompt!=='string'||prompt.length>100000)throw Error('生图提示词过长');
+      this.draft.prompt=prompt;
+    });
     handle('media:set-reference', (id: string | null) => this.snapshot(this.service.selectReference(id)));
     handle('media:generate', (request: MediaGenerateRequest) => this.generate(request));
-    handle('media:choose-preset', async () => { this.win?.hide(); await this.choosePreset(); });
+    handle('media:choose-preset', async () => { this.closeWindow(); await this.choosePreset(); });
     handle('media:restore', (id: string, edit: boolean, imageId?: string) => this.restore(id, edit, imageId));
     handle('media:remove', (id: string) => this.snapshot(this.service.remove(id)));
-    handle('media:hide', () => { this.win?.hide(); });
+    handle('media:hide', () => { this.closeWindow(); });
     handle('media:output', (id: string, action: MediaOutputAction, imageId?: string) => this.output(id, action, imageId));
   }
   private assertLocal(event: IpcMainInvokeEvent) {
@@ -63,13 +71,23 @@ export class MediaWindow {
       this.win = win;
       win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       win.webContents.on('will-navigate', event => event.preventDefault());
-      win.on('close', event => { if (!this.quitting) { event.preventDefault(); win.hide(); } });
-      await win.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'quick-image' } });
+      win.on('close', event => { if(this.outputting&&!this.quitting){event.preventDefault();this.closeAfterOutput=true;win.hide();} });
+      win.on('closed',()=>{if(this.win===win){this.win=null;this.ready=null;}});
+      this.ready=win.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'quick-image' } });
     }
+    await this.ready;
     const win = this.win;
+    if(!win||win.isDestroyed())return;
+    setWindowPresence(win, true);
     this.publish();
     win.setBounds(fitToWorkArea(win.getBounds(), screen.getDisplayMatching(win.getBounds()).workArea));
     win.show(); win.focus();
+  }
+  private closeWindow(){
+    const win=this.win;if(!win)return;
+    win.hide();setWindowPresence(win,false);
+    if(this.outputting){this.closeAfterOutput=true;return;}
+    setImmediate(()=>{if(!win.isDestroyed())win.close();});
   }
   async prepare(preset: Preset, prompt: string, reference?: NativeImage) {
     if (preset.kind !== 'image' || preset.target !== 'api' || !preset.image) throw Error('请选择 New API 生图预设');
@@ -110,14 +128,14 @@ export class MediaWindow {
       if (image.isEmpty()) throw Error('结果图片无法读取');
       if (action === 'copy') await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })]);
       else if (action === 'pin') await this.pin(image);
-      else if (action === 'edit') { await this.edit(image); this.win?.hide(); }
+      else if (action === 'edit') { await this.edit(image); this.closeAfterOutput=true; this.win?.hide(); }
       else {
         const result = await dialog.showSaveDialog(this.win!, { defaultPath: 'Lasso-image.png', filters: [{ name: 'PNG 图片', extensions: ['png'] }] });
         if (!result.canceled && result.filePath) await writeFile(result.filePath, png);
       }
       return { error: null };
     } catch (error) { return { error: (error as Error).message }; }
-    finally { this.outputting = false; }
+    finally { this.outputting = false; if(this.closeAfterOutput){this.closeAfterOutput=false;this.closeWindow();} }
   }
   dispose() { this.quitting = true; app.off('before-quit', this.beforeQuit); for (const channel of this.channels) ipcMain.removeHandler(channel); this.win?.destroy(); }
 }

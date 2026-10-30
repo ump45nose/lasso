@@ -1,9 +1,10 @@
 import type { WebContents } from 'electron';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { ExecutionCatalog, ExecutionProfile } from '../../shared/contracts';
+import { sameWebEffortLabel, webEffortId, webEffortIndex } from '../../shared/web-effort';
 
 type Kind = 'model' | 'effort';
-type Command = 'inspect' | 'open' | 'choose' | 'dismiss' | 'focus-slider';
+type Command = 'inspect' | 'open' | 'choose' | 'dismiss' | 'move-slider';
 interface Option { id: string; label: string; selected: boolean }
 interface Slider { min: number; max: number; value: number; label: string; disabled: boolean; announcedPosition: number | null }
 type MenuAction = 'popup' | 'models' | 'effort' | 'gemini-effort';
@@ -17,9 +18,12 @@ const sameVisibleLabel = (left: string, right: string) => Boolean(left && right)
 function profileBridge(target: 'chatgpt' | 'gemini', kind: Kind, command: Command, wanted: string): Control {
   const visible = (el: Element) => el.getClientRects().length > 0 && !el.closest('[inert], [aria-hidden="true"]');
   const norm = (s: string | null) => (s || '').replace(/\s+/g, ' ').trim();
-  const label = (el: Element) => norm(el.getAttribute('aria-label') || el.textContent);
+  // Animated labels keep the outgoing text in an aria-hidden sibling.
+  const text = (node: Node): string => node instanceof Element && node.matches('[inert], [aria-hidden="true"]') ? ''
+    : node.nodeType === Node.TEXT_NODE ? node.textContent || '' : [...node.childNodes].map(text).join('');
+  const label = (el: Element) => norm(el.getAttribute('aria-label') || text(el));
   const buttons = [...document.querySelectorAll<HTMLElement>('button, [role="button"]')].filter(visible);
-  const shared = target === 'chatgpt' ? [...document.querySelectorAll<HTMLElement>('[data-codex-intelligence-trigger]')].find(visible) : null;
+  const shared = target === 'chatgpt' ? [...document.querySelectorAll<HTMLElement>('[data-codex-intelligence-trigger], [data-composer-navigation-target="reasoning"][aria-haspopup="menu"]')].find(visible) : null;
   const modelTrigger = shared || [...document.querySelectorAll<HTMLElement>('[data-testid="model-switcher-dropdown-button"], [data-test-id="bard-mode-menu-button"], [data-test-id="model-selector"]')].find(visible)
     || buttons.find(el => target === 'chatgpt' ? /^(选择 ChatGPT 模型|Select ChatGPT model|Choose ChatGPT model)$/i.test(label(el)) : /^(打开模式选择器|Open mode picker|Show model picker)/i.test(label(el)));
   const legacy = buttons.filter(el => kind === 'model'
@@ -59,16 +63,21 @@ function profileBridge(target: 'chatgpt' | 'gemini', kind: Kind, command: Comman
     : root && kind === 'model' && shared && !entries.length && toggle ? 'models'
     : root && kind === 'effort' && shared && !slider && selected ? 'effort'
     : root && kind === 'effort' && gemEffort && gemEffort.getAttribute('aria-expanded') !== 'true' ? 'gemini-effort' : null;
-  const result: Control = { options: entries.map(e => e.option), trigger: trigger ? norm(trigger.innerText) || label(trigger) : '', opened: Boolean(root), clicked: false, slider, shared: Boolean(shared), action };
+  const result: Control = { options: entries.map(e => e.option), trigger: trigger ? norm(text(trigger)) || label(trigger) : '', opened: Boolean(root), clicked: false, slider, shared: Boolean(shared), action };
   if (command === 'open' && action && (!wanted || wanted === action)) {
     const element = action === 'popup' ? trigger : action === 'models' ? toggle : action === 'effort' ? selected : gemEffort;
-    element?.click(); result.clicked = Boolean(element);
+    if (action === 'popup' && target === 'chatgpt') element?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', code: 'ArrowDown', bubbles: true, cancelable: true }));
+    else element?.click();
+    result.clicked = Boolean(element);
   } else if (command === 'choose') {
     const matches = entries.filter(e => e.option.id === wanted);
     if (matches.length === 1) { matches[0].element.click(); result.clicked = true; }
-  } else if (command === 'focus-slider' && slider && !slider.disabled && thumb instanceof HTMLElement) {
-    // Arrow keys must reach the focusable thumb, not the surrounding menu.
-    thumb.focus({ preventScroll: true }); result.clicked = document.activeElement === thumb;
+  } else if (command === 'move-slider' && slider && !slider.disabled && sliderControl && (wanted === 'ArrowLeft' || wanted === 'ArrowRight')) {
+    // The site's keyboard control owns stepping; the Radix thumb is aria-hidden.
+    // Dispatch there so hidden catalog pages work without native window focus.
+    sliderControl.dispatchEvent(new KeyboardEvent('keydown', { key: wanted, code: wanted, bubbles: true, cancelable: true }));
+    sliderControl.dispatchEvent(new KeyboardEvent('keyup', { key: wanted, code: wanted, bubbles: true, cancelable: true }));
+    result.clicked = true;
   } else if (command === 'dismiss' && root && trigger) {
     if (target === 'gemini') trigger.click();
     else root.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
@@ -78,37 +87,35 @@ function profileBridge(target: 'chatgpt' | 'gemini', kind: Kind, command: Comman
 export class WebProfile {
   constructor(private contents: WebContents, private target: 'chatgpt' | 'gemini') {}
   private key(model: string) { return JSON.stringify([this.target, model]); }
-  static hasEffortPosition(target: 'chatgpt' | 'gemini', profile: ExecutionProfile) {
-    // A default-model preset must first resolve the site's current model.
-    return Boolean(profile.model && sliderCatalogs.get(JSON.stringify([target, profile.model]))?.choices.some(option => option.id === profile.effort));
-  }
   private rememberPosition(model: string, slider: Slider) {
     const key = this.key(model); const previous = sliderCatalogs.get(key);
     const sameRange = previous?.min === slider.min && previous.max === slider.max;
-    const previousPoint = previous?.choices.find(option => option.index === slider.value);
-    const choices = sameRange && (!previousPoint || previousPoint.id === slider.label) ? previous!.choices.filter(option => option.index !== slider.value) : [];
-    if (slider.label) choices.push({ id: slider.label, label: slider.label, index: slider.value, selected: true });
+    const choices = sameRange ? previous!.choices.filter(option => option.index !== slider.value) : [];
+    if (slider.label) choices.push({ id: webEffortId(slider), label: slider.label, index: slider.value, selected: true });
     const catalog = { min: slider.min, max: slider.max, choices };
     sliderCatalogs.set(key, catalog); return catalog;
   }
   private knownChoices(model: string, slider: Slider) {
     const cached = sliderCatalogs.get(this.key(model));
-    return cached?.min === slider.min && cached.max === slider.max
-      && cached.choices.some(option => option.index === slider.value && option.id === slider.label) ? cached.choices : [];
+    return cached?.min === slider.min && cached.max === slider.max ? cached.choices : [];
   }
   private modelFromText(text: string) {
     const models = new Set<string>();
     for (const [key, catalog] of sliderCatalogs) {
       const [target, model] = JSON.parse(key) as [string, string];
-      if (target === this.target && model && catalog.choices.some(option => sameVisibleLabel(option.id, text))) models.add(model);
+      if (target === this.target && model && catalog.choices.some(option => sameWebEffortLabel(option.label, text, model))) models.add(model);
     }
     return models.size === 1 ? [...models][0] : null;
   }
   private modelMatches(model: string, text: string) { return sameVisibleLabel(text, model) || this.modelFromText(text) === model; }
+  private effortMatches(value: string, slider: Slider, model: string) {
+    return value.startsWith('slider:') ? webEffortIndex(value, slider) === slider.value : sameWebEffortLabel(value, slider.label, model);
+  }
   private summaryMatches(profile: ExecutionProfile, control: Control) {
+    const effortLabel = sliderCatalogs.get(this.key(profile.model || ''))?.choices.find(option => option.id === profile.effort)?.label || profile.effort || '';
     return control.shared && !control.opened
       && (!profile.model || this.modelMatches(profile.model, control.trigger))
-      && (!profile.effort || sameVisibleLabel(control.trigger, profile.effort));
+      && (!profile.effort || sameWebEffortLabel(control.trigger, effortLabel, profile.model));
   }
   private read(kind: Kind, command: Command = 'inspect', wanted = ''): Promise<Control> {
     return this.contents.executeJavaScriptInIsolatedWorld(1001, [{ code: `(${profileBridge.toString()})(${JSON.stringify(this.target)},${JSON.stringify(kind)},${JSON.stringify(command)},${JSON.stringify(wanted)})` }], command !== 'inspect');
@@ -119,9 +126,13 @@ export class WebProfile {
       signal.throwIfAborted();
       const result = await this.read(kind);
       if (result.options.length || result.slider || i >= (kind === 'model' ? 80 : 24)) return result;
-      if (result.action && !attempted.has(result.action)) {
+      // ArrowDown requests open rather than toggling. Retry only while the
+      // native picker is still closed, including during initial hydration.
+      if (result.action && ((this.target === 'chatgpt' && result.action === 'popup') || !attempted.has(result.action))) {
         const changed = await this.read(kind, 'open', result.action);
-        if (changed.clicked && changed.action) attempted.add(changed.action);
+        if (changed.clicked && changed.action) {
+          attempted.add(changed.action);
+        }
       }
       await delay(100, undefined, { signal });
     }
@@ -148,12 +159,9 @@ export class WebProfile {
         if (current.slider.label && (current.slider.announcedPosition === null || current.slider.announcedPosition === value - current.slider.min + 1)) return current.slider;
         await delay(50, undefined, { signal }); continue;
       }
-      const focused = await this.read('effort', 'focus-slider');
-      if (!focused.clicked || !focused.slider) throw new Error('网页思考强度控件未能获得焦点；尚未发送。');
       signal.throwIfAborted();
-      const keyCode = value < focused.slider.value ? 'Left' : 'Right';
-      this.contents.sendInputEvent({ type: 'keyDown', keyCode });
-      this.contents.sendInputEvent({ type: 'keyUp', keyCode });
+      const moved = await this.read('effort', 'move-slider', value < current.slider.value ? 'ArrowLeft' : 'ArrowRight');
+      if (!moved.clicked) throw new Error('网页思考强度控件暂不可用；尚未发送。');
       await delay(100, undefined, { signal });
     }
     throw new Error('网页思考强度滑杆暂未响应；尚未发送。');
@@ -166,21 +174,35 @@ export class WebProfile {
     try {
       for (let index = slider.min; index <= slider.max; index++) {
         const actual = await this.moveSlider(index, signal);
-        choices.push({ id: actual.label, label: actual.label, selected: index === slider.value, index });
+        choices.push({ id: webEffortId(actual), label: actual.label, selected: index === slider.value, index });
       }
     } finally { await this.moveSlider(slider.value, AbortSignal.timeout(5000)); }
     sliderCatalogs.set(this.key(model), { min: slider.min, max: slider.max, choices });
     return choices;
   }
-  private async select(kind: Kind, value: string, signal: AbortSignal, model = '') {
-    const before = await this.options(kind, signal);
+  private async select(kind: Kind, value: string, signal: AbortSignal, model = '', prepareEffort?: (model: string) => Promise<void>) {
+    let before = await this.options(kind, signal);
     if (before.slider) {
       this.rememberPosition(model, before.slider);
-      if (before.slider.label === value) return;
-      const option = this.knownChoices(model, before.slider).find(o => o.id === value);
-      if (!option) throw new Error(`思考档位「${value}」的位置尚未确认，请刷新预设选项；尚未发送。`);
-      const actual = await this.moveSlider(option.index, signal);
-      if (actual.label !== value) throw new Error('未能确认网页思考强度切换成功；尚未发送。');
+      if (this.effortMatches(value, before.slider, model)) return;
+      let index = webEffortIndex(value, before.slider);
+      if (value.startsWith('slider:') && index === null) throw new Error('网页思考档位已变化，请刷新预设选项；尚未发送。');
+      let option = this.knownChoices(model, before.slider).find(o => o.id === value || sameWebEffortLabel(o.label, value, model));
+      if (index === null && !option && prepareEffort) {
+        // Discover positions offscreen only when this page needs an unknown one.
+        await this.dismiss(kind);
+        await prepareEffort(model);
+        signal.throwIfAborted();
+        before = await this.options(kind, signal);
+        if (!before.slider) throw new Error('未找到网页思考强度滑杆；尚未发送。');
+        if (this.effortMatches(value, before.slider, model)) return;
+        index = webEffortIndex(value, before.slider);
+        option = this.knownChoices(model, before.slider).find(o => o.id === value || sameWebEffortLabel(o.label, value, model));
+      }
+      if (index === null && !option) throw new Error(`思考档位「${value}」的位置尚未确认，请刷新预设选项；尚未发送。`);
+      const actual = await this.moveSlider(index ?? option!.index, signal);
+      if (!this.effortMatches(value, actual, model)) throw new Error('未能确认网页思考强度切换成功；尚未发送。');
+      this.rememberPosition(model, actual);
       return;
     }
     const option = before.options.find(o => o.id === value);
@@ -202,22 +224,22 @@ export class WebProfile {
       if (!actual.options.find(o => o.id === value)?.selected && actual.trigger !== value && !actual.trigger.endsWith(' ' + value)) throw new Error('未能确认网页选项切换成功；尚未发送。');
     }
   }
-  async choose(kind: Kind, value: string, signal: AbortSignal, model = '') {
-    try { await this.select(kind, value, signal, model); }
+  async choose(kind: Kind, value: string, signal: AbortSignal, model = '', prepareEffort?: (model: string) => Promise<void>) {
+    try { await this.select(kind, value, signal, model, prepareEffort); }
     finally { await this.dismiss(kind); }
   }
-  async apply(profile: ExecutionProfile, signal: AbortSignal) {
+  async apply(profile: ExecutionProfile, signal: AbortSignal, prepareEffort?: (model: string) => Promise<void>) {
     if (!profile.model && !profile.effort) return;
     const initial = await this.read('model');
     if (this.summaryMatches(profile, initial)) return;
     if (!initial.shared) {
       if (profile.model) await this.choose('model', profile.model, signal);
-      if (profile.effort) await this.choose('effort', profile.effort, signal, profile.model || '');
+      if (profile.effort) await this.choose('effort', profile.effort, signal, profile.model || '', prepareEffort);
       return;
     }
     try {
       if (profile.model && !this.modelMatches(profile.model, initial.trigger)) await this.select('model', profile.model, signal);
-      if (profile.effort) await this.select('effort', profile.effort, signal, profile.model || '');
+      if (profile.effort) await this.select('effort', profile.effort, signal, profile.model || '', prepareEffort);
     } finally { await this.dismiss(profile.effort ? 'effort' : 'model'); }
   }
   async verify(profile: ExecutionProfile, signal: AbortSignal) {
@@ -226,7 +248,8 @@ export class WebProfile {
     if (this.summaryMatches(profile, initial)) return;
     const check = (kind: Kind, actual: Control) => {
       const wanted = profile[kind]!;
-      if (actual.slider ? actual.slider.label !== wanted : !actual.options.some(o => o.id === wanted && (o.selected || actual.trigger === wanted || actual.trigger.endsWith(' ' + wanted)))) throw new Error(`发送前未能确认预设${kind === 'model' ? '模型' : '思考强度'}「${wanted}」，内容已保留。`);
+      const wantedLabel = kind === 'effort' && wanted.startsWith('slider:') ? sliderCatalogs.get(this.key(profile.model || ''))?.choices.find(option => option.id === wanted)?.label || '已保存的网页档位' : wanted;
+      if (actual.slider ? !this.effortMatches(wanted, actual.slider, profile.model || '') : !actual.options.some(o => o.id === wanted && (o.selected || actual.trigger === wanted || actual.trigger.endsWith(' ' + wanted)))) throw new Error(`发送前未能确认预设${kind === 'model' ? '模型' : '思考强度'}「${wantedLabel}」，内容已保留。`);
     };
     if (initial.shared) {
       try {
@@ -244,7 +267,7 @@ export class WebProfile {
     if (!models.options.length) throw new Error('未读取到网页模型菜单。请在目标网页完成登录或处理遮挡菜单的提示，再刷新选项。');
     const currentModel = models.options.find(o => o.selected)?.id || models.options.find(o => models.trigger === o.id || models.trigger.endsWith(' ' + o.id))?.id || '';
     const before = await this.options('effort', signal);
-    const originalEffort = before.slider?.label || before.options.find(o => o.selected)?.id || '';
+    const originalEffort = before.slider ? webEffortId(before.slider) : before.options.find(o => o.selected)?.id || '';
     if (before.slider) this.rememberPosition(currentModel, before.slider);
     await this.dismiss('effort');
     const changing = Boolean(model && model !== currentModel);
@@ -255,7 +278,7 @@ export class WebProfile {
       const selectedModel = model || currentModel;
       const efforts = actual.slider ? await this.sliderOptions(selectedModel, actual.slider, signal, refresh) : actual.options;
       if (!model && actual.slider) sliderCatalogs.set(this.key(''), sliderCatalogs.get(this.key(selectedModel))!);
-      return { models: models.options.map(o => ({ id: o.id, label: o.label })), efforts: efforts.map(o => o.id), currentModel: model || currentModel, currentEffort: efforts.find(o => o.selected)?.id || '' };
+      return { models: models.options.map(o => ({ id: o.id, label: o.label })), efforts: efforts.map(o => o.id), effortOptions: efforts.map(o => ({ id: o.id, label: o.label })), currentModel: model || currentModel, currentEffort: efforts.find(o => o.selected)?.id || '' };
     } finally {
       await this.dismiss('effort');
       if (changing) {

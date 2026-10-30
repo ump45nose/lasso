@@ -1,15 +1,15 @@
-import { BrowserWindow, WebContentsView, clipboard } from 'electron';
+import { app, BrowserWindow, WebContentsView, clipboard } from 'electron';
 import type { Rectangle, WebContents } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { ChatGPTAdapter, isRestoredPage } from './adapters/chatgpt';
 import { GeminiAdapter } from './adapters/gemini';
-import { WebProfile } from './adapters/web-profile';
 import { AgentSession } from './agents/session';
 import { CodexRuntime } from './agents/codex';
 import { revealPage } from './motion';
 import { Images, type ImageInput } from './images';
 import type { PageSnapshot } from './adapters/chatgpt';
-import { isIdleCandidate, IDLE_RELEASE_MS } from './task-policy';
+import { isIdleCandidate } from './task-policy';
+import { idleMilliseconds } from '../shared/memory';
 import type { DeliveryStatus, DeliveryStep, Preset, ShellState, TaskActivity, TaskSummary, Target, LaunchOptions, Settings, AgentState, AgentAnswer, AgentEvent, ExecutionCatalog } from '../shared/contracts';
 
 const homes = { chatgpt: 'https://chatgpt.com/', gemini: 'https://gemini.google.com/app' };
@@ -86,9 +86,10 @@ export class TaskManager {
     private changed: () => void,
     private settings: () => Settings,
     private images: Images,
-    private agentChanged: (event: AgentEvent) => void,
-    private presets: () => Preset[]
+    private agentChanged: (event: AgentEvent) => void
   ) {
+    this.window.on('hide',()=>{if(this.active)this.active.lastActivityAt=Date.now();});
+    this.window.on('minimize',()=>{if(this.active)this.active.lastActivityAt=Date.now();});
     this.timer = setInterval(() => void this.poll(), 3000);
   }
   private notify() {
@@ -119,12 +120,8 @@ export class TaskManager {
     if (standby) { clearTimeout(standby.expires); this.destroyPage(standby.task); }
   }
   private warmTargets() {
-    const targets = new Set<WebTarget>();
-    for (const target of [this.settings().lastTarget, ...this.presets().filter(p => p.enabled).map(p => p.target)]) {
-      if (target === 'api') continue;
-      if (target === 'chatgpt' || target === 'gemini') targets.add(target);
-    }
-    return targets;
+    const target = this.settings().lastTarget;
+    return new Set<WebTarget>(target === 'chatgpt' || target === 'gemini' ? [target] : []);
   }
   warmPreferred() {
     if (this.disposed) return;
@@ -132,17 +129,27 @@ export class TaskManager {
     for (const [target, standby] of this.standbys) {
       if (!targets.has(target) && !standby.busy) this.discardStandby(target);
     }
-    for (const target of targets) this.getStandby(target);
+    for (const target of targets) {
+      // Give the user's loading page priority over preparing the next spare page.
+      const active = this.active;
+      if (active?.target !== target || !active.loading && !active.preparing) this.getStandby(target);
+    }
   }
+  private get idleMs(){return idleMilliseconds(this.settings().memory);}
+  memoryChanged(){for(const [target,standby] of this.standbys)this.armExpiry(target,standby);void this.poll();}
   private armExpiry(target: WebTarget, standby: Standby) {
     clearTimeout(standby.expires);
+    if(!Number.isFinite(this.idleMs))return;
     standby.expires = setTimeout(() => {
       if (this.standbys.get(target) === standby && !standby.busy) this.discardStandby(target);
-    }, IDLE_RELEASE_MS);
+    }, Math.max(0,standby.task.lastActivityAt+this.idleMs-Date.now()));
   }
   private getStandby(target: WebTarget) {
     const existing = this.standbys.get(target);
-    if (existing && (existing.busy || (!existing.task.error && existing.task.view && !existing.task.view.webContents.isDestroyed()))) return existing;
+    if (existing && (existing.busy || (!existing.task.error && existing.task.view && !existing.task.view.webContents.isDestroyed()))) {
+      existing.task.lastActivityAt = Date.now(); this.armExpiry(target, existing);
+      return existing;
+    }
     this.discardStandby(target);
     const task = this.makeTask('待命', true, { target });
     this.attach(task); task.view!.setBounds(this.lastBounds);
@@ -322,6 +329,7 @@ export class TaskManager {
       task.loading = false; this.notify();
       if (task.visible) revealPage(contents);
       void this.observe(task);
+      if (this.tasks.has(task.id)) this.scheduleWarm();
     });
     const navigated = (url: string) => { task.url = url; this.notify(); };
     contents.on('did-navigate', (_event, url) => navigated(url));
@@ -363,7 +371,9 @@ export class TaskManager {
     if (task.agent) { void task.agent.start().catch(() => {}); return; }
     if (!fresh) {
       // The existing Open ChatGPT entry still opens the site as-is, including its saved draft.
-      void this.navigate(task, task.target === 'gemini' ? homes.gemini : homes.chatgpt).catch(() => {});
+      const navigation = task.warmNavigation ?? this.navigate(task, task.target === 'gemini' ? homes.gemini : homes.chatgpt);
+      task.warmNavigation = undefined;
+      void navigation.then(() => { if (this.tasks.has(task.id)) this.scheduleWarm(); }).catch(() => {});
       return;
     }
     const controller = task.controller = new AbortController();
@@ -467,13 +477,8 @@ export class TaskManager {
       if (!task.filled && (task.preset!.model || task.preset!.effort)) {
         step = 'model';
         this.delivery(task, { phase: 'waiting', message: '正在应用预设模型与思考强度…', canCopy: Boolean(text), step });
-        if (task.target === 'chatgpt' && task.preset!.effort && !WebProfile.hasEffortPosition('chatgpt', task.preset!)) {
-          // Old presets learn native positions on a hidden page, never by
-          // sweeping the visible task's slider back and forth.
-          await this.executionCatalog(task.target, task.preset!.model || '');
-          controller.signal.throwIfAborted();
-        }
-        await adapter.applyProfile(task.preset!, controller.signal);
+        await adapter.applyProfile(task.preset!, controller.signal, task.target === 'chatgpt'
+          ? async model => { await this.executionCatalog('chatgpt', model); } : undefined);
       }
       if (!task.filled) {
         if (task.preset!.temporaryChat) await adapter.verifyTemporary(controller.signal);
@@ -573,24 +578,24 @@ export class TaskManager {
   }
   private eligible(task: Task) {
     return this.tasks.has(task.id) && !task.preset?.temporaryChat && isIdleCandidate({
-      active: task.id === this.activeId, resident: Boolean(task.view), activity: this.status(task),
+      active: task.id === this.activeId && this.window.isVisible() && !this.window.isMinimized() && !app.isHidden(), resident: Boolean(task.view), activity: this.status(task),
       hasDraft: task.hasDraft, pending: Boolean(task.controller || task.pendingText || task.resumeUrl || task.image), hasPopup: task.popups.size > 0,
       restoreUrl: task.restoreUrl, lastActivityAt: task.lastActivityAt
-    }, Date.now());
+    }, Date.now(),this.idleMs);
   }
   private async poll() {
     if (this.polling) return;
     this.polling = true;
     try {
       const codex = [...this.tasks.values()].filter(t => t.target === 'codex' && t.agent?.state.resident);
-      this.runtime.closeIfIdle(IDLE_RELEASE_MS);
-      if (codex.length && codex.every(t => t.id !== this.activeId && t.agent!.canRelease && Date.now() - t.lastActivityAt >= IDLE_RELEASE_MS)) {
+      this.runtime.closeIfIdle(this.idleMs);
+      if (codex.length && codex.every(t => (t.id !== this.activeId || !this.window.isVisible() || this.window.isMinimized() || app.isHidden()) && t.agent!.canRelease && Date.now() - t.lastActivityAt >= this.idleMs)) {
         for (const task of codex) task.agent!.release();
         this.runtime.closeIfUnused();
       }
       for (const task of [...this.tasks.values()]) {
         if (task.agent) {
-          if (task.target === 'pi' && task.agent.state.resident && task.id !== this.activeId && task.agent.canRelease && Date.now() - task.lastActivityAt >= IDLE_RELEASE_MS) task.agent.release();
+          if (task.target === 'pi' && task.agent.state.resident && (task.id !== this.activeId || !this.window.isVisible() || this.window.isMinimized() || app.isHidden()) && task.agent.canRelease && Date.now() - task.lastActivityAt >= this.idleMs) task.agent.release();
           continue;
         }
         if (!await this.observe(task)) continue;
@@ -603,7 +608,7 @@ export class TaskManager {
     const responseId = task.observed?.responseId;
     if (!responseId) {
       task.retainedReason = '无法确认回答已保存，保留页面';
-      task.retryReleaseAt = Date.now() + IDLE_RELEASE_MS; this.notify();
+      task.retryReleaseAt = Date.now() + this.idleMs; this.notify();
       return;
     }
     // A conversation-shaped URL alone does not prove that the website can restore it.
@@ -635,7 +640,7 @@ export class TaskManager {
       }
     }
     if (!this.tasks.has(task.id)) return;
-    task.retryReleaseAt = Date.now() + IDLE_RELEASE_MS;
+    task.retryReleaseAt = Date.now() + this.idleMs;
     if (!verified) {
       task.retainedReason = '恢复链接暂不可用，保留页面'; this.notify();
       return;

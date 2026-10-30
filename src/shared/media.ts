@@ -102,6 +102,7 @@ export interface MediaState extends MediaFontSettings { jobs: MediaJob[]; refere
 export interface MediaGenerateRequest { requestId: string; draftId: string; prompt: string }
 export type MediaOutputAction = 'copy' | 'save' | 'pin' | 'edit';
 export interface MediaAPI {
+  saveDraft(id: string, prompt: string): Promise<void>;
   state(): Promise<MediaState>;
   onState(callback: (state: MediaState) => void): () => void;
   setReference(id: string | null): Promise<MediaState>;

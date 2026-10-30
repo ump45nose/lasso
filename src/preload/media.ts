@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { MediaAPI, MediaState } from '../shared/media';
 
 const api: MediaAPI = {
+  saveDraft: (id,prompt) => ipcRenderer.invoke('media:draft',id,prompt),
   state: () => ipcRenderer.invoke('media:state'),
   onState: callback => {
     const listener = (_event: Electron.IpcRendererEvent, state: MediaState) => callback(state);

@@ -18,6 +18,8 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
   const [height, setHeight] = useState(String(settings.scrollMaxHeight));
   const dirty = JSON.stringify(draft) !== JSON.stringify(settings) || height !== String(settings.scrollMaxHeight);
   useEffect(() => { void window.desktop.ocrLanguages().then(setSupported).catch(e => setError(String(e))); }, []);
+  // Presets can change through the custom-capture panel while other settings are drafted.
+  useEffect(() => { setDraft(current => ({ ...current, regionPresets: structuredClone(settings.regionPresets) })); }, [settings.regionPresets]);
   const patch = (next: Partial<Preferences>) => { setDraft(value => ({ ...value, ...next })); setError(''); setSaved(false); };
   function action(kind: ScreenshotKind, key: keyof ScreenshotActions) {
     setError(''); setSaved(false);
@@ -47,6 +49,7 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
         {draft.format === 'jpeg' && <li><p className="l-field-help">透明区域以{draft.background === 'solid' ? '所选背景色' : '白色'}填充。</p></li>}
         <li><div className="l-row-label"><span>保存时缩小至 1×</span><span>仅缩小保存文件，编辑、复制和贴图保留原始像素。</span></div><Switch label="保存时缩小至 1×" value={draft.resizeTo1x} change={() => patch({ resizeTo1x: !draft.resizeTo1x })} /></li>
       </ul>
+      <div className="l-set-row-head l-gap"><h3>区域记忆</h3></div><ul className="l-group"><li><div className="l-row-label"><span>重启后记住上次区域</span></div><Switch label="重启后记住上次区域" value={draft.rememberRegionAcrossLaunches} change={() => patch({ rememberRegionAcrossLaunches: !draft.rememberRegionAcrossLaunches })} /></li></ul>
       <div className="l-set-row-head l-gap"><h3>窗口外观</h3><span>窗口截图与前台窗口截图</span></div>
       <ul className="l-group">
         <li><span>背景</span><Segmented label="窗口截图背景" value={draft.background} onChange={background => patch({ background })} options={ [['transparent', '透明'], ['solid', '纯色']] } /></li>

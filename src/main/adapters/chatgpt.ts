@@ -140,7 +140,7 @@ function pageBridge(command: PageCommand, expected = ''): PageSnapshot {
 export class ChatGPTAdapter {
   private submitAttempted = false;
   constructor(protected contents: WebContents, private bridge = pageBridge, private target: 'chatgpt' | 'gemini' = 'chatgpt') {}
-  applyProfile(profile: ExecutionProfile, signal: AbortSignal) { return new WebProfile(this.contents, this.target).apply(profile, signal); }
+  applyProfile(profile: ExecutionProfile, signal: AbortSignal, prepareEffort?: (model: string) => Promise<void>) { return new WebProfile(this.contents, this.target).apply(profile, signal, prepareEffort); }
   verifyProfile(profile: ExecutionProfile, signal: AbortSignal) { return new WebProfile(this.contents, this.target).verify(profile, signal); }
   catalog(model: string, signal: AbortSignal, refresh = false): Promise<ExecutionCatalog> { return new WebProfile(this.contents, this.target).catalog(model, signal, refresh); }
   private read(command: PageCommand = 'read', expected = ''): Promise<PageSnapshot> {

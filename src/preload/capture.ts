@@ -1,6 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ScreenshotAPI, ScreenshotState } from '../shared/capture';
 const api: ScreenshotAPI = {
+  onSuspend: callback => {
+    const listener = (_event: Electron.IpcRendererEvent, editId: string) => {
+      void ipcRenderer.invoke('screenshot:checkpoint', editId, callback()).catch(()=>{});
+    };
+    ipcRenderer.on('screenshot:suspend', listener);
+    return () => ipcRenderer.removeListener('screenshot:suspend', listener);
+  },
+  updateRegion:r=>ipcRenderer.invoke('screenshot:region',r),
+  lastRegion:()=>ipcRenderer.invoke('screenshot:last-region'),
+  clearRegion:()=>ipcRenderer.invoke('screenshot:clear-region'),
+  startScroll:crop=>ipcRenderer.invoke('screenshot:start-scroll',crop),
+  regions:()=>ipcRenderer.invoke('screenshot:regions'),
+  saveRegionPreset:p=>ipcRenderer.invoke('screenshot:save-region-preset',p),
   ready:(id,editId)=>ipcRenderer.send('screenshot:ready',id,editId),
   state:()=>ipcRenderer.invoke('screenshot:state'),
   onState:callback=>{const listener=(_e:Electron.IpcRendererEvent,s:ScreenshotState|null)=>callback(s);ipcRenderer.on('screenshot:changed',listener);return()=>ipcRenderer.removeListener('screenshot:changed',listener);},

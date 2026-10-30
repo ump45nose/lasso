@@ -1,5 +1,5 @@
 import { ActiveSelection, Canvas, Circle, Ellipse, FabricImage, FabricObject, FabricText, Group, IText, Line, Path, PencilBrush, Rect, util, type BasicTransformEvent } from 'fabric';
-import type { AnnotationSnapshot, CaptureRect } from '../../shared/capture';
+import type { AnnotationSnapshot, CaptureRect, EditorCheckpoint } from '../../shared/capture';
 import { constrainedEnd } from './annotation-geometry';
 
 export type Tool = 'text-select' | 'select' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'pen' | 'highlight' | 'text' | 'number' | 'redact' | 'mosaic' | 'blur' | 'crop' | 'picker';
@@ -33,8 +33,8 @@ export class AnnotationEditor {
   private pasteOffset = 0;
   private pointer: { x: number; y: number } | null = null;
   private shift = false;
-  constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void) {
-    this.crop = { x:0,y:0,width:source.width,height:source.height };
+  constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void, initialCrop?:CaptureRect) {
+    this.crop = initialCrop?{...initialCrop}:{ x:0,y:0,width:source.width,height:source.height };
     this.canvas = new Canvas(element, { width:source.width,height:source.height,enableRetinaScaling:false,preserveObjectStacking:true,selection:false,altActionKey:undefined,backgroundColor:'',renderOnAddRemove:false });
     this.canvas.backgroundImage = new FabricImage(source,{originX:'left',originY:'top'});
     this.canvas.on('mouse:down',e=>this.down(e.scenePoint,e.target));
@@ -50,11 +50,12 @@ export class AnnotationEditor {
   }
   get canUndo(){return this.cursor>0&&!this.restoring;}
   get canRedo(){return this.cursor<this.history.length-1&&!this.restoring;}
+  get canSuspend(){return !this.restoring&&!this.start&&!this.draft&&!this.cropDraft&&!this.isEditingText;}
   get count(){return this.canvas.getObjects().length;}
   get hasSelection(){return this.canvas.getActiveObjects().length>0;}
   get hasCopiedObjects(){return Boolean(this.objectClipboard);}
-  get contentKey(){return this.history[this.cursor];}
-  snapshot(): Snapshot {return {objects:this.canvas.getObjects().map(serializeMark),crop:{...this.crop},nextNumber:this.number,privacy:this.privacy};}
+  get contentKey(){return this.history[this.cursor]+JSON.stringify(this.crop);}
+  snapshot(visibleOnly=false): Snapshot {return {objects:this.canvas.getObjects().filter(o=>{const r=o.getBoundingRect();return !visibleOnly||intersects({x:r.left,y:r.top,width:r.width,height:r.height},this.crop);}).map(o=>({...serializeMark(o),...(visibleOnly?{lassoBounds:(()=>{const r=o.getBoundingRect();return {x:r.left,y:r.top,width:r.width,height:r.height};})()}: {})})),crop:{...this.crop},nextNumber:this.number,privacy:this.privacy};}
   async load(snapshot: Snapshot){
     this.restoring=true;
     try{
@@ -64,6 +65,15 @@ export class AnnotationEditor {
       this.crop={...snapshot.crop};this.number=snapshot.nextNumber;this.history=[];this.cursor=-1;
       this.setTool(this.tool);this.save();this.canvas.requestRenderAll();
     }finally{this.restoring=false;}
+  }
+  checkpoint(): Pick<EditorCheckpoint, 'history' | 'cursor' | 'tool' | 'style' | 'objectClipboard'> {
+    return { history: [...this.history], cursor: this.cursor, tool: this.tool, style: {...this.style}, objectClipboard: this.objectClipboard };
+  }
+  async restoreCheckpoint(checkpoint: EditorCheckpoint) {
+    await this.load(JSON.parse(checkpoint.history[checkpoint.cursor]) as Snapshot);
+    this.history = [...checkpoint.history]; this.cursor = checkpoint.cursor;
+    this.style = {...checkpoint.style}; this.objectClipboard = checkpoint.objectClipboard;
+    this.setTool(checkpoint.tool as Tool);
   }
   get isEditingText(){return this.canvas.getActiveObject() instanceof IText && (this.canvas.getActiveObject() as IText).isEditing;}
   get privacy(){return this.canvas.getObjects().filter(o=>['redact','mosaic','blur'].includes((o as Mark).lassoTool||'')).map(o=>{const r=o.getBoundingRect();return {x:r.left,y:r.top,width:r.width,height:r.height};});}
@@ -162,12 +172,13 @@ export class AnnotationEditor {
     }
     o.setCoords();this.commit();this.canvas.requestRenderAll();
   }
-  applyCrop(r: CaptureRect){
+  applyCrop(r: CaptureRect,save=true){
     if(r.width<2||r.height<2)return;
     const x=Math.max(0,Math.min(this.source.width-2,Math.round(r.x))),y=Math.max(0,Math.min(this.source.height-2,Math.round(r.y)));
     this.crop={x,y,width:Math.min(Math.round(r.width),this.source.width-x),height:Math.min(Math.round(r.height),this.source.height-y)};
-    this.commit();
+    if(save)this.commit();else this.changed();
   }
+  commitCrop(){this.commit();}
   resetCrop(){this.crop={x:0,y:0,width:this.source.width,height:this.source.height};this.commit();}
   /** The clipboard belongs to this editor session. It never writes the system image clipboard. */
   copy(){

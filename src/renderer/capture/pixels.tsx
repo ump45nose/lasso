@@ -15,6 +15,11 @@ export function clearCapturePixels(){
   for(const image of images.values())void image.then(canvas=>{canvas.width=canvas.height=0;}).catch(()=>{});
   images.clear();
 }
+/** Drop superseded frame canvases once an editor owns its own copy. */
+export function retainCapturePixels(state:ScreenshotState){
+  const keep=new Set([state.imageFrame,state.backdropFrame].filter(Boolean).map(id=>state.id+':'+id));
+  for(const [key,task] of images){if(keep.has(key))continue;images.delete(key);void task.then(canvas=>{canvas.width=canvas.height=0;}).catch(()=>{});}
+}
 export function captureCanvas(state:ScreenshotState,frameId:string):Promise<HTMLCanvasElement>{
   const key=state.id+':'+frameId,existing=images.get(key);if(existing)return existing;
   const task=new Promise<{width:number;height:number;data:ArrayBuffer}>((resolve,reject)=>{const ticket=window.screenshot.requestPixels({sessionId:state.id,frameId});pending.set(ticket,{resolve,reject});}).then(pixels=>{

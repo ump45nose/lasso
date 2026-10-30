@@ -1,3 +1,5 @@
+import type { CaptureDisplayBinding } from './capture-efficiency';
+import type { RegionPreset, RegionConfiguration } from './capture-regions';
 import type { ScreenshotKind } from './screenshot-settings';
 export interface CaptureRect { x: number; y: number; width: number; height: number }
 export interface RegionCandidate extends CaptureRect { source: 'window' | 'element' | 'edge' | 'color' | 'screen' }
@@ -6,6 +8,21 @@ export interface OCRGlyph extends CaptureRect { text: string }
 export interface OCRLine extends CaptureRect { text: string; glyphs: OCRGlyph[]; confidence: number }
 export interface OCRResult { id: string; revision: number; lines: OCRLine[] }
 export interface AnnotationSnapshot { objects: Record<string, unknown>[]; crop: CaptureRect; nextNumber: number; privacy: CaptureRect[] }
+export interface EditorCheckpoint {
+  revision: number;
+  regionRatio?: number | null;
+  history: string[];
+  cursor: number;
+  tool: string;
+  style: { color: string; width: number; fontSize: number };
+  objectClipboard: Record<string, unknown>[] | null;
+  zoom: number;
+  scrollLeft: number;
+  scrollTop: number;
+  format: 'png' | 'jpeg';
+  ocrMode: OCRMode;
+  enhance: boolean;
+}
 export interface CaptureFrame { id: string; revision: number; crop: CaptureRect; png: Uint8Array; annotations?: AnnotationSnapshot }
 export type OCRMode = 'text' | 'code';
 export interface OCRRequest extends CaptureFrame { mode: OCRMode; enhance: boolean; force?: boolean }
@@ -18,7 +35,8 @@ export const captureModeLabels: Record<CaptureMode, string> = { rect: '框选截
 export interface CaptureWindow extends CaptureRect { id: number }
 export interface ScrollCaptureState { status: 'running' | 'paused' | 'review'; width: number; height: number; segments: number; seams: number[]; message: string }
 export type ScrollCaptureAction = 'pause' | 'resume' | 'finish' | 'cancel' | 'undo' | 'edit';
-export interface ScreenshotState { pointer?: { x: number; y: number }; captureKind?: ScreenshotKind; presentation?: 'inline' | 'window'; pixelScale?: { x: number; y: number }; saveFormat?: 'png' | 'jpeg'; outputStatus?: string; outputError?: string; id: string; editId: string; imageCrop?: CaptureRect; imageFrame?: string; backdropFrame?: string; placement?: CaptureRect; mode?: 'rect' | 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
+export interface EditableRegion { display:CaptureDisplayBinding; sourceSize:{width:number;height:number}; initialCrop:CaptureRect; currentCrop:CaptureRect; ratio:number|null }
+export interface ScreenshotState { checkpoint?: EditorCheckpoint; editableRegion?:EditableRegion; copyIntent?:number; pointer?: { x: number; y: number }; captureKind?: ScreenshotKind; presentation?: 'inline' | 'window'; pixelScale?: { x: number; y: number }; saveFormat?: 'png' | 'jpeg'; outputStatus?: string; outputError?: string; id: string; editId: string; imageCrop?: CaptureRect; imageFrame?: string; backdropFrame?: string; placement?: CaptureRect; mode?: 'rect' | 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
 export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean }
 export type PinAction = 'recognize' | 'edit' | 'image' | 'copy' | 'close' | 'hide' | 'topmost' | 'opacity' | 'zoom-in' | 'zoom-out' | 'passthrough';
 /** Pin opacity steps; the options row cycles through them. */
@@ -34,6 +52,14 @@ export function pixelRect(r: CaptureRect, width: number, height: number, pixelWi
   return {x,y,width:Math.max(1,Math.min(pixelWidth-x,Math.round(r.width*pixelWidth/width))),height:Math.max(1,Math.min(pixelHeight-y,Math.round(r.height*pixelHeight/height)))};
 }
 export interface ScreenshotAPI {
+  onSuspend(callback: () => EditorCheckpoint | null): () => void;
+  updateRegion(request:{id:string;revision:number;crop:CaptureRect}):Promise<void>;
+  lastRegion():Promise<CaptureRect|null>;
+  clearRegion():Promise<void>;
+  startScroll(crop:CaptureRect):Promise<{error:string|null}>;
+  regions():Promise<RegionConfiguration>;
+  saveRegionPreset(preset:RegionPreset):Promise<void>;
+
   ready(id: string, editId: string): void;
   loadError(editId: string): void;
   requestPixels(request: {sessionId:string;frameId:string}): string;
