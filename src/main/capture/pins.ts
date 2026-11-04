@@ -1,3 +1,5 @@
+import type { RecordingSessionState } from '../../shared/recording';
+import { encodeRecordingGif, type RecordingOutput } from './recording';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { constants, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
@@ -11,7 +13,7 @@ import { pinWorkspaceDefaults, validatePinWorkspaceSettings, type PinArrangeMode
 import { deserializePinnedDocument, imageDocument, serializePinnedDocument, validateAnnotations, type PinnedDocument, type SerializedPinnedDocument } from './document';
 import { FloatingPinBar } from './floating-bar';
 import { OCRService, type VisionOCR } from './ocr';
-import { assertPng, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, encodeScreenshot, formatScreenshotName, runAfterSaveAction, saveAutomaticScreenshot } from './output';
+import { assertPng, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, encodeScreenshot, formatScreenshotName, runAfterSaveAction, saveAutomaticScreenshot, saveRecordingOutput } from './output';
 import { fitToWorkArea } from '../position';
 import { exportTableXlsx, renderFormula, type IntelligenceService } from './intelligence';
 import { webURL } from '../../shared/intelligence';
@@ -305,12 +307,28 @@ export class PinManager {
     pin.win.setBounds(pin.state.thumbnail?thumbnailBounds(bounds,area):fitToWorkArea(bounds,area));this.changed(pin);
   }};
   private publish(pin:Pin){if(!pin.win.isDestroyed())pin.win.webContents.send('pin:changed',pin.state);}
+  private animationWeight(payload:PinContentPayload,size:{width:number;height:number}){
+    if(!payload.frames)return 0;
+    if(payload.kind!=='image'||!payload.frames.length||!Number.isFinite(payload.frameDelayMs)||payload.frameDelayMs!<1||payload.loop!==true)throw Error('动态贴图帧参数无效');
+    const bytes=payload.frames.reduce((sum,frame)=>sum+(typeof frame==='string'?frame.length*2:Infinity),0);
+    if(bytes>256*1024*1024)throw Error('动态贴图占用较多，请缩短录制后重试');
+    for(const frame of payload.frames){const image=nativeImage.createFromDataURL(frame),dimensions=image.getSize();if(!frame.startsWith('data:image/png;base64,')||image.isEmpty()||dimensions.width!==size.width||dimensions.height!==size.height)throw Error('动态贴图帧尺寸无效');}
+    return bytes;
+  }
   private weight(doc:PinnedDocument){const a=doc.source.getSize(),b=doc.image.getSize();return (a.width*a.height+b.width*b.height)*4+JSON.stringify(doc.annotations).length*2;}
   private restoreImageSize(pin:Pin,origin:Rectangle){
     const area=screen.getDisplayMatching(origin).workArea,base=pinWindowSize(pin.document.image.getSize(),pin.document.pixelScale,area,this.keepsSize()),zoom=(pin.state.zoomPercent??100)/100;
     const bounds=fitToWorkArea({...origin,width:Math.max(1,Math.round(base.width*zoom)),height:Math.max(1,Math.round(base.height*zoom))},area);
     if(pin.state.thumbnail)pin.normalBounds=bounds;
     pin.win.setMinimumSize(1,1);pin.win.setBounds(pin.state.thumbnail?thumbnailBounds(pin.win.getBounds(),area):bounds);
+  }
+  publishRecording(state:RecordingSessionState|null){for(const pin of this.pins.values())if(!pin.win.isDestroyed())pin.win.webContents.send('shell:recording-changed',state);this.floating.publishRecording(state);}
+  async putAnimated(output:Pick<RecordingOutput,'frames'|'frameDelayMs'|'loop'>){
+    await this.ready;
+    const image=nativeImage.createFromDataURL(output.frames[0]??'');
+    if(image.isEmpty())throw Error('动态贴图没有有效帧');
+    const id=await this.open(imageDocument(image),undefined,{kind:'image',frames:output.frames,frameDelayMs:output.frameDelayMs,loop:output.loop});
+    this.persist();return id;
   }
   async put(document:PinnedDocument,id?:string){
     await this.ready;
@@ -344,7 +362,8 @@ export class PinManager {
     }finally{if(!preview.isDestroyed())preview.destroy();}
   }
   private async open(document:PinnedDocument,saved?:SavedPin,payload:PinContentPayload={kind:'image'},groupId=this.settings.activeGroupId){
-    const bytes=this.weight(document);
+    if(saved)payload=saved.payload;
+    const bytes=this.weight(document)+this.animationWeight(payload,document.image.getSize());
     if(this.disposed)throw Error('贴图工作空间已关闭');
     if(this.pins.size>=16||[...this.pins.values()].reduce((sum,pin)=>sum+pin.bytes,bytes)>256*1024*1024)throw Error('贴图占用较多，请先关闭部分贴图后重试。');
     if(saved){
@@ -391,6 +410,7 @@ export class PinManager {
   }
   private resize(pin:Pin,factor:number){this.setZoom(pin,Math.max(0.1,Math.min(5,(pin.state.zoomPercent??100)/100*factor)));}
   private beginEdit(pin:Pin){
+    if(pin.state.payload?.frames)throw Error('动态贴图请在录制预览中裁剪');
     if(pin.state.kind!=='image')throw Error('此贴图类型不支持图片编辑');
     if(pin.state.locked)throw Error('请先解锁贴图');
     if(!this.options.canEdit())throw Error('请先完成或关闭当前图片编辑');
@@ -455,6 +475,10 @@ export class PinManager {
   }
   private async exportPin(pin:Pin,action:'save'|'quick-save'|'copy-file'|'copy-path'){
     const settings=this.options.preferences(),payload=pin.state.payload??{kind:'image'};
+    if(payload.frames){
+      const images=payload.frames.map(frame=>nativeImage.createFromDataURL(frame)),size=images[0].getSize();
+      await saveRecordingOutput({bytes:encodeRecordingGif(images,images.map(()=>payload.frameDelayMs!)),format:'gif',...size},action,settings,pin.win);return;
+    }
     if(payload.kind==='file'&&(action==='copy-file'||action==='copy-path')){
       if(!payload.filePath)throw Error('原文件路径不存在');
       await stat(payload.filePath);if(action==='copy-file')await copyFile(payload.filePath);else await copyPath(payload.filePath);return;
@@ -499,6 +523,7 @@ export class PinManager {
     if(action==='image'){await this.options.image(pin.document.image);return;}
     if(action==='copy'){
       const payload=pin.state.payload;
+      if(payload?.frames){await this.exportPin(pin,'copy-file');return;}
       if(payload?.kind==='text')await clipboard.writeText(payload.text!);
       else if(payload?.kind==='color')await clipboard.writeText(payload.colorHex!);
       else if(payload?.kind==='file')await copyFile(payload.filePath!);

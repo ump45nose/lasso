@@ -1,3 +1,4 @@
+import type { RecordingAction, RecordingSessionState } from './recording';
 import type { CaptureDisplayBinding } from './capture-efficiency';
 import type { RegionPreset, RegionConfiguration } from './capture-regions';
 import type { PinContentPayload, PinGroup, PinKind, PinWheelAction } from './history-sync';
@@ -67,6 +68,9 @@ export function pixelRect(r: CaptureRect, width: number, height: number, pixelWi
   return {x,y,width:Math.max(1,Math.min(pixelWidth-x,Math.round(r.width*pixelWidth/width))),height:Math.max(1,Math.min(pixelHeight-y,Math.round(r.height*pixelHeight/height)))};
 }
 export interface ScreenshotAPI {
+  recordingState(): Promise<RecordingSessionState | null>;
+  recordingAction(action: RecordingAction): Promise<{ state: RecordingSessionState | null; path?: string | null; error: string | null }>;
+  onRecording(callback: (state: RecordingSessionState | null) => void): () => void;
   onSuspend(callback: () => EditorCheckpoint | null): () => void;
   updateRegion(request:{id:string;revision:number;crop:CaptureRect}):Promise<void>;
   lastRegion():Promise<CaptureRect|null>;

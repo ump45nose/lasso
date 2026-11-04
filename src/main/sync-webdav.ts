@@ -31,6 +31,7 @@ function portableSettings(value: Record<string, unknown>) {
     const screenshot = pick(settings.screenshot, Object.keys(screenshotDefaults())); settings.screenshot = screenshot;
     if ('actions' in screenshot) screenshot.actions = mapFields(fields(screenshot.actions, screenshotKinds), ['show', 'copy', 'save']);
     if ('regionPresets' in screenshot) screenshot.regionPresets = rows(screenshot.regionPresets, ['id', 'name', 'width', 'height', 'ratio', 'delay']);
+    if ('recording' in screenshot) screenshot.recording = fields(screenshot.recording, ['fps', 'quality', 'format', 'countdown', 'systemAudio', 'microphone', 'showKeystrokes', 'showMouseClicks', 'cameraOverlay', 'cameraPosition']);
     if ('history' in screenshot) screenshot.history = fields(screenshot.history, ['enabled', 'maxItems', 'maxDays', 'maxBytesMB']);
     if (record(screenshot.pinWorkspace)) { const pins = pick(screenshot.pinWorkspace, ['restoreOnLaunch', 'floatingToolbar', 'wheelAction', 'activeGroupId', 'groups']); if ('groups' in pins) pins.groups = rows(pins.groups, ['id', 'name', 'color', 'visible']); screenshot.pinWorkspace = pins; }
     if (record(screenshot.annotationMemory)) { const memory = pick(screenshot.annotationMemory, ['rememberToolStyles', 'lastTool', 'defaultStyle', 'perTool']); if ('defaultStyle' in memory) memory.defaultStyle = fields(memory.defaultStyle, styleKeys); if ('perTool' in memory) memory.perTool = mapFields(memory.perTool, styleKeys); screenshot.annotationMemory = memory; }

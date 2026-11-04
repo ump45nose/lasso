@@ -1,3 +1,4 @@
+import type { RecordingAction, RecordingSessionState } from './recording';
 import type { CustomCaptureRequest, RegionConfiguration, RegionPreset } from './capture-regions';
 import type { ScreenshotSettings } from './screenshot-settings';
 import type { MemorySettings } from './memory';
@@ -125,6 +126,9 @@ export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' |
 export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
+  recordingState(): Promise<RecordingSessionState | null>;
+  recordingAction(action: RecordingAction): Promise<{ state: RecordingSessionState | null; path?: string | null; error: string | null }>;
+  onRecording(callback: (state: RecordingSessionState | null) => void): () => void;
   captureHistory(query?: string): Promise<CaptureHistoryState>;
   actCaptureHistory(id: string, action: 'edit' | 'pin' | 'copy' | 'delete'): Promise<{ error: string | null }>;
   clearCaptureHistory(): Promise<{ error: string | null }>;

@@ -1,6 +1,10 @@
+import type { RecordingSessionState } from '../shared/recording';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ScreenshotAPI, ScreenshotState } from '../shared/capture';
 const api: ScreenshotAPI = {
+  recordingState:()=>ipcRenderer.invoke('shell:recording-state'),
+  recordingAction:action=>ipcRenderer.invoke('shell:recording-action',action),
+  onRecording:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:RecordingSessionState|null)=>callback(state);ipcRenderer.on('shell:recording-changed',listener);return()=>ipcRenderer.removeListener('shell:recording-changed',listener);},
   onSuspend: callback => {
     const listener = (_event: Electron.IpcRendererEvent, editId: string) => {
       void ipcRenderer.invoke('screenshot:checkpoint', editId, callback()).catch(()=>{});

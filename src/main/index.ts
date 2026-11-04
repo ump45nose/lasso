@@ -1,3 +1,6 @@
+import type { RecordingAction, RecordingFormat } from '../shared/recording';
+import { RecordingManager } from './capture/recording';
+import { saveRecordingOutput } from './capture/output';
 import type { CustomCaptureRequest,RegionPreset } from '../shared/capture-regions';
 import { validateScreenshotSettings, type ScreenshotSettings } from '../shared/screenshot-settings';
 import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences, safeStorage } from 'electron';
@@ -55,6 +58,7 @@ let presetsPath: string;
 let fontsDir: string;
 let images: Images;
 let screenshots: CaptureManager;
+let recording: RecordingManager | undefined;
 let webdav: WebDavSyncService;
 let media: MediaWindow;
 let intelligence: IntelligenceService;
@@ -77,6 +81,8 @@ let lastSelection: SelectionContext | null = null;
 let smallBounds: Rectangle | null = null;
 let blurTimer: ReturnType<typeof setTimeout>;
 let quitting = false;
+let recordingShutdown:Promise<void>|undefined;
+let shutdownComplete=false;
 let nativeDialogs = 0;
 let stopCaptureEfficiency: (()=>void) | undefined;
 /** The command palette hides native pages; its frozen page snapshot stays out of ShellState. */
@@ -209,6 +215,28 @@ function selectTask(id: string) {
   closePalette(false); state.settingsOpen = false; state.inputOpen = false;
   tasks.select(id); layout(); showWindow(); publish();
 }
+async function actRecording(action:RecordingAction){
+  if(!recording)return {state:null,error:'录制尚未就绪'};
+  if(action?.type==='cancel')screenshots.cancelRecordingSelection();
+  const result=await recording.action(action);
+  if(result.error){state.notice=result.error;layout();publish();}
+  return result;
+}
+function recordingTrayItems():Electron.MenuItemConstructorOptions[]{
+  const session=recording?.state(),run=(action:RecordingAction)=>()=>{void actRecording(action);};
+  if(!session)return (['rect','window','screen'] as const).map(mode=>({label:{rect:'区域录制…',window:'窗口录制…',screen:'全屏录制'}[mode],enabled:!!recording&&!screenshots?.active,click:run({type:'start',mode})}));
+  if(session.status==='recoverable')return [{label:'恢复未完成录制',click:run({type:'recover'})},{label:'删除未完成录制',click:run({type:'discard-recovery'})}];
+  if(session.status==='review')return [
+    ...(['mp4','gif','webp'] as RecordingFormat[]).map(format=>({label:format.toUpperCase(),submenu:(['save','quick-save','copy-file'] as const).map(action=>({label:{save:'保存…','quick-save':'快速保存','copy-file':'复制文件'}[action],click:run({type:'export',format,action})}))})),
+    {label:'动态贴图',click:run({type:'export',format:'gif',action:'pin'})},
+    {label:'结束本次录制',click:run({type:'cancel'})}
+  ];
+  return [
+    ...(session.status==='recording'?[{label:'暂停录制',click:run({type:'pause'})}]:session.status==='paused'?[{label:'继续录制',click:run({type:'resume'})}]:[]),
+    {label:'停止录制',enabled:session.frameCount>0,click:run({type:'stop'})},
+    {label:'取消录制',click:run({type:'cancel'})}
+  ];
+}
 function updateTray() {
   const capturePending=Boolean(screenshots&&screenshots.efficiency.state.phase!=='idle');
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -222,6 +250,7 @@ function updateTray() {
     { label: captureModeLabels.rect, enabled:!capturePending, accelerator: state.settings.actionShortcuts.rect || undefined, click: () => void startScreenshot('rect') },
     { label: captureModeLabels.area, enabled:!capturePending, accelerator: state.settings.actionShortcuts.area || undefined, click: () => void startScreenshot('area') },
     { label:'自定义截图…',accelerator:state.settings.actionShortcuts['custom-capture']||undefined,click:()=>openCustomCapture() },
+    { label: '录制', submenu:recordingTrayItems() },
     { label: '更多截图方式', submenu: [
       ...captureModes.filter(mode => mode !== 'area' && mode !== 'rect').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.actionShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
       {type:'separator'},
@@ -433,6 +462,9 @@ function removeImage(taskId?: string) {
 }
 
 function installIPC() {
+  const assertRecording=(event:IpcMainInvokeEvent)=>{if(!screenshots?.ownsRecording(event)&&!screenshots?.pins.owns(event))assertLocal(event);};
+  ipcMain.handle('shell:recording-state',async event=>{assertRecording(event);await recording?.initialized();return recording?.state()??null;});
+  ipcMain.handle('shell:recording-action',(event,action:RecordingAction)=>{assertRecording(event);return actRecording(action);});
   ipcMain.handle('shell:app-icon', (event, bundleId: string) => { assertLocal(event); return applicationIcon(bundleId); });
   ipcMain.handle('shell:media-config', event => { assertLocal(event); return media.service.connection(); });
   ipcMain.handle('shell:vision-config', event => { assertLocal(event); return intelligence.connection(); });
@@ -721,6 +753,24 @@ async function boot() {
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
   }, () => { const visible=win.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{persistSettings({...state.settings,screenshot:preferences});publish();},()=>intelligence);
+  let recordingTrayState: string | undefined;
+  recording=new RecordingManager({
+    settings:()=>state.settings.screenshot.recording,
+    prepareCapture:(mode,bounds)=>screenshots.prepareRecording(mode,bounds),
+    captureFrame:(mode,bounds)=>screenshots.captureRecordingFrame(mode,bounds),
+    releaseCapture:()=>screenshots.releaseRecording(),
+    subscribeInput:handlers=>capture.subscribeInput(handlers),
+    exportOutput:async(output,action)=>{
+      if(action==='pin'){await screenshots.pins.putAnimated(output);return null;}
+      nativeDialogs++;try{return await saveRecordingOutput(output,action,state.settings.screenshot,win);}finally{nativeDialogs--;}
+    },
+    onChange:session=>{
+      if(win&&!win.isDestroyed())win.webContents.send('shell:recording-changed',session);
+      screenshots.publishRecording(session);
+      const trayState=session?`${session.status}:${session.frameCount>0}`:'idle';
+      if(trayState!==recordingTrayState){recordingTrayState=trayState;if(tray&&!quitting)updateTray();}
+    }
+  });
   const mediaDirectory = join(app.getPath('userData'), 'generated-media');
   mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
   state.presets = migrateImagePresets(presetsPath, mediaDirectory);
@@ -767,7 +817,13 @@ else {
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().some(window => window.isVisible() || window.isMinimized())) showWindow(); });
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
-  app.on('before-quit', () => { quitting = true; screenshots?.dispose(); });
+  app.on('before-quit', event => {
+    if(shutdownComplete)return;
+    if(recordingShutdown){event.preventDefault();return;}
+    quitting=true;
+    if(recording){event.preventDefault();screenshots?.cancelRecordingSelection();recordingShutdown=recording.dispose().catch(error=>console.error('[recording] 退出保存失败',error)).finally(()=>{screenshots?.dispose();shutdownComplete=true;app.quit();});}
+    else{screenshots?.dispose();shutdownComplete=true;}
+  });
   app.on('will-quit', () => { webdav?.dispose();fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));

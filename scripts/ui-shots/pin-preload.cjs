@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('pinWorkspace', {
   dropFiles: (files, text, groupId) => ipcRenderer.invoke('ui-shots:pin-drop', files.map(file => ({ name: file.name, type: file.type, size: file.size })), text, groupId)
 });
 contextBridge.exposeInMainWorld('screenshot', {
+  recordingState:async()=>null,recordingAction:async()=>({state:null,error:null}),onRecording:()=>()=>{},
   ready: () => {}, loadError: () => {}, onSuspend: () => () => {}, invalidateOCR: () => {},
   recognize: async request => ({ id:request.id, revision:request.revision, lines:[] }),
   analyze: async () => ({ result:null,error:'当前预览未配置图像服务' }),

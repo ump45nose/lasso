@@ -3,6 +3,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const done = async () => ({ error: null });
 contextBridge.exposeInMainWorld('screenshot', {
+  recordingState:async()=>null,recordingAction:async()=>({state:null,error:null}),onRecording:()=>()=>{},
   updateRegion:r=>ipcRenderer.invoke('ui-shots:region',r), lastRegion:async()=>null,clearRegion:()=>ipcRenderer.invoke('ui-shots:clear-region'),startScroll:done,regions:async()=>({presets:[],displays:[]}),saveRegionPreset:async()=>{},
   state: () => ipcRenderer.invoke('ui-shots:state').then(state=>({...state,imageFrame:state.image?'fixture-image':undefined,backdropFrame:state.backdrop?'fixture-backdrop':undefined})),
   requestPixels: request=>{const ticket=crypto.randomUUID();void ipcRenderer.invoke('ui-shots:pixels',request.frameId).then(frame=>{const bytes=frame.data;const data=bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength);window.postMessage({source:'lasso-pixels',ticket,width:frame.width,height:frame.height,data},'*',[data]);});return ticket;},

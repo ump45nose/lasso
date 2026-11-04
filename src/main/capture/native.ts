@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Settings } from '../../shared/contracts';
 import type { CaptureRect, RegionCandidate, CaptureWindow } from '../../shared/capture';
-export interface NativeFrame { id: string; width: number; height: number; scale: number; bounds: CaptureRect; captureMs: number; queueMs: number; completionMs: number; workMs: number }
+export interface NativeFrame { id: string; width: number; height: number; scale: number; bounds: CaptureRect; hostTimeMs: number; captureMs: number; queueMs: number; completionMs: number; workMs: number }
 export interface NativePixels { width: number; height: number; data: Uint8Array }
 export interface NativeCaptureEvent { session: string; type: 'copy'|'last'|'shown'|'hover'|'mode'|'select'|'window'|'scroll'|'screen'|'cancel'|'retry'; x?: number; y?: number; mode?: 'area'|'window'|'scroll'; rect?: CaptureRect; kind?: 'rect'|'area'; id?: number; shadow?: boolean; nativeReadyMs?: number }
 export interface NativeCapture {

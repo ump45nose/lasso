@@ -28,7 +28,7 @@ export interface PinWorkspaceSettings {
   activeGroupId: string;
   groups: PinGroup[];
 }
-export interface PinContentPayload { kind: PinKind; text?: string; colorHex?: string; colorRgb?: string; filePath?: string; fileName?: string; fileSize?: number }
+export interface PinContentPayload { kind: PinKind; frames?: string[]; frameDelayMs?: number; loop?: boolean; text?: string; colorHex?: string; colorRgb?: string; filePath?: string; fileName?: string; fileSize?: number }
 export interface PinSummary {
   id: string;
   title: string;

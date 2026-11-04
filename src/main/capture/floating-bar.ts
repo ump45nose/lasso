@@ -1,3 +1,4 @@
+import type { RecordingSessionState } from '../../shared/recording';
 import { BrowserWindow, ipcMain, screen, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
 import type { PinWorkspaceState } from '../../shared/history-sync';
@@ -38,5 +39,6 @@ export class FloatingPinBar {
     this.attached=true;this.publish(this.workspace);win.showInactive();
   }
   publish(workspace:PinWorkspaceState|null){this.workspace=workspace;if(this.attached&&this.win&&!this.win.isDestroyed())this.win.webContents.send('pin-workspace:changed',workspace);}
+  publishRecording(state:RecordingSessionState|null){if(this.attached&&this.win&&!this.win.isDestroyed())this.win.webContents.send('shell:recording-changed',state);}
   dispose(){this.setEnabled(false);ipcMain.removeListener('pin-toolbar:height',this.resize);}
 }

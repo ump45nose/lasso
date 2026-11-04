@@ -1,8 +1,9 @@
-import { clipboard, ClipboardItem, nativeImage, shell, type NativeImage } from 'electron';
+import { dialog, type BrowserWindow, clipboard, ClipboardItem, nativeImage, shell, type NativeImage } from 'electron';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
+import type { RecordingFormat } from '../../shared/recording';
 import type { CaptureFrame } from '../../shared/capture';
 import { validateScreenshotFileNameTemplate, type ScreenshotAfterSaveAction, type ScreenshotOutputFormat, type ScreenshotSettings } from '../../shared/screenshot-settings';
 
@@ -178,7 +179,7 @@ export function encodeScreenshot(image: NativeImage, settings: ScreenshotSetting
 
 interface ScreenshotNameMeta { date?: Date; app?: string; width?: number; height?: number; seq?: number }
 const defaultNameTemplate = 'Lasso-{YYYY}-{MM}-{DD}-{HH}{mm}{ss}';
-export function formatScreenshotName(template: string, format: ScreenshotOutputFormat, meta: ScreenshotNameMeta = {}): { subDir: string; fileName: string; ext: string } {
+export function formatScreenshotName(template: string, format: ScreenshotOutputFormat | RecordingFormat, meta: ScreenshotNameMeta = {}): { subDir: string; fileName: string; ext: string } {
   validateScreenshotFileNameTemplate(template);
   const date = meta.date ?? new Date(), pad = (n: number) => String(n).padStart(2, '0');
   const app = (meta.app ?? 'Lasso').replace(/[\x00-\x1f\x7f/\\:<>"|?*]/g, '_').replace(/\.\./g, '_').trim() || 'Lasso';
@@ -190,7 +191,7 @@ export function formatScreenshotName(template: string, format: ScreenshotOutputF
 export function screenshotName(format: ScreenshotOutputFormat): string {
   return formatScreenshotName(defaultNameTemplate, format).fileName;
 }
-export async function saveAutomaticScreenshot(bytes: Buffer, directory: string, format: ScreenshotOutputFormat, template = defaultNameTemplate, meta: Omit<ScreenshotNameMeta, 'seq'> = {}): Promise<string> {
+export async function saveAutomaticScreenshot(bytes: Buffer, directory: string, format: ScreenshotOutputFormat | RecordingFormat, template = defaultNameTemplate, meta: Omit<ScreenshotNameMeta, 'seq'> = {}): Promise<string> {
   const metadata = { ...meta, date: meta.date ?? new Date() }, hasSequence = template.includes('{seq}');
   for (let count = 0; ; count++) {
     const { subDir, fileName, ext } = formatScreenshotName(template, format, { ...metadata, seq: count + 1 });
@@ -215,4 +216,17 @@ export async function runAfterSaveAction(filePath: string, action: ScreenshotAft
     case 'copy-path': await copyPath(filePath); return;
     case 'copy-file': await copyFile(filePath); return;
   }
+}
+
+/** Recording files share screenshot naming, collision handling and post-save preferences. */
+export async function saveRecordingOutput(output: { bytes: Buffer; format: RecordingFormat; width: number; height: number }, action: 'save'|'quick-save'|'copy-file'|'copy-path', settings: ScreenshotSettings, owner?: BrowserWindow): Promise<string|null> {
+  let path: string;
+  if(action==='save'){
+    const name=formatScreenshotName(settings.fileNameTemplate,output.format,output),options={title:'保存录制',defaultPath:join(settings.directory,name.subDir,name.fileName),filters:[{name:output.format.toUpperCase(),extensions:[name.ext]}]};
+    const saved=owner?await dialog.showSaveDialog(owner,options):await dialog.showSaveDialog(options);
+    if(saved.canceled||!saved.filePath)return null;
+    path=saved.filePath;await mkdir(dirname(path),{recursive:true});await writeFile(path,output.bytes);
+  }else path=await saveAutomaticScreenshot(output.bytes,settings.quickSaveDirectory,output.format,settings.fileNameTemplate,output);
+  if(action==='copy-file')await copyFile(path);else if(action==='copy-path')await copyPath(path);else await runAfterSaveAction(path,settings.afterSaveAction);
+  return path;
 }

@@ -1,3 +1,4 @@
+import type { RecordingSessionState } from '../shared/recording';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { PinAPI, PinState, ScreenshotAPI } from '../shared/capture';
 import type { DesktopAPI } from '../shared/contracts';
@@ -18,6 +19,9 @@ const api: PinAPI = {
   endDrag:()=>ipcRenderer.send('pin:drag-end')
 };
 const screenshot: ScreenshotAPI = {
+  recordingState:()=>ipcRenderer.invoke('shell:recording-state'),
+  recordingAction:action=>ipcRenderer.invoke('shell:recording-action',action),
+  onRecording:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:RecordingSessionState|null)=>callback(state);ipcRenderer.on('shell:recording-changed',listener);return()=>ipcRenderer.removeListener('shell:recording-changed',listener);},
   onSuspend:()=>()=>{},
   updateRegion:async()=>{},
   lastRegion:async()=>null,
