@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Check, Download, RefreshCw, Upload, X } from 'lucide-react';
-import type { ShellState } from '../shared/contracts';
+import { Check, Copy, Download, Pin, Play, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
+import type { GeneralSettings as Preferences, ScriptAction, ShellState } from '../shared/contracts';
 import type { WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { shortcutLabel } from './targets';
 import { editorActionIds, editorActionLabels, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type EditorActionId, type GlobalActionId, type IgnoredAppRule, type IgnoredAppScope } from '../shared/shortcuts';
@@ -12,6 +12,85 @@ const actionHelp: Record<GlobalActionId, string> = {
   'repeat-last': '按上次截图的区域再次截取', 'custom-capture': '打开自定义尺寸与区域预设', 'scroll-capture': '选择窗口中的滚动区域', 'delay-3s': '倒计时 3 秒后框选截图', 'delay-5s': '倒计时 5 秒后框选截图', 'delay-10s': '倒计时 10 秒后框选截图', 'pin-clipboard': '将剪贴板中的图片贴到屏幕上', 'open-launcher': '有选区时同时打开指令面板；不绑定也可从菜单栏打开'
 };
 const ignoredScopes: readonly (readonly [IgnoredAppScope, string])[] = [['selection', '划词'], ['shortcuts', '快捷键'], ['capture-candidates', '窗口候选']];
+const toolbarOptions = [['text-select', '选字'], ['select', '选择'], ['arrow', '箭头'], ['line', '直线'], ['rectangle', '矩形'], ['ellipse', '椭圆'], ['pen', '画笔'], ['highlight', '高亮'], ['text', '文字'], ['number', '序号'], ['redact', '遮挡'], ['mosaic', '马赛克'], ['blur', '模糊'], ['crop', '裁剪'], ['picker', '取色'], ['spotlight', '聚光灯'], ['magnifier', '放大镜'], ['watermark', '水印'], ['auto-mosaic', '联动马赛克'], ['inpaint', '智能消除'], ['image-adjust', '画面变换']] as const;
+
+function ScriptSettings({ actions, save }: { actions: ScriptAction[]; save: (actions: ScriptAction[]) => Promise<boolean> }) {
+  const [draft, setDraft] = useState<ScriptAction | null>(null), [input, setInput] = useState(''), [output, setOutput] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false), [removing, setRemoving] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const persisted = actions.find(action => action.id === draft?.id), dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(persisted);
+  const reset = () => { setOutput(null); setError(''); setNotice(''); setRemoving(false); };
+  function edit(action: ScriptAction) { setDraft({ ...action }); setInput(''); reset(); }
+  function patch(value: Partial<ScriptAction>) { setDraft(current => current && ({ ...current, ...value })); reset(); }
+  async function store() {
+    if (!draft) return false;
+    if (!draft.name.trim() || !draft.code.trim()) { setError('请填写脚本名称和代码'); return false; }
+    return save(persisted ? actions.map(action => action.id === draft.id ? draft : action) : [...actions, draft]);
+  }
+  async function run(mode: 'save' | 'run' | 'copy' | 'pin' | 'delete') {
+    setBusy(true); setError(''); setNotice('');
+    try {
+      if (mode === 'delete') { if (persisted && !await save(actions.filter(action => action.id !== draft?.id))) return; setDraft(null); reset(); setNotice('脚本已删除'); }
+      else if (mode === 'copy') { await navigator.clipboard.writeText(output ?? ''); setNotice('已复制结果'); }
+      else if (mode === 'pin') { const result = await window.desktop.createPin({ kind: 'text', text: output ?? '' }); if (result.error) throw Error(result.error); setNotice('已创建文字贴图'); }
+      else {
+        if (!await store()) return;
+        if (mode === 'save') { setNotice('脚本已保存'); return; }
+        setOutput(null);
+        const result = await window.desktop.runScriptAction(draft!.id, input ? { text: input } : undefined);
+        if (result.error) throw Error(result.error);
+        setOutput(result.output); setNotice('运行完成，结果已复制');
+      }
+    } catch (error) { setError(String(error)); } finally { setBusy(false); }
+  }
+  return <section id="script-actions" className="l-set-section">
+    <div className="l-set-row-head l-gap"><h3>JS 脚本动作</h3><button className="l-text-btn" disabled={busy} onClick={() => edit({ id: crypto.randomUUID(), name: '新脚本', enabled: true, code: 'return input.text.trim();' })}><Plus size={14} />新建脚本</button></div>
+    <ul className="l-group">{actions.length ? actions.map(action => <li key={action.id}><button className="l-preset" aria-pressed={draft?.id === action.id} disabled={busy} onClick={() => edit(action)}><strong>{action.name}</strong><span>{action.enabled ? '已启用' : '已停用'}{draft?.id === action.id && dirty ? ' · 有未保存更改' : ''}</span></button></li>) : <li><p className="l-field-help">添加脚本来处理文字，运行结果可复制或贴到桌面。</p></li>}</ul>
+    {draft && <fieldset className="l-script-editor" disabled={busy}>
+      <div className="l-row"><div className="l-field"><label htmlFor="script-name">脚本名称</label><input id="script-name" className="l-input" value={draft.name} maxLength={80} onChange={e => patch({ name: e.target.value })} /></div><span className="l-field-help">启用</span><button className="l-switch" role="switch" aria-label="启用脚本动作" aria-checked={draft.enabled} onClick={() => patch({ enabled: !draft.enabled })}><span /></button></div>
+      <div className="l-field"><label htmlFor="script-code">JavaScript 代码</label><textarea id="script-code" className="l-textarea mono l-script-code" spellCheck={false} value={draft.code} onChange={e => patch({ code: e.target.value })} /><p className="l-field-help">{'读取 input.text、input.width、input.height、input.app，用 return 返回文字。'}</p></div>
+      <div className="l-field"><label htmlFor="script-input">运行输入</label><textarea id="script-input" className="l-textarea l-textarea-short" value={input} placeholder="留空时读取剪贴板文字" onChange={e => { setInput(e.target.value); reset(); }} /></div>
+      <div className="l-workspace-actions"><button className="l-btn small" disabled={!dirty} onClick={() => void run('save')}>保存脚本</button><button className="l-btn small primary" disabled={!draft.enabled} onClick={() => void run('run')}><Play size={14} />{dirty ? '保存并运行' : '运行并复制'}</button><button className="l-btn small" onClick={() => { setDraft(null); reset(); }}>{dirty ? '放弃更改' : '关闭编辑'}</button><button className="l-btn small danger" onClick={() => removing ? void run('delete') : setRemoving(true)}><Trash2 size={14} />{removing ? '确认删除' : '删除脚本'}</button>{removing && <button className="l-text-btn" onClick={() => setRemoving(false)}>取消删除</button>}</div>
+      {dirty && <p className="l-field-help">脚本有未保存更改，点击保存或运行后生效。</p>}
+      {output !== null && <div className="l-field"><label htmlFor="script-output">运行结果</label><textarea id="script-output" className="l-textarea mono l-textarea-short" readOnly value={output} /><div className="l-workspace-actions"><button className="l-btn small" onClick={() => void run('copy')}><Copy size={14} />复制结果</button><button className="l-btn small" disabled={!output.trim()} onClick={() => void run('pin')}><Pin size={14} />贴到桌面</button></div></div>}
+    </fieldset>}
+    {busy && <p className="l-field-help" role="status">正在处理脚本…</p>}{error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
+  </section>;
+}
+
+function AdvancedSettings({ settings }: { settings: ShellState['settings'] }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const { launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates } = settings;
+  async function save(patch: Partial<Preferences>) {
+    setBusy(true); setError(''); setNotice('');
+    try { const result = await window.desktop.saveGeneral({ launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates, ...patch }); if (result.error) throw Error(result.error); setNotice('设置已保存'); return true; }
+    catch (error) { setError(String(error)); return false; } finally { setBusy(false); }
+  }
+  function toggleTool(id: string) {
+    const current = toolbarTools.length ? toolbarTools : toolbarOptions.map(([tool]) => tool);
+    const next = current.includes(id) ? current.filter(tool => tool !== id) : [...current, id];
+    if (!next.length) { setError('请至少保留一个工具'); return; }
+    void save({ toolbarTools: next.length === toolbarOptions.length ? [] : next });
+  }
+  return <section className="l-set-section">
+    <fieldset className="l-general-controls" disabled={busy}>
+      <div id="system-settings" className="l-set-row-head"><h3>系统与外观</h3><span>立即保存</span></div>
+      <ul className="l-group">
+        {([['launchAtLogin', '开机自启', launchAtLogin], ['autoCheckUpdates', '自动检查更新', autoCheckUpdates]] as const).map(([key, label, checked]) => <li key={key}><span className="l-row-label">{label}</span><button className="l-switch" role="switch" aria-label={label} aria-checked={checked} onClick={() => void save({ [key]: !checked })}><span /></button></li>)}
+        <li className="l-shot-option"><span>主题</span><Segmented label="界面主题" value={themeMode} onChange={themeMode => void save({ themeMode })} options={ [['paper', '纸面'], ['system', '跟随系统']] } /></li>
+      </ul>
+      <div id="mouse-actions" className="l-set-row-head l-gap"><h3>截图编辑器鼠标动作</h3></div>
+      <ul className="l-group">
+        <li className="l-shot-option"><span>双击</span><Segmented label="双击动作" value={mouseActions.doubleClick} onChange={doubleClick => void save({ mouseActions: { ...mouseActions, doubleClick } })} options={ [['copy', '复制'], ['save', '保存'], ['pin', '贴图'], ['none', '无']] } /></li>
+        <li className="l-shot-option"><span>中键</span><Segmented label="中键动作" value={mouseActions.middleClick} onChange={middleClick => void save({ mouseActions: { ...mouseActions, middleClick } })} options={ [['pin', '贴图'], ['quick-save', '快速保存'], ['none', '无']] } /></li>
+        <li className="l-shot-option"><span>右键</span><Segmented label="右键动作" value={mouseActions.rightClick} onChange={rightClick => void save({ mouseActions: { ...mouseActions, rightClick } })} options={ [['reselect', '重新选区'], ['cancel', '取消截图']] } /></li>
+      </ul>
+      <div id="toolbar-tools" className="l-set-row-head l-gap"><h3>编辑器工具栏</h3><button className="l-text-btn" disabled={!toolbarTools.length} onClick={() => void save({ toolbarTools: [] })}>显示全部</button></div>
+      <div className="l-ignored-scopes l-toolbar-options">{toolbarOptions.map(([id, label]) => <button key={id} className="l-btn small" role="checkbox" aria-checked={!toolbarTools.length || toolbarTools.includes(id)} onClick={() => toggleTool(id)}><Check size={14} aria-hidden="true" />{label}</button>)}</div>
+    </fieldset>
+    <ScriptSettings actions={scriptActions} save={scriptActions => save({ scriptActions })} />
+    {error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
+  </section>;
+}
 
 /** Records on keydown and saves right away; main validates and rejects reserved combinations such as ⌥ Space. */
 function ShortcutField({ id, label, help, value, save, local = false, error: external }: { id: string; label: string; help?: string; value: string; save: (value: string) => Promise<{ error: string | null }>; local?: boolean; error?: string | null }) {
@@ -141,6 +220,7 @@ export function GeneralSettings({ state }: { state: ShellState }) {
   const resident = state.tasks.filter(task => task.residency === 'resident').length, released = state.tasks.length - resident;
   const captureDot = capture.status === 'active' ? 'complete' : capture.status === 'error' ? 'error' : capture.status === 'permission' ? 'waiting' : 'released';
   return <div className="l-set-body">
+    <AdvancedSettings settings={settings} />
     <div className="l-set-row-head"><h3>划词</h3></div>
     <ul className="l-group">
       <li className="col">

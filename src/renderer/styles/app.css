@@ -381,3 +381,18 @@ html.ab-html, body.ab-body { background: transparent; overflow: hidden; user-sel
 .l-preset-row:has(.l-preset:hover) strong, .l-preset-row:has(.l-preset:focus-visible) strong { color: var(--clay-ink); }
 
 .l-launch-foot .l-ghost { flex-shrink: 0; white-space: nowrap; }
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --bg: rgba(20, 20, 19, 1); --surface: rgba(31, 30, 29, 1); --sunken: rgba(61, 61, 58, .5);
+    --sand: rgba(61, 61, 58, 1); --oat: rgba(94, 93, 89, 1); --desk: rgba(31, 30, 29, 1);
+    --ink: rgba(250, 249, 245, 1); --ink-2: rgba(240, 238, 230, 1); --ink-3: rgba(194, 192, 182, 1);
+    --ink-4: rgba(156, 154, 146, 1); --ink-5: rgba(115, 114, 108, 1); --ink-6: rgba(94, 93, 89, 1);
+    --line: rgba(250, 249, 245, .12); --line-strong: rgba(250, 249, 245, .22); --line-heavy: rgba(250, 249, 245, .32);
+    --clay-ink: rgba(217, 119, 87, 1); --danger-wash: rgba(179, 65, 46, .18); --on-ink: rgba(20, 20, 19, 1);
+  }
+  .ab-bar, .ab-menu, .ed-bar, .ed-panel, .ed-menu, .pin-bar, .pin-thumbnail, .pin-status, .pin-lock-mark, .pin-workspace-bar, .l-record-control {
+    --ink: rgba(20, 20, 19, 1); --ink-2: rgba(61, 61, 58, 1); --ink-3: rgba(94, 93, 89, 1); --on-ink: rgba(250, 249, 245, 1);
+  }
+}

@@ -10,6 +10,7 @@
 .ed-window .ed-viewport { top: 40px; overflow: auto; display: flex; padding: 40px 60px 120px; overscroll-behavior: contain; }
 .ed-inline .ed-stage { position: absolute; }
 .ed-window .ed-stage { position: relative; flex-shrink: 0; margin: auto; border-radius: 3px; box-shadow: var(--shadow-window); }
+.ed-window .ed-stage.ed-result { overflow: hidden; }
 .editor-pixels { position: relative; transform-origin: 0 0; }
 .editor-source { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
 .ed-hole { animation: ed-ring 520ms var(--ease-out) both; }
@@ -233,3 +234,15 @@
 .ed-barcode-chip { min-width:0; max-width:100%; }
 .ed-barcode-chip .ed-chip-text { max-width:200px; }
 @media (max-width:440px) { .ed-translation-list article { grid-template-columns:1fr; gap:4px; } .ed-intelligence { top:12px; max-height:calc(100vh - 24px); } }
+
+.ed-word { min-width: 180px; max-width: 40vw; border: 1px solid var(--line); border-radius: 7px; background: var(--on-ink); color: var(--ink); font-family: var(--font-ui); padding: 6px 8px; }
+.ed-panel { flex-wrap: wrap; max-width: min(840px, calc(100vw - 24px)); }
+.ed-panel .ed-text[aria-pressed="true"] { background: var(--clay); color: var(--on-ink); }
+
+@media (max-width: 640px) {
+  .ed-window .ed-chip { top: 44px; left: 12px; right: 12px; translate: 0; max-width: calc(100% - 24px); height: auto; min-height: 32px; flex-wrap: wrap; }
+  .ed-window .ed-chip-main { min-width: 0; max-width: 100%; }
+  .ed-window .ed-chip-actions { max-width: 100%; flex-wrap: wrap; }
+  .ed-window .ed-viewport { top: 84px; padding: 40px 16px 120px; }
+  .ed-window .ed-zoom { top: 88px; }
+}

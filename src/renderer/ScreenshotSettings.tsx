@@ -75,6 +75,22 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
   }
   return <>
     <div className="l-set-body l-shot-settings">
+      <section id="screenshot-advanced" className="l-set-section">
+        <div className="l-set-row-head"><h3>高级采集</h3><span>保存后用于下一次截图</span></div>
+        <ul className="l-group">
+          <li className="l-shot-option"><span>选区形状</span><Segmented label="选区形状" value={draft.selectionShape} onChange={selectionShape => patch({ selectionShape })} options={ [['rect', '矩形'], ['freehand', '自由套索'], ['polygon', '多边形'], ['multi-rect', '多区域']] } /></li>
+          {([['includeCursor', '截图包含鼠标指针'], ['showCrosshair', '显示十字辅助线']] as const).map(([key, label]) => <li key={key}><span>{label}</span><Switch label={label} value={draft[key]} change={() => patch({ [key]: !draft[key] })} /></li>)}
+          <li className="l-shot-option"><span>放大镜倍率</span><Segmented label="放大镜倍率" value={String(draft.loupeMagnification)} onChange={value => patch({ loupeMagnification: Number(value) as Preferences['loupeMagnification'] })} options={ [['4', '4×'], ['8', '8×'], ['12', '12×']] } /></li>
+          <li className="l-shot-option"><span>取色色值格式</span><Segmented label="取色色值格式" value={draft.loupeColorFormat} onChange={loupeColorFormat => patch({ loupeColorFormat })} options={ [['hex', 'HEX'], ['rgb', 'RGB'], ['hsl', 'HSL']] } /></li>
+        </ul>
+        <div className="l-set-row-head l-gap"><h3>输出装饰与水印</h3></div>
+        <ul className="l-group">
+          {([['cornerRadius', '输出圆角半径', 64], ['borderWidth', '输出边框宽度', 16]] as const).map(([key, label, max]) => <li key={key}><label className="l-row-label" htmlFor={'screenshot-' + key}>{label}</label><div className="l-row"><input id={'screenshot-' + key} className="l-input mono l-shot-height" type="number" min="0" max={max} step="1" value={draft[key]} onChange={e => patch({ [key]: Number(e.target.value) })} /><span>px</span></div></li>)}
+          <li><label className="l-row-label" htmlFor="screenshot-border-color">输出边框颜色</label><input id="screenshot-border-color" className="l-input mono l-shot-color" value={draft.borderColor} maxLength={7} onChange={e => patch({ borderColor: e.target.value })} /></li>
+          <li className="col"><div className="l-field"><label htmlFor="screenshot-watermark">水印文字</label><input id="screenshot-watermark" className="l-input" maxLength={500} value={draft.watermarkText} onChange={e => patch({ watermarkText: e.target.value })} /><p className="l-field-help">在编辑器中点击「水印」，为当前图片添加平铺水印。</p></div></li>
+          <li className="col"><div className="l-field"><label htmlFor="screenshot-watermark-opacity">水印透明度</label><div className="l-row"><input id="screenshot-watermark-opacity" className="l-shot-quality" type="range" min="0" max="1" step="0.01" value={draft.watermarkOpacity} onChange={e => patch({ watermarkOpacity: Number(e.target.value) })} /><output htmlFor="screenshot-watermark-opacity" className="mono">{Math.round(draft.watermarkOpacity * 100)}%</output></div></div></li>
+        </ul>
+      </section>
       <CaptureWorkspaceSettings history={draft.history} changeHistory={history => patch({ history })} workspace={settings.pinWorkspace} />
       <VisionSettings />
       <section id="screenshot-recording" className="l-set-section l-gap">
