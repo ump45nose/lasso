@@ -12,6 +12,7 @@ const loaders = {
   screenshot: () => import('./capture/Screenshot').then(m => ({ default: m.Screenshot })),
   'action-bar': () => import('./ActionBar').then(m => ({ default: m.ActionBar })),
   pin: () => import('./capture/Pinned').then(m => ({ default: m.Pinned })),
+  'pin-toolbar': () => import('./capture/Pinned').then(m => ({ default: m.PinToolbar })),
   main: () => import('./App')
 };
 const surface = new URLSearchParams(location.search).get('surface') || 'main';

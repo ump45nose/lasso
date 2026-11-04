@@ -326,6 +326,9 @@ function assertLocal(event: IpcMainInvokeEvent) {
     throw new Error('只有本地窗口可以调用应用操作');
   }
 }
+function assertPinWorkspace(event: IpcMainInvokeEvent) {
+  if (!screenshots.pins.owns(event)) assertLocal(event);
+}
 function clearSelection() {
   if (!lastSelection) return;
   lastSelection = null; state.selection = null; publish();
@@ -448,13 +451,13 @@ function installIPC() {
   ipcMain.handle('shell:capture-history',(event,query?:string)=>{assertLocal(event);if(query!==undefined&&typeof query!=='string')throw Error('历史搜索词无效');return screenshots.history.state(query);});
   ipcMain.handle('shell:capture-history-act',(event,id:string,action:Parameters<DesktopAPI['actCaptureHistory']>[1])=>{assertLocal(event);return result(()=>screenshots.actCaptureHistory(id,action));});
   ipcMain.handle('shell:capture-history-clear',event=>{assertLocal(event);return result(()=>screenshots.history.clear());});
-  ipcMain.handle('shell:pin-workspace',async event=>{assertLocal(event);await screenshots.pins.ready;return screenshots.pins.state();});
-  ipcMain.handle('shell:pin-workspace-save',(event,settings:PinWorkspaceSettings)=>{assertLocal(event);return result(()=>screenshots.pins.saveWorkspace(settings));});
-  ipcMain.handle('shell:pin-create',(event,input:Parameters<DesktopAPI['createPin']>[0])=>{assertLocal(event);return result(()=>screenshots.pins.create(input));});
-  ipcMain.handle('shell:pin-clipboard',event=>{assertLocal(event);return result(()=>runGlobalAction('pin-clipboard'));});
-  ipcMain.handle('shell:pin-reopen',event=>{assertLocal(event);return result(()=>screenshots.pins.reopenClosedPin());});
-  ipcMain.handle('shell:pins-arrange',(event,mode:PinArrangeMode,groupId?:string)=>{assertLocal(event);return result(async()=>{await screenshots.pins.ready;screenshots.pins.arrange(mode,groupId);});});
-  ipcMain.handle('shell:pin-act',(event,id:string,action:Parameters<DesktopAPI['actPin']>[1],groupId?:string)=>{assertLocal(event);return result(async()=>{await screenshots.pins.ready;await screenshots.pins.actPin(id,action,groupId);});});
+  ipcMain.handle('shell:pin-workspace',async event=>{assertPinWorkspace(event);await screenshots.pins.ready;return screenshots.pins.state();});
+  ipcMain.handle('shell:pin-workspace-save',(event,settings:PinWorkspaceSettings)=>{assertPinWorkspace(event);return result(()=>screenshots.pins.saveWorkspace(settings));});
+  ipcMain.handle('shell:pin-create',(event,input:Parameters<DesktopAPI['createPin']>[0])=>{assertPinWorkspace(event);return result(()=>screenshots.pins.create(input));});
+  ipcMain.handle('shell:pin-clipboard',event=>{assertPinWorkspace(event);return result(()=>runGlobalAction('pin-clipboard'));});
+  ipcMain.handle('shell:pin-reopen',event=>{assertPinWorkspace(event);return result(()=>screenshots.pins.reopenClosedPin());});
+  ipcMain.handle('shell:pins-arrange',(event,mode:PinArrangeMode,groupId?:string)=>{assertPinWorkspace(event);return result(async()=>{await screenshots.pins.ready;screenshots.pins.arrange(mode,groupId);});});
+  ipcMain.handle('shell:pin-act',(event,id:string,action:Parameters<DesktopAPI['actPin']>[1],groupId?:string)=>{assertPinWorkspace(event);return result(async()=>{await screenshots.pins.ready;await screenshots.pins.actPin(id,action,groupId);});});
   ipcMain.handle('shell:config-export',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.exportConfig();}finally{nativeDialogs--;}});
   ipcMain.handle('shell:config-import',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.importConfig();}finally{nativeDialogs--;}});
   ipcMain.handle('shell:webdav-config',event=>{assertLocal(event);return webdav.config();});

@@ -1,5 +1,7 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { PinAPI, PinState, ScreenshotAPI } from '../shared/capture';
+import type { DesktopAPI } from '../shared/contracts';
+import type { PinWorkspaceState } from '../shared/history-sync';
 const api: PinAPI = {
   state:()=>ipcRenderer.invoke('pin:state'),
   onState:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:PinState)=>callback(state);ipcRenderer.on('pin:changed',listener);return()=>ipcRenderer.removeListener('pin:changed',listener);},
@@ -39,3 +41,27 @@ const screenshot: ScreenshotAPI = {
 };
 contextBridge.exposeInMainWorld('pin',api);
 contextBridge.exposeInMainWorld('screenshot',screenshot);
+// Only workspace operations are shared by pin windows and the desktop toolbar.
+const workspace: Pick<DesktopAPI,'pinWorkspace'|'savePinWorkspace'|'createPin'|'pinClipboard'|'reopenClosedPin'|'arrangePins'|'actPin'> = {
+  pinWorkspace:()=>ipcRenderer.invoke('shell:pin-workspace'),
+  savePinWorkspace:settings=>ipcRenderer.invoke('shell:pin-workspace-save',settings),
+  createPin:input=>ipcRenderer.invoke('shell:pin-create',input),
+  pinClipboard:()=>ipcRenderer.invoke('shell:pin-clipboard'),
+  reopenClosedPin:()=>ipcRenderer.invoke('shell:pin-reopen'),
+  arrangePins:(mode,groupId)=>ipcRenderer.invoke('shell:pins-arrange',mode,groupId),
+  actPin:(id,action,groupId)=>ipcRenderer.invoke('shell:pin-act',id,action,groupId)
+};
+contextBridge.exposeInMainWorld('pinWorkspace',{
+  ...workspace,
+  onChanged:(callback:(state:PinWorkspaceState)=>void)=>{const listener=(_event:Electron.IpcRendererEvent,state:PinWorkspaceState)=>callback(state);ipcRenderer.on('pin-workspace:changed',listener);return()=>ipcRenderer.removeListener('pin-workspace:changed',listener);},
+  setToolbarHeight:(height:number)=>ipcRenderer.send('pin-toolbar:height',height),
+  dropFiles:async(files:File[],text:string,groupId?:string)=>{
+    for(const file of files){
+      const filePath=webUtils.getPathForFile(file);
+      if(!filePath)return {error:'请拖入本地图片或文件'};
+      const kind=file.type.startsWith('image/')||/\.(png|jpe?g|gif|webp|bmp|tiff?|heic|avif)$/i.test(file.name)?'image':'file';
+      const result=await workspace.createPin({kind,filePath,groupId});if(result.error)return result;
+    }
+    return files.length?{error:null}:text.trim()?workspace.createPin({kind:'text',text,groupId}):{error:'请拖入文件、图片或文字'};
+  }
+});

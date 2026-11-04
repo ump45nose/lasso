@@ -49,6 +49,7 @@ export function pinWindowSize(pixels:{width:number;height:number},pixelScale:{x:
   }
   return {width,height};
 }
+function thumbnailBounds(bounds:Rectangle,area:Rectangle){return fitToWorkArea({...bounds,width:160,height:96},area);}
 
 export class PinManager {
   private pins=new Map<string,Pin>();
@@ -76,7 +77,16 @@ export class PinManager {
     }))ipcMain.handle(channel,async(e,value:unknown)=>{const pin=this.owner(e);try{await apply(pin,value);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('pin:text',async(e,text:string,send:boolean,revision:number)=>{const pin=this.owner(e);try{
       if(revision!==pin.state.revision)throw Error('贴图已更新，请重新选字');
-      if(typeof send!=='boolean'||typeof text!=='string'||!text.trim()||text.length>100000||!pin.state.lines.length)throw Error('请先选择图中文字');
+      if(typeof send!=='boolean'||typeof text!=='string'||!text.trim()||text.length>100000)throw Error('没有可输出的贴图文字');
+      const kind=pin.state.kind??'image',payload=pin.state.payload;
+      if(kind==='image'){
+        const recognized=pin.state.lines.map(line=>line.glyphs.map(glyph=>glyph.text).join('')).filter(Boolean).join('\n');
+        if(!recognized.includes(text))throw Error('请先选择图中文字');
+      }else if(kind==='text'){
+        if(text!==payload?.text)throw Error('贴图文字已变化，请重新操作');
+      }else if(kind==='color'){
+        if(send||(text!==payload?.colorHex&&text!==payload?.colorRgb))throw Error('颜色贴图仅支持复制当前 HEX 或 RGB 色值');
+      }else throw Error('文件贴图不支持文字输出');
       this.options.suppress();if(send)await this.options.text(text);else await clipboard.writeText(text);return {error:null};
     }catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('pin:source',e=>{
@@ -181,7 +191,7 @@ export class PinManager {
     if(thumbnail===!!pin.state.thumbnail)return;
     const bounds=pin.win.getBounds(),area=screen.getDisplayMatching(bounds).workArea;
     pin.state.thumbnail=thumbnail;
-    if(thumbnail){pin.normalBounds=bounds;pin.win.setMinimumSize(1,1);const ratio=Math.min(1,160/bounds.width,120/bounds.height);pin.win.setBounds({...bounds,width:Math.max(1,Math.round(bounds.width*ratio)),height:Math.max(1,Math.round(bounds.height*ratio))});}
+    if(thumbnail){pin.normalBounds=bounds;pin.win.setMinimumSize(1,1);pin.win.setBounds(thumbnailBounds(bounds,area));}
     else{pin.win.setBounds(fitToWorkArea(pin.normalBounds??bounds,area));pin.normalBounds=undefined;}
     pin.win.setResizable(!thumbnail&&!this.keepsSize());this.publish(pin);this.changed(pin);
   }
@@ -249,16 +259,17 @@ export class PinManager {
     pins.forEach((pin,index)=>{const b=pin.win.getBounds();let next:Rectangle;
       if(mode==='align-left'||mode==='align-top')next={...b,x:mode==='align-left'?left:b.x,y:mode==='align-top'?top:b.y};
       else{const cellW=Math.max(1,(area.width-gap*(columns+1))/columns),cellH=Math.max(1,(area.height-gap*(rows+1))/rows),scale=Math.min(1,cellW/b.width,cellH/b.height);next={x:Math.round(area.x+gap+(index%columns)*(cellW+gap)),y:Math.round(area.y+gap+Math.floor(index/columns)*(cellH+gap)),width:Math.max(1,Math.round(b.width*scale)),height:Math.max(1,Math.round(b.height*scale))};pin.win.setMinimumSize(1,1);}
-      pin.win.setBounds(fitToWorkArea(next,area));this.changed(pin);
+      pin.win.setBounds(pin.state.thumbnail?thumbnailBounds(next,area):fitToWorkArea(next,area));this.changed(pin);
     });
   }
   saveAnnotationMemory(event:IpcMainInvokeEvent,memory:AnnotationStyleMemory){const pin=this.owner(event);if(!pin.state.editing)throw Error('贴图未在编辑');this.options.saveAnnotationMemory(memory);}
   get size(){return this.pins.size;}
   contains(id:string){return this.pins.has(id);}
+  owns(event:IpcMainEvent|IpcMainInvokeEvent){return !!this.pinFrom(event)||this.floating.owns(event);}
   focus(id:string){const pin=this.pins.get(id);if(!pin||pin.win.isDestroyed()||!this.settings.groups.find(group=>group.id===pin.state.groupId)?.visible)return;pin.visible=true;pin.win.show();app.focus({steal:true});pin.win.focus();pin.win.webContents.focus();this.changed(pin);}
   closeFocused(){const focused=BrowserWindow.getFocusedWindow(),pin=[...this.pins.values()].find(item=>!item.win.isDestroyed()&&(item.win===focused||item.win.isFocused()));if(!pin)return false;pin.win.close();return true;}
   private keepsSize(){return this.options.preferences().pinKeepsSize;}
-  private pinFrom(event:IpcMainEvent|IpcMainInvokeEvent){return [...this.pins.values()].find(pin=>event.sender===pin.win.webContents&&event.senderFrame===pin.win.webContents.mainFrame);}
+  private pinFrom(event:IpcMainEvent|IpcMainInvokeEvent){return [...this.pins.values()].find(pin=>!pin.win.isDestroyed()&&event.sender===pin.win.webContents&&event.senderFrame===pin.win.webContents.mainFrame);}
   private owner(event:IpcMainInvokeEvent){const pin=this.pinFrom(event);if(!pin)throw Error('贴图操作只允许对应贴图窗口调用');return pin;}
   private startDrag=(event:IpcMainEvent)=>{const pin=this.pinFrom(event);if(!pin||pin.state.locked||pin.state.editing||pin.win.isDestroyed())return;app.focus({steal:true});pin.win.focus();pin.drag={cursor:screen.getCursorScreenPoint(),bounds:pin.win.getBounds()};};
   private moveDrag=(event:IpcMainEvent)=>{const pin=this.pinFrom(event);if(!pin?.drag||pin.state.locked||pin.state.editing||pin.win.isDestroyed())return;const cursor=screen.getCursorScreenPoint();pin.win.setPosition(pin.drag.bounds.x+cursor.x-pin.drag.cursor.x,pin.drag.bounds.y+cursor.y-pin.drag.cursor.y,false);};
@@ -272,12 +283,19 @@ export class PinManager {
     if(!pin.state.editing||id!==pin.state.editId)throw Error('贴图编辑已结束');
     if(!Number.isSafeInteger(revision)||revision<0||revision<pin.editorRevision)throw Error('图片已变化，请重试');
   }
-  private fit=()=>{for(const pin of this.pins.values()){if(pin.state.editing||pin.state.locked)continue;const area=screen.getDisplayMatching(pin.win.getBounds()).workArea;pin.win.setBounds(fitToWorkArea(pin.win.getBounds(),area));this.changed(pin);}};
+  private fit=()=>{for(const pin of this.pins.values()){
+    if(pin.state.editing||(pin.state.locked&&!pin.state.thumbnail))continue;
+    const bounds=pin.win.getBounds(),area=screen.getDisplayMatching(bounds).workArea;
+    if(pin.normalBounds)pin.normalBounds=fitToWorkArea(pin.normalBounds,area);
+    pin.win.setBounds(pin.state.thumbnail?thumbnailBounds(bounds,area):fitToWorkArea(bounds,area));this.changed(pin);
+  }};
   private publish(pin:Pin){if(!pin.win.isDestroyed())pin.win.webContents.send('pin:changed',pin.state);}
   private weight(doc:PinnedDocument){const a=doc.source.getSize(),b=doc.image.getSize();return (a.width*a.height+b.width*b.height)*4+JSON.stringify(doc.annotations).length*2;}
   private restoreImageSize(pin:Pin,origin:Rectangle){
     const area=screen.getDisplayMatching(origin).workArea,base=pinWindowSize(pin.document.image.getSize(),pin.document.pixelScale,area,this.keepsSize()),zoom=(pin.state.zoomPercent??100)/100;
-    pin.win.setMinimumSize(1,1);pin.win.setBounds(fitToWorkArea({...origin,width:Math.max(1,Math.round(base.width*zoom)),height:Math.max(1,Math.round(base.height*zoom))},area));
+    const bounds=fitToWorkArea({...origin,width:Math.max(1,Math.round(base.width*zoom)),height:Math.max(1,Math.round(base.height*zoom))},area);
+    if(pin.state.thumbnail)pin.normalBounds=bounds;
+    pin.win.setMinimumSize(1,1);pin.win.setBounds(pin.state.thumbnail?thumbnailBounds(pin.win.getBounds(),area):bounds);
   }
   async put(document:PinnedDocument,id?:string){
     await this.ready;
@@ -285,7 +303,7 @@ export class PinManager {
     if(id&&!existing)throw Error('原贴图已关闭，请重新贴图');
     const bytes=this.weight(document),used=[...this.pins.values()].reduce((n,p)=>n+p.bytes,0)-(existing?.bytes||0);
     if((!existing&&this.pins.size>=16)||used+bytes>256*1024*1024)throw Error('贴图占用较多，请先关闭部分贴图后重试。');
-    if(existing){const origin=existing.restBounds??existing.win.getBounds();existing.document=document;existing.storedDocument=serializePinnedDocument(document);existing.bytes=bytes;existing.state.revision++;existing.state.image=document.image.toDataURL();existing.state.editing=false;existing.state.editId=undefined;existing.restBounds=undefined;Object.assign(existing.state,document.image.getSize(),{lines:[],status:'正在识别文字…'});this.restoreImageSize(existing,origin);this.publish(existing);this.focus(existing.state.id);this.recognize(existing);this.changed(existing);this.persist();return existing.state.id;}
+    if(existing){const origin=existing.restBounds??existing.normalBounds??existing.win.getBounds();existing.document=document;existing.storedDocument=serializePinnedDocument(document);existing.bytes=bytes;existing.state.revision++;existing.state.image=document.image.toDataURL();existing.state.editing=false;existing.state.editId=undefined;existing.restBounds=undefined;Object.assign(existing.state,document.image.getSize(),{lines:[],status:'正在识别文字…'});this.restoreImageSize(existing,origin);this.publish(existing);this.focus(existing.state.id);this.recognize(existing);this.changed(existing);this.persist();return existing.state.id;}
     return this.open(document);
   }
   private async open(document:PinnedDocument,saved?:SavedPin,payload:PinContentPayload={kind:'image'},groupId=this.settings.activeGroupId){
@@ -294,11 +312,14 @@ export class PinManager {
     if(this.pins.size>=16||[...this.pins.values()].reduce((sum,pin)=>sum+pin.bytes,bytes)>256*1024*1024)throw Error('贴图占用较多，请先关闭部分贴图后重试。');
     if(saved){
       if(typeof saved.id!=='string'||this.pins.has(saved.id)||!saved.payload||!['image','text','color','file'].includes(saved.payload.kind)||!saved.bounds||![saved.bounds.x,saved.bounds.y,saved.bounds.width,saved.bounds.height,saved.opacity,saved.zoomPercent].every(Number.isFinite)||saved.bounds.width<1||saved.bounds.height<1||saved.opacity<0.1||saved.opacity>1)throw Error('贴图工作空间记录无效');
+      if(saved.normalBounds&&(![saved.normalBounds.x,saved.normalBounds.y,saved.normalBounds.width,saved.normalBounds.height].every(Number.isFinite)||saved.normalBounds.width<1||saved.normalBounds.height<1))throw Error('贴图展开尺寸无效');
       payload=saved.payload;groupId=this.settings.groups.some(group=>group.id===saved.groupId)?saved.groupId:this.settings.activeGroupId;
     }
     const pinId=saved?.id??randomUUID(),size=document.image.getSize(),area=saved?screen.getDisplayMatching(saved.bounds).workArea:screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
     const keeps=this.keepsSize(),placed=pinWindowSize(size,document.pixelScale,area,keeps);
-    const bounds=fitToWorkArea(saved?.bounds??{x:Math.round(area.x+(area.width-placed.width)/2+(this.serial%5)*18),y:Math.round(area.y+(area.height-placed.height)/2+(this.serial%5)*18),width:placed.width,height:placed.height},area);
+    const initialBounds=saved?.bounds??{x:Math.round(area.x+(area.width-placed.width)/2+(this.serial%5)*18),y:Math.round(area.y+(area.height-placed.height)/2+(this.serial%5)*18),width:placed.width,height:placed.height};
+    const bounds=saved?.thumbnail?thumbnailBounds(initialBounds,area):fitToWorkArea(initialBounds,area),zoom=(saved?.zoomPercent??100)/100;
+    const normalBounds=saved?.thumbnail?fitToWorkArea(saved.normalBounds??{...initialBounds,width:Math.max(1,Math.round(placed.width*zoom)),height:Math.max(1,Math.round(placed.height*zoom))},area):undefined;
     this.serial++;
     const title=saved?.title??(payload.kind==='text'?payload.text!.slice(0,30):payload.kind==='color'?payload.colorHex!:payload.kind==='file'?payload.fileName!:`Lasso 贴图 ${this.serial}`);
     const win=new BrowserWindow({...bounds,minWidth:1,minHeight:1,resizable:!keeps&&!saved?.locked&&!saved?.thumbnail,frame:false,show:false,backgroundColor:'#FFFFFF',title,fullscreenable:false,webPreferences:{preload:join(__dirname,'pin-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
@@ -309,7 +330,7 @@ export class PinManager {
     win.webContents.on('before-input-event',(event,input)=>{
       if(input.type==='keyDown'&&input.meta&&!input.control&&!input.alt&&!input.shift&&input.key.toLowerCase()==='w'){event.preventDefault();win.close();}
     });
-    const pin:Pin={win,document,storedDocument:saved?.document??serializePinnedDocument(document),bytes,visible:saved?.visible??true,updatedAt:saved?.updatedAt??Date.now(),normalBounds:saved?.normalBounds,state:{id:pinId,kind:payload.kind,payload,title,groupId,locked:saved?.locked??false,thumbnail:saved?.thumbnail??false,zoomPercent:saved?.zoomPercent??100,wheelAction:this.settings.wheelAction,groups:structuredClone(this.settings.groups),revision:0,image:document.image.toDataURL(),...size,lines:[],status:payload.kind==='image'?'正在识别文字…':'',topmost:saved?.topmost??true,opacity:saved?.opacity??1,passthrough:false,editing:false},ocr:undefined!,editorRevision:0};
+    const pin:Pin={win,document,storedDocument:saved?.document??serializePinnedDocument(document),bytes,visible:saved?.visible??true,updatedAt:saved?.updatedAt??Date.now(),normalBounds,state:{id:pinId,kind:payload.kind,payload,title,groupId,locked:saved?.locked??false,thumbnail:saved?.thumbnail??false,zoomPercent:saved?.zoomPercent??100,wheelAction:this.settings.wheelAction,groups:structuredClone(this.settings.groups),revision:0,image:document.image.toDataURL(),...size,lines:[],status:payload.kind==='image'?'正在识别文字…':'',topmost:saved?.topmost??true,opacity:saved?.opacity??1,passthrough:false,editing:false},ocr:undefined!,editorRevision:0};
     pin.ocr=new OCRService(()=>this.vision??=require(join(__dirname,'native/capture-vision.node')),(ocrId,revision)=>pin.state.editing?pin.state.editId===ocrId&&pin.editorRevision===revision:this.pins.get(ocrId)===pin&&pin.state.revision===revision);
     this.pins.set(pinId,pin);
     let closing:SavedPin|undefined;
