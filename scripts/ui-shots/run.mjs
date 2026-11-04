@@ -91,14 +91,42 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const page = async (w, script) => { try { return await w.webContents.executeJavaScript(script); } catch (error) { throw Error(error.message + '\nScript: ' + script); } };
     const move = async (w, x, y) => { w.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) }); await wait(450); };
     const center = async (w, selector) => page(w, `(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r ? [r.x + r.width / 2, r.y + r.height / 2] : null; })()`);
+    const ready = async (w, expression) => { for (let pass = 0; pass < 100; pass++) { if (await page(w, expression)) return; await wait(50); } throw Error('UI did not become ready: ' + expression); };
+    const scrollTo = async (w, selector, block = 'start') => {
+      await ready(w, `Boolean(document.querySelector(${JSON.stringify(selector)}))`);
+      await page(w, `(async () => {
+        const element=document.querySelector(${JSON.stringify(selector)});
+        element.scrollIntoView({block:${JSON.stringify(block)},behavior:'instant'});
+        let previous='',stable=0;
+        for(let frame=0;frame<120;frame++){
+          await new Promise(requestAnimationFrame);
+          const rect=element.getBoundingClientRect(),positions=[rect.x,rect.y,rect.width,rect.height];
+          let top=0,bottom=innerHeight;
+          for(let parent=element.parentElement;parent;parent=parent.parentElement){
+            positions.push(parent.scrollLeft,parent.scrollTop);
+            if(/auto|scroll|hidden|clip/.test(getComputedStyle(parent).overflowY)){const bounds=parent.getBoundingClientRect();top=Math.max(top,bounds.top);bottom=Math.min(bottom,bounds.bottom);}
+          }
+          const current=positions.map(value=>value.toFixed(2)).join(',');
+          stable=current===previous?stable+1:0;previous=current;
+          if(stable>=2&&rect.width>0&&rect.height>0&&rect.top>=top-.5&&rect.bottom<=bottom+.5)return;
+        }
+        throw Error('Scroll target did not settle visibly: '+${JSON.stringify(selector)});
+      })()`);
+    };
+    const settingsTab = async (w, label) => {
+      // Custom capture has view priority; wait for actual navigation after its exit animation.
+      await page(w, `(async () => { const s=await window.desktop.getState();if (s.customCaptureOpen) await window.desktop.act('close-custom-capture');if (!s.settingsOpen) await window.desktop.act('settings'); })()`);
+      await ready(w, `Array.from(document.querySelectorAll('.l-set-nav button')).some(b => b.textContent === ${JSON.stringify(label)})`);
+      await page(w, `Array.from(document.querySelectorAll('.l-set-nav button')).find(b => b.textContent === ${JSON.stringify(label)}).click()`); await wait(400);
+    };
     if(!find()||!find('action-bar'))throw Error('UI startup failed: '+JSON.stringify(BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL()}))));
-    global.uiShots = { captureOnly, surfacesOnly, fs, path, wait, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
+    global.uiShots = { captureOnly, surfacesOnly, fs, path, wait, ready, scrollTo, settingsTab, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
       save: async (w, name) => { fs.writeFileSync(path.join(out, name + '.png'), (await w.webContents.capturePage()).toPNG()); return name; } };
   }, out, fixtures, runtime, captureOnly, surfacesOnly);
 
   // Main window: current view, command palette, settings.
   saved.push(...await main(async () => {
-    const { find, page, wait, save } = global.uiShots, m = find(), names = [];
+    const { find, page, wait, save, settingsTab } = global.uiShots, m = find(), names = [];
     // Keep this isolated fixture visible while the user's foreground app changes.
     await page(m, 'window.desktop.getState().then(s => s.pinned ? undefined : window.desktop.act("pin"))');
     m.show(); m.focus(); await wait(1500);
@@ -136,18 +164,18 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     }
     shell = await page(m, 'window.desktop.getState()');
     await page(m, "window.desktop.act('settings')"); await wait(700); names.push(await save(m, 'settings'));
-    await page(m, `Array.from(document.querySelectorAll('.l-set-nav button')).find(button => button.textContent === '截图').click()`); await wait(450);
+    await settingsTab(m, '截图');
     names.push(await save(m, 'settings-screenshot-actions'));
-    await page(m,`window.desktop.act('custom-capture')`);await wait(400);names.push(await save(m,'custom-capture'));await page(m,`window.desktop.act('close-custom-capture')`);await wait(250);
+    await page(m,`window.desktop.act('custom-capture')`);await wait(400);names.push(await save(m,'custom-capture'));await settingsTab(m,'截图');
     await page(m, `document.querySelector('[aria-label="全屏截图后复制"]').click(); document.querySelector('[aria-label="全屏截图后保存"]').click(); document.querySelector('[aria-label="截图保存格式"] button:last-child').click()`); await wait(250);
     await page(m, `document.getElementById('screenshot-directory').scrollIntoView({block:'center'})`); await wait(200); names.push(await save(m, 'settings-screenshot-save'));
     await page(m, `document.querySelector('[aria-label="窗口截图背景"] button:last-child').click(); document.querySelector('[aria-label="保留窗口阴影"]').click()`); await wait(200); await page(m, `document.getElementById('screenshot-color').scrollIntoView({block:'center'})`); await wait(350); names.push(await save(m, 'settings-screenshot-background'));
     await page(m, `document.getElementById('screenshot-height').scrollIntoView({block:'start'}); Array.from(document.querySelectorAll('button')).find(button => button.textContent === '添加语言').click()`); await wait(250); names.push(await save(m, 'settings-screenshot-ocr'));
     if(global.uiShots.captureOnly)return names;
-    await page(m, `Array.from(document.querySelectorAll('.l-set-nav button')).find(button => button.textContent === '通用').click()`); await wait(350);
-    m.webContents.send('shell:changed', { ...shell, settingsOpen: true, settings: { ...shell.settings, shortcut: 'F1', captureShortcuts: { ...shell.settings.captureShortcuts, area: 'F2' } } }); await wait(250);
-    await page(m, `document.getElementById('shortcut-open').scrollIntoView({block:'center'})`); await wait(150);
-    if (!await page(m, `document.getElementById('shortcut-open').textContent.includes('F1') && document.getElementById('shortcut-area').textContent.includes('F2')`)) throw Error('Single function keys did not render in shortcut settings');
+    await settingsTab(m, '通用');
+    m.webContents.send('shell:changed', { ...shell, settingsOpen: true, settings: { ...shell.settings, shortcut: 'F1', captureShortcuts: { ...shell.settings.captureShortcuts, area: 'F2' }, actionShortcuts: { ...shell.settings.actionShortcuts, 'open-launcher': 'F1', area: 'F2' } } }); await wait(250);
+    await page(m, `document.getElementById('shortcut-open-launcher').scrollIntoView({block:'center'})`); await wait(150);
+    if (!await page(m, `document.getElementById('shortcut-open-launcher').textContent.includes('F1') && document.getElementById('shortcut-area').textContent.includes('F2')`)) throw Error('Single function keys did not render in shortcut settings');
     names.push(await save(m, 'settings-shortcuts'));
     await page(m, `document.getElementById('shortcut-rect').scrollIntoView({block:'center'})`); await wait(150); names.push(await save(m, 'settings-rect-shortcut'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true });
@@ -159,11 +187,11 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       { name: 'Safari', bundleId: 'com.apple.Safari', prompt: '这段内容来自浏览器。', enabled: true },
       { name: '未安装的应用', bundleId: 'local.lasso.not-installed', prompt: '', enabled: true }
     ] } });
-    await page(m, `Array.from(document.querySelectorAll('.l-set-nav button')).find(button => button.textContent === '应用背景').click()`); await wait(450);
+    await settingsTab(m, '应用背景');
     if (!await page(m, `Boolean(document.querySelector('.l-app-icon img')?.src.startsWith('data:image/png;base64,'))`)) throw Error('Installed application icon did not load');
     names.push(await save(m, 'settings-app-icons'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true });
-    await page(m, `Array.from(document.querySelectorAll('.l-set-nav button')).find(button => button.textContent === '预设').click()`); await wait(350);
+    await settingsTab(m, '预设');
     names.push(await save(m, 'preset-list'));
     await page(m, `document.querySelector('.l-preset').focus()`); await wait(150); names.push(await save(m, 'preset-list-selected'));
     const catalogIPC = global.uiShots.ipcMain;
@@ -229,6 +257,57 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     m.webContents.send('shell:changed', { ...imageState, inputOpen:true, inputImage:{id:'fixture-input',width:1200,height:900,thumbnail},inputImagePrompt:'保留主体，将背景改成白色。' }); await wait(350);
     if (!await page(m, `document.getElementById('image-prompt')?.value.includes('保留主体')`)) throw Error('Image entry lost the supplied description');
     names.push(await save(m, 'image-preset-input')); m.webContents.send('shell:changed', imageState);
+    return names;
+  }));
+  // Stage 2 settings use the real isolated configuration IPC; only native pickers are fixtures.
+  saved.push(...await main(async () => {
+    const { find, page, wait, ready, scrollTo, settingsTab, save, ipcMain, fs, path, app, out } = global.uiShots, names = [], checks = [], m = find();
+    if (global.uiShots.surfacesOnly) return names;
+    const original = await page(m, 'window.desktop.getState().then(s => s.settings)');
+    const expect = (ok, message) => { if (!ok) throw Error(message); };
+    const click = async selector => { await page(m, `document.querySelector(${JSON.stringify(selector)}).click()`); await wait(180); };
+    const fill = async (id, value) => { await page(m, `(() => { const e=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true})); })()`); await wait(100); };
+    const choice = async (label, text) => { await page(m, `Array.from(document.querySelectorAll('[aria-label="${label}"] button')).find(b=>b.textContent===${JSON.stringify(text)}).click()`); await wait(120); };
+    const record = async (id, key, code) => { await click('#' + id); await page(m, `document.getElementById(${JSON.stringify(id)}).dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},code:${JSON.stringify(code)},bubbles:true}))`); await wait(250); };
+    const settings = () => page(m, 'window.desktop.getState().then(s => s.settings)');
+    const picker = ipcMain._invokeHandlers.get('shell:choose-path');
+    ipcMain.removeHandler('shell:choose-path'); ipcMain.handle('shell:choose-path', (_event, kind) => kind === 'application' ? { path:'/System/Applications/Preview.app', bundleId:'com.apple.Preview', name:'Preview' } : { path:app.getPath('temp') });
+    try {
+      await settingsTab(m, '通用');
+      await record('shortcut-rect', 'F20', 'F20'); expect((await settings()).actionShortcuts.rect === 'F20', 'Global shortcut recorder did not save');
+      await record('shortcut-window', 'F20', 'F20'); expect(await page(m, `Boolean(document.querySelector('#shortcut-window').closest('li').querySelector('[role="alert"]'))`), 'Global shortcut conflict did not appear');
+      await scrollTo(m, '#global-shortcuts'); names.push(await save(m, 'settings-shortcuts-conflict'));
+      await click('[aria-label="取消绑定框选截图"]'); expect((await settings()).actionShortcuts.rect === '', 'Global shortcut did not clear');
+      await record('editor-shortcut-arrow', 'q', 'KeyQ'); expect((await settings()).editorShortcuts.arrow === 'Q', 'Editor shortcut recorder did not save');
+      await record('editor-shortcut-rectangle', 'q', 'KeyQ'); expect(await page(m, `Boolean(document.querySelector('#editor-shortcut-rectangle').closest('li').querySelector('[role="alert"]'))`), 'Editor shortcut conflict did not appear');
+      await scrollTo(m, '#editor-shortcuts'); names.push(await save(m, 'settings-editor-shortcuts'));
+      await click('[aria-label="取消绑定箭头"]'); expect((await settings()).editorShortcuts.arrow === '', 'Editor shortcut did not clear'); checks.push('全局/编辑器快捷键录制、冲突提示与清空');
+      await page(m, `Array.from(document.querySelectorAll('#ignored-apps button')).find(b=>b.textContent==='选择忽略应用…').click()`); await ready(m, `Boolean(document.querySelector('[aria-label="Preview：忽略划词"]'))`);
+      await click('[aria-label="Preview：忽略快捷键"]'); await click('[aria-label="启用忽略 Preview"]');
+      const ignored = (await settings()).ignoredApps.find(rule => rule.bundleId === 'com.apple.Preview');
+      expect(ignored && !ignored.enabled && ignored.scopes.join(',') === 'selection,capture-candidates', 'Ignored app scopes did not persist');
+      await scrollTo(m, '#ignored-apps'); names.push(await save(m, 'settings-ignored-apps'));
+      await click('[aria-label="删除忽略应用 Preview"]'); expect(!(await settings()).ignoredApps.some(rule => rule.bundleId === 'com.apple.Preview'), 'Ignored app did not delete'); checks.push('忽略应用添加、范围、启停与删除');
+      await settingsTab(m, '截图');
+      await click('[aria-label="记住标注工具样式"]'); await scrollTo(m, '#screenshot-editing'); names.push(await save(m, 'settings-annotation-memory'));
+      for (const format of ['PNG','JPEG','WEBP','BMP','PDF']) await choice('截图保存格式', format);
+      await fill('screenshot-quality', 76); await click('[aria-label="选择快速保存目录"]'); await fill('screenshot-template', '../invalid');
+      expect(await page(m, `document.querySelector('.l-save-bar').textContent.includes('有未保存')`), 'Output settings did not become dirty');
+      await page(m, `Array.from(document.querySelectorAll('.l-save-bar button')).find(b=>b.textContent==='保存').click()`); await wait(200);
+      expect(await page(m, `document.querySelector('.l-save-bar').textContent.includes('模板')`), 'Invalid file template did not show an error'); names.push(await save(m, 'settings-output-validation'));
+      await fill('screenshot-template', '{YYYY}/{MM}/{DD}/{app}-{width}x{height}-{seq}'); await choice('默认复制方式','文件'); await choice('默认导出内容','原始底图'); await choice('保存后动作','复制路径');
+      await scrollTo(m, '#screenshot-output'); names.push(await save(m, 'settings-screenshot-output'));
+      await scrollTo(m, '[aria-label="默认复制方式"]', 'center'); names.push(await save(m, 'settings-screenshot-output-policy'));
+      await page(m, `Array.from(document.querySelectorAll('.l-save-bar button')).find(b=>b.textContent==='保存').click()`); await wait(300);
+      const output = (await settings()).screenshot, disk = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8'));
+      expect(output.format === 'pdf' && output.jpegQuality === 76 && output.quickSaveDirectory === app.getPath('temp') && output.copyMode === 'file' && output.exportContentMode === 'original' && output.afterSaveAction === 'copy-path' && !output.annotationMemory.rememberToolStyles && output.fileNameTemplate.includes('{seq}'), 'Output settings did not persist');
+      expect(JSON.stringify(disk.screenshot) === JSON.stringify(output), 'Output settings differ from persisted file');
+      await settingsTab(m, '通用'); await settingsTab(m, '截图'); expect(await page(m, `document.getElementById('screenshot-template').value.includes('{seq}') && document.querySelector('[aria-label="截图保存格式"] [aria-checked="true"]').textContent==='PDF'`), 'Saved output settings did not restore'); checks.push('五格式、输出策略、样式记忆开关、脏状态、模板校验与保存恢复');
+      fs.writeFileSync(path.join(out,'stage-2-settings.json'), JSON.stringify({status:'passed',checks,configurationPersistence:'real isolated Electron IPC and settings.json',pickers:'fixture application and workspace temp directory'},null,2));
+    } finally {
+      ipcMain.removeHandler('shell:choose-path'); ipcMain.handle('shell:choose-path', picker);
+      await page(m, `(async()=>{await window.desktop.saveActionShortcut('rect',${JSON.stringify(original.actionShortcuts.rect || '')});await window.desktop.saveEditorShortcuts(${JSON.stringify(original.editorShortcuts)});await window.desktop.saveIgnoredApps(${JSON.stringify(original.ignoredApps)});await window.desktop.saveScreenshot(${JSON.stringify(original.screenshot)});await window.desktop.act('close-settings');})()`); await wait(250);
+    }
     return names;
   }));
   // Dedicated image-generation surface: fixtures exercise layout without sending paid requests.
@@ -343,7 +422,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
   // Region presets: configuration IPC and form interactions; acquisition is stubbed.
   saved.push(...await main(async () => {
-    const {find,page,wait,save,ipcMain,app,fs,path,out}=global.uiShots,names=[],checks=[];let m;
+    const {find,page,wait,save,settingsTab,ipcMain,app,fs,path,out}=global.uiShots,names=[],checks=[];let m;
     await wait(1800);
     m=global.uiShots.BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('/renderer/index.html')&&!w.webContents.getURL().includes('surface='));
     if(!m)throw Error('Main renderer unavailable');m.show();m.focus();await wait(300);
@@ -381,7 +460,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     ipcMain.removeHandler('shell:regions');ipcMain.handle('shell:regions',()=>({...cfg,presets:[mapped],displays:[...cfg.displays,{...cfg.displays[0],id:999,label:'映射测试显示器'}],presetDisplayIds:{[mapped.id]:999}}));
     await page(m,"window.desktop.act('close-custom-capture')");for(let i=0;i<40&&await page(m,`Boolean(document.querySelector('.custom-capture'))`);i++)await wait(50);await page(m,"window.desktop.act('custom-capture')");for(let i=0;i<40&&!await page(m,`Boolean(document.querySelector('option[value="display-preset"]'))`);i++)await wait(50);await fill('选择区域预设',mapped.id);expect(await val('目标显示器')==='999','Valid local display mapping');checks.push('显示器映射契约 fixture 选择有效本机绑定');
     await page(m,"window.desktop.act('close-custom-capture')");for(let i=0;i<40&&await page(m,`Boolean(document.querySelector('.custom-capture'))`);i++)await wait(50);
-    await page(m,"window.desktop.act('settings')");await wait(250);await click('截图');
+    await settingsTab(m,'截图');
     await page(m,`document.querySelector('[aria-label="重启后记住上次区域"]').click()`);await wait(100);
     const external={id:'external',name:'外部添加',width:800,height:600,ratio:null,delay:0};await page(m,`window.desktop.saveRegionPreset(${JSON.stringify(external)})`);await wait(200);
     await page(m,`[...document.querySelectorAll('.l-save-bar button')].find(b=>b.textContent==='保存').click()`);await wait(300);
@@ -397,7 +476,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const W = 1280, H = 800, frame = (await find().webContents.capturePage()).resize({ width: W, height: H }), backdrop = frame.toDataURL();
     const sel = { x: 380, y: 170, width: 520, height: 320 }, crop = frame.crop(sel);
     const windows = [{ id: 1, x: 300, y: 120, width: 640, height: 430 }, { id: 2, x: 120, y: 60, width: 900, height: 620 }];
-    const base = { id: 'ui-shots', editId: 'ui-shots-edit', candidates: [], status: '', selection: null };
+    const preferences = await page(find(), 'window.desktop.getState().then(s => ({annotationMemory:s.settings.screenshot.annotationMemory,editorShortcuts:s.settings.editorShortcuts}))');
+    const base = { ...preferences, saveFormat:'png', id: 'ui-shots', editId: 'ui-shots-edit', candidates: [], status: '', selection: null };
     const longPixels=Buffer.concat([frame.toBitmap(),frame.toBitmap(),frame.toBitmap()]);
     const long=nativeImage.createFromBitmap(longPixels,{width:W,height:H*3});
     const scrolling={status:'running',width:W,height:H*3,segments:3,seams:[H,H*2],message:'在选区内缓慢向下滚动，每次保留至少三分之一重叠'};
@@ -442,6 +522,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       } }
     };
     states['editor-region-retina']={...states['editor-region'],image:retinaBackdrop,backdrop:retinaBackdrop,editableRegion:{...states['editor-region'].editableRegion,display:{...states['editor-region'].editableRegion.display,scaleFactor:2},sourceSize:{width:W*2,height:H*2},initialCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2},currentCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2}}};
+    states['editor-stage-2']={...states['editor-window'],editorShortcuts:{...preferences.editorShortcuts,arrow:'Q',copy:'F16',save:'F17','quick-save':'F18',pin:'F19'},annotationMemory:{...preferences.annotationMemory,lastTool:'arrow',perTool:{arrow:{arrowType:'double',width:8},text:{textBackground:true,fontSize:40},mosaic:{mosaicSize:32},blur:{blurRadius:18}}}};
+    states['editor-shared-style']={...states['editor-stage-2'],annotationMemory:{...states['editor-stage-2'].annotationMemory,rememberToolStyles:false}};
     states['editor-region-marks']={...states['editor-region'],annotations:{crop:sel,nextNumber:1,privacy:[],objects:[
       {type:'Rect',left:430,top:220,width:100,height:60,fill:'transparent',stroke:'#e24a35',strokeWidth:4,lassoTool:'rectangle'},
       {type:'Path',path:[['M',0,0],['L',120,40]],left:600,top:260,fill:'transparent',stroke:'#e24a35',strokeWidth:4,lassoTool:'arrow'},
@@ -460,11 +542,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       const image=frame.resize({width:width*2,height:height*2}).toDataURL();
       states['editor-layout-'+name]={...states['editor-region'],image,backdrop:image,viewSize:{width,height},editableRegion:{display:{id:1,bounds:{x:0,y:0,width,height},scaleFactor:2,rotation:0},sourceSize:{width:width*2,height:height*2},initialCrop:crop,currentCrop:crop,ratio:null}};
     }
-    let state = null, exports = [], regionUpdates=[],exportDelay=0;
+    let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [];
     ipcMain.removeHandler('ui-shots:region');ipcMain.handle('ui-shots:region',(_e,r)=>{regionUpdates.push(r);});
     ipcMain.removeHandler('ui-shots:clear-region');ipcMain.handle('ui-shots:clear-region',e=>{const old=state;const w=BrowserWindow.fromWebContents(e.sender);w.webContents.send('ui-shots:changed',{...old,phase:'selecting'});setTimeout(()=>{state={...old,editId:'after-clear',annotations:undefined};w.webContents.send('ui-shots:changed',{...state,imageFrame:'fixture-image',backdropFrame:'fixture-backdrop'});},150);});
     ipcMain.removeHandler('ui-shots:state'); ipcMain.handle('ui-shots:state', () => state);
-    ipcMain.removeHandler('ui-shots:export'); ipcMain.handle('ui-shots:export', async (_event, frame, action, format) => { exports.push({ frame, action, format });if(exportDelay)await wait(exportDelay);return { error: null }; });
+    ipcMain.removeHandler('ui-shots:export'); ipcMain.handle('ui-shots:export', async (_event, frame, action, format, contentMode) => { exports.push({ frame, action, format, contentMode });if(exportDelay)await wait(exportDelay);return { error: null }; });
+    ipcMain.removeHandler('ui-shots:annotation-memory'); ipcMain.handle('ui-shots:annotation-memory', (_event, memory) => { memorySaves.push(memory); });
     ipcMain.removeHandler('ui-shots:pixels');ipcMain.handle('ui-shots:pixels',(_event,id)=>{
       const image=nativeImage.createFromDataURL(id==='fixture-backdrop'?state.backdrop:state.image),size=image.getSize(),data=image.toBitmap();
       for(let i=0;i<data.length;i+=4){const a=data[i+3],b=data[i],r=data[i+2];data[i]=a?Math.min(255,Math.round(r*255/a)):0;data[i+1]=a?Math.min(255,Math.round(data[i+1]*255/a)):0;data[i+2]=a?Math.min(255,Math.round(b*255/a)):0;}
@@ -597,6 +680,50 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         fs.writeFileSync(path.join(out,'interaction-verification.json'),JSON.stringify(result,null,2));
       }
       if (name === 'editor-inline') { await wait(800); await page(w, `document.querySelector('[aria-label="箭头"]')?.click()`); await wait(500); }
+      if (name === 'editor-stage-2') {
+        const checks = [], previewChecks = [], expect = (ok, message) => { if (!ok) throw Error(message); };
+        const click = async selector => { await page(w, `document.querySelector(${JSON.stringify(selector)}).click()`); await wait(220); };
+        const choice = async (label, text) => { await page(w, `Array.from(document.querySelectorAll('[aria-label="${label}"] [role="radio"]')).find(b=>b.textContent===${JSON.stringify(text)}).click()`); await wait(160); };
+        const range = async (label, value) => { await page(w, `(()=>{const e=document.querySelector('input[aria-label="${label}"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'${value}');e.dispatchEvent(new Event('input',{bubbles:true}));})()`); await wait(180); };
+        const press = async keyCode => { w.webContents.sendInputEvent({type:'keyDown',keyCode});w.webContents.sendInputEvent({type:'keyUp',keyCode});await wait(180); };
+        const output = async action => { const count=exports.length;await click(action==='pin'?'[aria-label="贴图"]':'[aria-label="保存"]');await global.uiShots.ready(w, `document.querySelector('.ed').getAttribute('aria-busy')==='false'`);expect(exports.length===count+1,'Editor did not export once');return exports.at(-1); };
+        const drag = async (tool, region) => {
+          const [x,y,width,height]=region, points=await page(w, `(()=>{const r=document.querySelector('canvas.upper-canvas').getBoundingClientRect();return [r.x+${x}/1280*r.width,r.y+${y}/800*r.height,r.x+${x+width}/1280*r.width,r.y+${y+height}/800*r.height];})()`);
+          await move(w,points[0],points[1]);w.webContents.sendInputEvent({type:'mouseDown',x:Math.round(points[0]),y:Math.round(points[1]),button:'left',clickCount:1});
+          w.webContents.sendInputEvent({type:'mouseMove',x:Math.round(points[2]),y:Math.round(points[3]),modifiers:['leftButtonDown']});await wait(180);
+          const pixels=`(()=>{const c=document.createElement('canvas');c.width=1280;c.height=800;const ctx=c.getContext('2d');for(const s of ['.editor-source','canvas.lower-canvas','canvas.upper-canvas'])ctx.drawImage(document.querySelector(s),0,0);return ctx.getImageData(${x-20},${y-20},${width+40},${height+40}).data;})()`;
+          await page(w, `window.__stage2Preview=${pixels}`);names.push(await save(w, 'editor-'+tool+'-preview'));
+          w.webContents.sendInputEvent({type:'mouseUp',x:Math.round(points[2]),y:Math.round(points[3]),button:'left',clickCount:1});await wait(200);
+          const difference=await page(w, `(()=>{const after=${pixels};let delta=0;for(let i=0;i<after.length;i++)delta+=Math.abs(after[i]-window.__stage2Preview[i]);delete window.__stage2Preview;return delta/after.length;})()`);
+          expect(difference < (tool==='arrow'?4:0.5),tool+' preview differs from committed pixels: '+difference);previewChecks.push({tool,meanChannelDifference:difference});names.push(await save(w, 'editor-'+tool+'-committed'));
+        };
+        app.focus({steal:true});w.focus();w.webContents.focus();
+        expect(await page(w, `document.querySelector('[aria-label="箭头"]').getAttribute('aria-pressed')==='true' && document.querySelector('[aria-label="箭头样式"] [aria-checked="true"]').textContent==='双向' && document.querySelector('[aria-label="线条粗细"]').value==='8'`), 'Arrow memory was not restored');
+        await drag('arrow',[220,170,300,100]);const initialOutput=await output('pin'),arrow=initialOutput.frame.annotations.objects.find(o=>o.lassoTool==='arrow');expect(arrow?.path.length===8,'Double arrow did not commit both arrowheads');expect(initialOutput.contentMode===undefined,'Default export did not defer to screenshot settings');
+        await range('线条粗细',10);await click('[aria-label="矩形"]');await press('q');expect(await page(w, `document.querySelector('[aria-label="线条粗细"]').value==='10'`), 'Configured tool key did not restore per-tool style');
+        await click('[aria-label="文字 · 点击添加"]');expect(await page(w, `document.querySelector('[aria-label="文字背景衬底"]').getAttribute('aria-checked')==='true'`), 'Text background memory did not restore');
+        const point=await page(w, `(()=>{const r=document.querySelector('canvas.upper-canvas').getBoundingClientRect();return [Math.round(r.x+r.width*.25),Math.round(r.y+r.height*.45)];})()`);
+        w.webContents.sendInputEvent({type:'mouseDown',x:point[0],y:point[1],button:'left',clickCount:1});w.webContents.sendInputEvent({type:'mouseUp',x:point[0],y:point[1],button:'left',clickCount:1});await wait(150);await w.webContents.insertText('文字背景');await press('Escape');
+        const text=(await output('pin')).frame.annotations.objects.find(o=>o.lassoTool==='text');expect(Boolean(text?.backgroundColor),'Text background did not commit');names.push(await save(w,'editor-text-background'));
+        await click('[aria-label="文字背景衬底"]');const changedText=(await output('pin')).frame.annotations.objects.find(o=>o.lassoTool==='text');expect(!changedText?.backgroundColor,'Selected text background did not toggle');
+        for(const [tool,label,value,region] of [['mosaic','马赛克强度',40,[650,170,180,100]],['blur','模糊强度',24,[650,350,180,100]]]) { await click('[aria-label="'+(tool==='mosaic'?'马赛克':'模糊')+'"]');await range(label,value);await drag(tool,region); }
+        await click('[aria-label="箭头"]');expect(await page(w, `document.querySelector('[aria-label="线条粗细"]').value==='10'`), 'Tool switch lost its style');expect(memorySaves.some(m=>m.perTool.arrow?.width===10)&&memorySaves.some(m=>m.perTool.mosaic?.mosaicSize===40)&&memorySaves.some(m=>m.perTool.blur?.blurRadius===24),'Style changes did not reach persistence bridge');checks.push('双向箭头、文字背景、强度预览/成图与按工具记忆');
+        for(const format of ['PNG','JPEG','WEBP','BMP','PDF']) { await click('button[aria-label="保存格式"]');await choice('保存格式',format);await click('button[aria-label="保存格式"]');expect((await output('save')).format===format.toLowerCase(),'Wrong export format '+format); }
+        for(const [mode,label,action,text] of [['result','编辑结果','quick-save','快速保存'],['original','原始底图','copy-file','复制文件'],['display','显示效果','copy-path','复制路径']]) {
+          await click('button[aria-label="保存格式"]');await choice('导出内容',label);names.push(await save(w,'editor-export-'+mode));const count=exports.length;
+          await page(w, `Array.from(document.querySelectorAll('[aria-label="保存与导出"] [role="menuitem"]')).find(b=>b.textContent===${JSON.stringify(text)}).click()`);await global.uiShots.ready(w, `document.querySelector('.ed').getAttribute('aria-busy')==='false'`);
+          expect(exports.length===count+1&&exports.at(-1).action===action&&exports.at(-1).contentMode===mode,'Export menu lost '+action+'/'+mode);
+        }
+        for(const [key,action] of [['F16','copy'],['F17','save'],['F18','quick-save'],['F19','pin']]) { const count=exports.length;app.focus({steal:true});w.focus();w.webContents.focus();await page(w,'document.activeElement.blur()');await press(key);await global.uiShots.ready(w, `document.querySelector('.ed').getAttribute('aria-busy')==='false'`);expect(exports.length===count+1&&exports.at(-1).action===action,'Configured action shortcut failed: '+action); }
+        checks.push('五格式、快速保存、复制文件/路径、三种导出内容与可配置动作键');fs.writeFileSync(path.join(out,'stage-2-editor.json'),JSON.stringify({status:'passed',checks,previewChecks,memoryWrites:memorySaves.length,exports:exports.map(({action,format,contentMode})=>({action,format,contentMode})),output:'fixture bridge; pixel buffers and serialized annotations inspected'},null,2));
+      }
+      if (name === 'editor-shared-style') {
+        if (!await page(w, `document.querySelector('[aria-label="线条粗细"]').value==='4'`)) throw Error('Disabled tool memory restored per-tool style');
+        await page(w, `(()=>{const e=document.querySelector('[aria-label="线条粗细"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,'11');e.dispatchEvent(new Event('input',{bubbles:true}));})()`); await wait(150);
+        await page(w, `document.querySelector('[aria-label="矩形"]').click()`); await wait(250);
+        if (!await page(w, `document.querySelector('[aria-label="线条粗细"]').value==='11'`) || memorySaves.at(-1)?.defaultStyle.width !== 11 || memorySaves.at(-1)?.perTool.arrow.width !== 8) throw Error('Disabled tool memory failed to share default style or overwrote tool memory');
+        const resultPath=path.join(out,'stage-2-editor.json'),result=JSON.parse(fs.readFileSync(resultPath,'utf8'));result.sharedStyleMemory=true;fs.writeFileSync(resultPath,JSON.stringify(result,null,2));
+      }
       if (name.startsWith('editor-picker-') || name === 'editor-selected-annotation') {
         const picker = name.startsWith('editor-picker-');
         await page(w, `document.querySelector('.ed-tool[data-tip^="${picker ? '取色' : '选择'}"]')?.click()`);
@@ -640,7 +767,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         await click('[aria-label="设置选区尺寸"]');await inspect('dimensions');names.push(await save(w,name+'-dimensions'));
         await click('[aria-label="文字识别选项"]');await inspect('OCR');names.push(await save(w,name+'-ocr'));
         await click('[aria-label="保存格式"]');await inspect('format');
-        await click('[role="menuitemradio"]');await inspect('closed');
+        await click('[aria-label="保存与导出"] [aria-label="保存格式"] [role="radio"]');await click('button[aria-label="保存格式"]');await inspect('closed');
         fs.writeFileSync(path.join(out,name+'.json'),JSON.stringify(checks,null,2));
       }
       names.push(await save(w, name));
@@ -665,7 +792,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
       w.destroy();
     }
-    ipcMain.removeHandler('ui-shots:state'); ipcMain.removeHandler('ui-shots:export');
+    ipcMain.removeHandler('ui-shots:state');
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
     const pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false };
     const pinActions = [];
@@ -691,7 +818,17 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     p.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'w', modifiers: ['meta'] });
     await wait(150);
     if (!pinActions.includes('close')) throw Error('Command+W on pin did not trigger close action');
-    ipcMain.removeHandler('ui-shots:pin-action'); p.destroy();
+    ipcMain.handle('ui-shots:pin-source',()=>({editId:'ui-shots-pin-edit',width:W,height:H,bgra:frame.toBitmap(),annotations:{objects:[],crop:{x:0,y:0,width:W,height:H},nextNumber:1,privacy:[]},saveFormat:'webp',annotationMemory:states['editor-stage-2'].annotationMemory,editorShortcuts:states['editor-stage-2'].editorShortcuts}));
+    exports=[];p.setSize(W,H);p.webContents.send('ui-shots:pin-changed',{...pin,editing:true,editId:'ui-shots-pin-edit'});
+    await global.uiShots.ready(p, `Boolean(document.querySelector('[aria-label="箭头样式"] [aria-checked="true"]'))`);await wait(350);
+    if(!await page(p, `document.querySelector('[aria-label="箭头样式"] [aria-checked="true"]').textContent==='双向' && document.querySelector('[aria-label="线条粗细"]').value==='8'`))throw Error('PinEdit lost source annotation memory');
+    await page(p, `document.querySelector('button[aria-label="保存格式"]').click()`);await wait(250);names.push(await save(p,'pin-edit-export'));
+    if(!await page(p, `document.querySelector('[aria-label="保存与导出"] [aria-label="保存格式"] [aria-checked="true"]').textContent==='WEBP'`))throw Error('PinEdit lost source export format');
+    await page(p, `Array.from(document.querySelectorAll('[aria-label="导出内容"] [role="radio"]')).find(b=>b.textContent==='原始底图').click()`);await wait(100);
+    await page(p, `Array.from(document.querySelectorAll('[aria-label="保存与导出"] [role="menuitem"]')).find(b=>b.textContent==='复制路径').click()`);await global.uiShots.ready(p, `document.querySelector('.ed').getAttribute('aria-busy')==='false'`);
+    if(exports.length!==1||exports[0].action!=='copy-path'||exports[0].format!=='webp'||exports[0].contentMode!=='original')throw Error('PinEdit did not forward extended export');
+    fs.writeFileSync(path.join(out,'stage-2-pin.json'),JSON.stringify({status:'passed',restoredToolStyle:true,sourceFormat:'webp',export:{action:exports[0].action,contentMode:exports[0].contentMode}},null,2));
+    for(const channel of ['ui-shots:pin-action','ui-shots:pin-source','ui-shots:export','ui-shots:annotation-memory'])ipcMain.removeHandler(channel);p.destroy();
     return names;
   }));
   console.log(`Saved ${saved.length} shots to outputs/ui-shots:\n` + saved.map(name => `  ${name}.png`).join('\n'));
