@@ -5,6 +5,7 @@ import type { ScreenshotSettings as Preferences, ScreenshotActions, ScreenshotKi
 import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings } from '../shared/screenshot-settings';
 import { captureModeLabels } from '../shared/capture';
 import { Segmented, collapse } from './motion';
+import { CaptureWorkspaceSettings } from './CaptureWorkspaceSettings';
 import './styles/screenshot-settings.css';
 const labels = { ...captureModeLabels, scroll: '滚动截图' };
 const names = new Intl.DisplayNames(['zh-CN'], { type: 'language' });
@@ -20,6 +21,8 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
   useEffect(() => { void window.desktop.ocrLanguages().then(setSupported).catch(e => setError(String(e))); }, []);
   // Presets can change through the custom-capture panel while other settings are drafted.
   useEffect(() => { setDraft(current => ({ ...current, regionPresets: structuredClone(settings.regionPresets) })); }, [settings.regionPresets]);
+  // Workspace controls save independently; an output save must retain the latest groups.
+  useEffect(() => { setDraft(current => ({ ...current, pinWorkspace: structuredClone(settings.pinWorkspace) })); }, [settings.pinWorkspace]);
   // Editor style updates must survive saving an unrelated output preference.
   useEffect(() => { setDraft(current => ({ ...current, annotationMemory: { ...structuredClone(settings.annotationMemory), rememberToolStyles: current.annotationMemory.rememberToolStyles } })); }, [settings.annotationMemory]);
   const patch = (next: Partial<Preferences>) => { setDraft(value => ({ ...value, ...next })); setError(''); setSaved(false); };
@@ -42,6 +45,7 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
   }
   return <>
     <div className="l-set-body l-shot-settings">
+      <CaptureWorkspaceSettings history={draft.history} changeHistory={history => patch({ history })} workspace={settings.pinWorkspace} />
       <div className="l-set-row-head"><h3>截图完成后</h3><button className="l-text-btn" onClick={shortcuts}>配置快捷键</button></div>
       <ul className="l-group">{screenshotKinds.map(kind => <li key={kind} className="l-shot-policy"><span>{labels[kind]}</span><div className="l-shot-actions">{([['show', '显示'], ['copy', '复制'], ['save', '保存']] as const).map(([key, label]) => <label key={key}><span>{label}</span><Switch label={`${labels[kind]}后${label}`} value={draft.actions[kind][key]} change={() => action(kind, key)} /></label>)}</div></li>)}</ul>
       <p className="l-field-help">复制和保存输出截图完成时的图片。后续标注通过编辑器手动输出。</p>

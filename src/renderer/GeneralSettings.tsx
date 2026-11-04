@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Check, X } from 'lucide-react';
+import { Check, Download, RefreshCw, Upload, X } from 'lucide-react';
 import type { ShellState } from '../shared/contracts';
+import type { WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { shortcutLabel } from './targets';
 import { editorActionIds, editorActionLabels, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type EditorActionId, type GlobalActionId, type IgnoredAppRule, type IgnoredAppScope } from '../shared/shortcuts';
 import { Segmented } from './motion';
@@ -43,6 +44,64 @@ function ShortcutField({ id, label, help, value, save, local = false, error: ext
     </div>
     {message && <p className="l-field-help error" role="alert">{message}</p>}
   </li>;
+}
+
+const webdavInput = (value: WebDavConfig): WebDavConfigInput => ({ enabled: value.enabled, url: value.url, remotePath: value.remotePath, username: value.username, autoSync: value.autoSync });
+const syncLabels = { idle: '等待同步', syncing: '同步中…', synced: '已同步', conflict: '配置冲突，等待选择', offline: '暂时离线', error: '同步失败' };
+function ConfigSyncSettings() {
+  const [config, setConfig] = useState<WebDavConfig | null>(null), [draft, setDraft] = useState<WebDavConfigInput | null>(null);
+  const [password, setPassword] = useState(''), [clearPassword, setClearPassword] = useState(false), [busy, setBusy] = useState('');
+  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [confirm, setConfirm] = useState<'push' | 'pull' | 'import' | null>(null);
+  const dirty = !!config && !!draft && (JSON.stringify(draft) !== JSON.stringify(webdavInput(config)) || !!password || clearPassword);
+  async function refresh() { const next = await window.desktop.webdavConfig(); setConfig(next); setDraft(current => current ?? webdavInput(next)); }
+  useEffect(() => {
+    let live = true;
+    const read = async () => { try { const next = await window.desktop.webdavConfig(); if (live) { setConfig(next); setDraft(current => current ?? webdavInput(next)); } } catch (error) { if (live) setError(String(error)); } };
+    void read(); const timer = setInterval(() => void read(), 3000); return () => { live = false; clearInterval(timer); };
+  }, []);
+  const patch = (next: Partial<WebDavConfigInput>) => { setDraft(current => current && { ...current, ...next }); setError(''); setNotice(''); setConfirm(null); };
+  async function save() {
+    if (!draft) return;
+    setBusy('正在保存 WebDAV 配置…'); setError(''); setNotice(''); setConfirm(null);
+    try { const next = await window.desktop.saveWebdavConfig({ ...draft, ...(password ? { password } : {}), ...(clearPassword ? { clearPassword: true } : {}) }); setConfig(next); setDraft(webdavInput(next)); setPassword(''); setClearPassword(false); setNotice('WebDAV 配置已保存'); }
+    catch (error) { setError(String(error)); } finally { setBusy(''); }
+  }
+  async function sync(direction: WebDavSyncDirection) {
+    setBusy('正在同步配置…'); setError(''); setNotice(''); setConfirm(null);
+    try { const result = await window.desktop.syncWebdav(direction); setConfig(result.state); if (result.error) setError(result.error); else if (result.state.status === 'synced') setNotice('配置已同步'); }
+    catch (error) { setError(String(error)); } finally { setBusy(''); }
+  }
+  async function transfer(direction: 'export' | 'import') {
+    setBusy(direction === 'export' ? '正在导出配置…' : '正在导入配置…'); setError(''); setNotice(''); setConfirm(null);
+    try {
+      if (direction === 'export') { const result = await window.desktop.exportConfig(); if (result.error) throw Error(result.error); setNotice(result.path ? '配置已导出：' + result.path : '已取消导出'); }
+      else { const before = await window.desktop.getState(), result = await window.desktop.importConfig(); if (result.error) throw Error(result.error); const after = await window.desktop.getState(); setNotice(JSON.stringify([before.settings, before.presets]) === JSON.stringify([after.settings, after.presets]) ? '当前配置未变更' : '配置已导入'); }
+      await refresh();
+    } catch (error) { setError(String(error)); } finally { setBusy(''); }
+  }
+  const syncing = !!busy || config?.status === 'syncing', disabledSync = syncing || dirty || !config?.enabled;
+  return <>
+    <section id="config-transfer" className="l-set-section">
+      <div className="l-set-row-head l-gap"><h3>配置迁移</h3></div>
+      <p className="l-field-help">导出偏好设置、快捷键与 AI 预设。不含凭据、本机路径、截图媒体或贴图内容。</p>
+      <div className="l-workspace-actions"><button className="l-btn small" disabled={syncing} onClick={() => void transfer('export')}><Upload size={14} />导出配置</button><button className="l-btn small" disabled={syncing} onClick={() => setConfirm(confirm === 'import' ? null : 'import')}><Download size={14} />导入配置</button></div>
+      {confirm === 'import' && <div className="l-sync-confirm"><p>所选配置会覆盖包内的偏好设置与 AI 预设，本机路径与凭据继续保留。</p><div className="l-workspace-actions"><button className="l-btn small primary" disabled={syncing} onClick={() => void transfer('import')}>选择配置并导入</button><button className="l-btn small" onClick={() => setConfirm(null)}>取消</button></div></div>}
+    </section>
+    <section id="webdav-settings" className="l-set-section">
+      <div className="l-set-row-head l-gap"><h3>飞牛 WebDAV 同步</h3><button className="l-text-btn" disabled={!!busy} onClick={() => void refresh().then(() => setError('')).catch(error => setError(String(error)))}><RefreshCw size={13} />刷新同步状态</button></div>
+      {draft ? <ul className="l-group">
+        <li><div className="l-row-label"><span>启用飞牛 WebDAV</span><span>同步可迁移配置，密码仅保存在本机。</span></div><button className="l-switch" role="switch" aria-label="启用飞牛 WebDAV" aria-checked={draft.enabled} disabled={syncing} onClick={() => patch({ enabled: !draft.enabled })}><span /></button></li>
+        <li className="col">{([['url', '服务器地址', 'https://nas.example.com/webdav'], ['remotePath', '远端路径', 'Lasso/config.json'], ['username', '用户名', 'WebDAV 用户名']] as const).map(([key, label, placeholder]) => <div className="l-field" key={key}><label htmlFor={'webdav-' + key}>{label}</label><input id={'webdav-' + key} aria-label={label} className="l-input mono" autoComplete="off" placeholder={placeholder} value={draft[key]} disabled={syncing} onChange={e => patch({ [key]: e.target.value })} /></div>)}<div className="l-field"><label htmlFor="webdav-password">密码</label><input id="webdav-password" aria-label="WebDAV 密码" className="l-input" type="password" autoComplete="new-password" value={password} disabled={syncing || clearPassword} placeholder={config?.hasPassword ? '已保存密码；留空保持不变' : '输入 WebDAV 密码'} onChange={e => { setPassword(e.target.value); setNotice(''); setError(''); }} /><div className="l-workspace-actions"><span className="l-field-help">{clearPassword ? '保存后清除本机密码' : config?.hasPassword ? '本机已保存密码' : '尚未保存密码'}</span>{config?.hasPassword && <button className="l-text-btn" disabled={syncing} onClick={() => { setClearPassword(!clearPassword); setPassword(''); }}>{clearPassword ? '保留密码' : '清除已存密码'}</button>}</div></div></li>
+        <li><div className="l-row-label"><span>自动同步</span><span>配置变化后检查本机与远端，遇到冲突等待选择。</span></div><button className="l-switch" role="switch" aria-label="WebDAV 自动同步" aria-checked={draft.autoSync} disabled={syncing} onClick={() => patch({ autoSync: !draft.autoSync })}><span /></button></li>
+      </ul> : <p className="l-field-help">正在读取 WebDAV 配置…</p>}
+      {draft && <div className="l-workspace-actions"><button className="l-btn small primary" disabled={syncing || !dirty} onClick={() => void save()}>保存 WebDAV 配置</button>{dirty && <><button className="l-btn small" disabled={syncing} onClick={() => { if (config) setDraft(webdavInput(config)); setPassword(''); setClearPassword(false); setConfirm(null); }}>放弃更改</button><span className="l-field-help">请先保存，再同步配置。</span></>}</div>}
+      <div className={'l-sync-status' + (config?.status === 'conflict' ? ' conflict' : '')} role="status"><span>{!config ? '正在读取同步状态…' : config.enabled ? syncLabels[config.status ?? 'idle'] : 'WebDAV 未启用'}</span>{config?.message && <p>{config.message}</p>}<span className="l-field-help">{config?.lastSyncedAt ? '上次同步：' + new Date(config.lastSyncedAt).toLocaleString('zh-CN') : '尚无成功同步记录'}</span></div>
+      {config?.status === 'conflict' && <p className="l-field-help">选择「采用本机配置」覆盖远端，或「采用远端配置」覆盖本机偏好与预设。当前服务按整份配置替换。</p>}
+      <div className="l-workspace-actions"><button className="l-btn small" disabled={disabledSync} onClick={() => setConfirm('push')}><Upload size={14} />{config?.status === 'conflict' ? '采用本机配置' : '立即上传'}</button><button className="l-btn small" disabled={disabledSync} onClick={() => setConfirm('pull')}><Download size={14} />{config?.status === 'conflict' ? '采用远端配置' : '立即拉取'}</button><button className="l-btn small" disabled={disabledSync} onClick={() => void sync('auto')}>检查同步</button></div>
+      {(confirm === 'push' || confirm === 'pull') && <div className="l-sync-confirm"><p>{confirm === 'push' ? '上传会以本机偏好与 AI 预设替换远端配置。' : '拉取会以远端配置替换本机偏好与 AI 预设。'}</p><div className="l-workspace-actions"><button className="l-btn small primary" disabled={disabledSync} onClick={() => void sync(confirm)}>确认{confirm === 'push' ? '上传' : '拉取'}</button><button className="l-btn small" onClick={() => setConfirm(null)}>取消</button></div></div>}
+    </section>
+    {busy && <p className="l-field-help" role="status">{busy}</p>}{error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help l-workspace-notice" role="status">{notice}</p>}
+  </>;
 }
 
 export function GeneralSettings({ state }: { state: ShellState }) {
@@ -127,6 +186,7 @@ export function GeneralSettings({ state }: { state: ShellState }) {
         <p className="l-field-help">可自定义 1–1440 分钟，默认 30 分钟。修改后按已有闲置时间重新计算；关闭开关可保持驻留。</p>
       </div></li>
     </ul>
+    <ConfigSyncSettings />
     {error && <p className="l-field-help error" role="alert">{error}</p>}
     <button className="l-btn danger l-quit" onClick={() => void window.desktop.act('quit')}>退出 Lasso</button>
   </div>;
