@@ -15,7 +15,7 @@ import { MediaWindow } from './media-window';
 import { readSettings, writeSettings } from './settings';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
 import { fitToWorkArea, placeNear } from './position';
-import { SelectionCapture } from './selection';
+import { SelectionCapture, frontmostApplicationId, ignoresApplication } from './selection';
 import { WindowMotion } from './motion';
 import { initializeWindowPresence, setWindowPresence } from './window-presence';
 import { validMemorySettings, type MemorySettings } from '../shared/memory';
@@ -23,7 +23,7 @@ import { ActionBar } from './action-bar';
 import { TaskManager } from './tasks';
 import { readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
 import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
-import { isValidShortcut } from '../shared/shortcuts';
+import { canonicalShortcut, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type GlobalActionId, type EditorShortcutMap, type IgnoredAppRule } from '../shared/shortcuts';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import type { CaptureDelay, EfficiencyCaptureMode } from '../shared/capture-efficiency';
 import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope } from '../shared/contracts';
@@ -206,23 +206,25 @@ function selectTask(id: string) {
 function updateTray() {
   const capturePending=Boolean(screenshots&&screenshots.efficiency.state.phase!=='idle');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开小窗', click: showWindow },
+    { label: '打开小窗', accelerator: state.settings.actionShortcuts['open-launcher'] || undefined, click: showWindow },
     { label: `打开 ${targetLabels[state.settings.lastTarget]}`, click: () => openChat() },
     { label: `贴图（${screenshots?.pins.size || 0}）`, submenu: screenshots?.pins.trayItems() || [] },
     { label: '新任务…', click: () => void openPalette('new') },
     { label: '图片生成…', click: () => { void openPalette('images'); } },
     { label: '生图结果…', click: () => { void media.show(); } },
     ...(screenshots?.sleeping?[{label:'恢复休眠中的图片编辑',click:()=>screenshots.focus()}]:[]),
-    { label: captureModeLabels.rect, enabled:!capturePending, accelerator: state.settings.captureShortcuts.rect || undefined, click: () => void startScreenshot('rect') },
-    { label: captureModeLabels.area, enabled:!capturePending, accelerator: state.settings.captureShortcuts.area || undefined, click: () => void startScreenshot('area') },
-    { label:'自定义截图…',click:()=>openCustomCapture() },
+    { label: captureModeLabels.rect, enabled:!capturePending, accelerator: state.settings.actionShortcuts.rect || undefined, click: () => void startScreenshot('rect') },
+    { label: captureModeLabels.area, enabled:!capturePending, accelerator: state.settings.actionShortcuts.area || undefined, click: () => void startScreenshot('area') },
+    { label:'自定义截图…',accelerator:state.settings.actionShortcuts['custom-capture']||undefined,click:()=>openCustomCapture() },
     { label: '更多截图方式', submenu: [
-      ...captureModes.filter(mode => mode !== 'area' && mode !== 'rect').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.captureShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
+      ...captureModes.filter(mode => mode !== 'area' && mode !== 'rect').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.actionShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
       {type:'separator'},
-      {label:'重截上次截图区域',enabled:!capturePending,click:()=>void startScreenshot('repeat')},
-      ...([3,5,10] as const).map(delay=>({label:`${delay}秒延时截图`,enabled:!screenshots?.active,click:()=>void startScreenshot('area',delay)})),
+      {label:'滚动截图',accelerator:state.settings.actionShortcuts['scroll-capture']||undefined,enabled:!capturePending,click:()=>void startScreenshot('area',0,true)},
+      {label:'重截上次截图区域',accelerator:state.settings.actionShortcuts['repeat-last']||undefined,enabled:!capturePending,click:()=>void startScreenshot('repeat')},
+      ...([3,5,10] as const).map(delay=>({label:`${delay}秒延时截图`,accelerator:state.settings.actionShortcuts[`delay-${delay}s`]||undefined,enabled:!screenshots?.active,click:()=>void startScreenshot('area',delay)})),
       ...(capturePending?[{label:'取消延时截图',click:()=>screenshots.efficiency.cancel()}]:[])
     ] },
+    { label: '贴出剪贴板图片', accelerator: state.settings.actionShortcuts['pin-clipboard'] || undefined, click: () => { void runGlobalAction('pin-clipboard').catch(error => { state.notice = error.message; publish(); }); } },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
     { label: '运行预设…', click: () => void openPalette('all') },
     { label: '暂停划词', type: 'checkbox', checked: !state.settings.selectionEnabled, click: () => { const result = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback }); if (result.error) dialog.showErrorBox('未能保存划词设置', result.error); } },
@@ -232,33 +234,65 @@ function updateTray() {
     { label: '退出 Lasso', click: requestQuit }
   ]));
 }
-function registerShortcut(shortcut: string): string | null {
+const registeredActions = new Map<GlobalActionId, string>();
+async function runGlobalAction(action: GlobalActionId) {
+  if (captureModes.includes(action as CaptureMode)) return startScreenshot(action as CaptureMode);
+  if (action === 'open-launcher') { clearSelection(); capture?.current(); showWindow(); if (lastSelection) await openPalette('all'); }
+  else if (action === 'custom-capture') openCustomCapture();
+  else if (action === 'repeat-last') await startScreenshot('repeat');
+  else if (action === 'scroll-capture') await startScreenshot('area', 0, true);
+  else if (action.startsWith('delay-')) await startScreenshot('area', Number(action.slice(6, -1)) as CaptureDelay);
+  else if (action === 'pin-clipboard') {
+    const input = await images.capture();
+    try {
+      const image = nativeImage.createFromPath(input.path), crop = { x: 0, y: 0, ...image.getSize() };
+      capture.suppress(); await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop, privacy: [], nextNumber: 1 } });
+    } finally { images.remove(input); }
+  }
+}
+function registerActionShortcut(action: GlobalActionId, shortcut: string): string | null {
   if (!shortcut) return null;
   try {
-    if (globalShortcut.register(shortcut, () => { clearSelection(); capture?.current(); showWindow(); if (lastSelection) void openPalette('all'); })) return null;
-    return `${shortcut} 已被占用，请换一组快捷键。`;
-  } catch { return '快捷键格式无效，例如 Control+Option+Space。'; }
+    return globalShortcut.register(shortcut, () => {
+      void (async () => {
+        const rules = state.settings.ignoredApps;
+        if (rules.some(rule => rule.enabled && rule.scopes.includes('shortcuts')) && ignoresApplication(rules, frontmostApplicationId(), 'shortcuts')) return;
+        await runGlobalAction(action);
+      })().catch(error => { state.notice = (error as Error).message; layout(); publish(); });
+    }) ? null : `${shortcut} 已被占用，请换一组快捷键。`;
+  } catch { return '快捷键格式无效。'; }
 }
-async function startScreenshot(mode: EfficiencyCaptureMode,delay:CaptureDelay=0) {
+function saveActionShortcut(action: GlobalActionId, shortcut: string) {
+  if (!globalActionIds.includes(action)) return { error: '未知的全局动作' };
+  if (!isValidShortcut(shortcut)) return { error: '支持 F1–F24 单键，其他按键请搭配修饰键；留空则取消绑定。' };
+  const key = canonicalShortcut(shortcut);
+  if (key === 'alt+space') return { error: 'Option+Space 已留给 Raycast，请选择其他快捷键。' };
+  const conflict = globalActionIds.find(id => id !== action && key && canonicalShortcut(state.settings.actionShortcuts[id] || '') === key);
+  if (conflict) return { error: `已用于「${globalActionLabels[conflict]}」。` };
+  const current = registeredActions.get(action), changed = !current || canonicalShortcut(current) !== key;
+  if (changed) { const error = registerActionShortcut(action, shortcut); if (error) return { error }; }
+  const next = { ...state.settings, actionShortcuts: { ...state.settings.actionShortcuts, [action]: shortcut },
+    shortcut: action === 'open-launcher' ? shortcut : state.settings.shortcut,
+    captureShortcuts: captureModes.includes(action as CaptureMode) ? { ...state.settings.captureShortcuts, [action]: shortcut } : state.settings.captureShortcuts };
+  try { writeSettings(settingsPath, next); }
+  catch (error) { if (changed && shortcut) globalShortcut.unregister(shortcut); return { error: (error as Error).message }; }
+  if (changed && current) globalShortcut.unregister(current);
+  if (shortcut) registeredActions.set(action, shortcut); else registeredActions.delete(action);
+  state.settings = next; if (action === 'open-launcher') state.shortcutError = null;
+  updateTray(); publish(); return { error: null };
+}
+async function startScreenshot(mode: EfficiencyCaptureMode,delay:CaptureDelay=0,scroll=false) {
   if(screenshots.efficiency.state.phase!=='idle')return;
   if(screenshots.active){screenshots.focus();return;}
   closePalette(false); state.notice = null; layout(); publish();
   try {
     if(nativeDialogs)throw Error('请先关闭文件选择窗口');
-    const result=await screenshots.efficiency.start(mode,delay);
+    const result=await (scroll?screenshots.startScrollCapture():screenshots.efficiency.start(mode,delay));
     if('error' in result)throw Error(result.error);
   } catch(error) {
     console.warn('[screenshot]', (error as Error).message);
     state.notice = '截图未能启动：' + (error as Error).message; layout(); showWindow(); publish();
   }
-}
-function registerCaptureShortcut(mode: CaptureMode, shortcut: string): string | null {
-  if(!shortcut)return null;
-  if(/^(?:Alt|Option)\+Space$/i.test(shortcut))return 'Option+Space 已留给 Raycast，请选择其他快捷键。';
-  if(shortcut===state.settings.shortcut)return '截图快捷键不能与唤起小窗相同。';
-  const other=captureModes.find(m=>m!==mode&&state.settings.captureShortcuts[m]===shortcut);
-  if(other)return `已用于「${captureModeLabels[other]}」。`;
-  try { return globalShortcut.register(shortcut,()=>void startScreenshot(mode))?null:'截图快捷键已被占用。'; }catch{return '快捷键格式无效。';}
 }
 function assertLocal(event: IpcMainInvokeEvent) {
   if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
@@ -517,37 +551,25 @@ function installIPC() {
   ipcMain.handle('shell:custom-screenshot',async(event,r:CustomCaptureRequest)=>{assertLocal(event);try{const result=await screenshots.customCapture(r);if(result.status==='failed'||result.status==='reselect-required')return {error:result.error};state.customCaptureOpen=false;layout();publish();return {error:null};}catch(error){return {error:(error as Error).message};}});
   ipcMain.handle('shell:screenshot', async (event, mode: EfficiencyCaptureMode,delay:CaptureDelay=0) => { assertLocal(event); if ((mode==='repeat'||captureModes.includes(mode))&&[0,3,5,10].includes(delay)) await startScreenshot(mode,delay); });
   ipcMain.handle('shell:screenshot-cancel',event=>{assertLocal(event);screenshots.efficiency.cancel();});
-  ipcMain.handle('shell:capture-shortcut', (event, mode:CaptureMode, shortcut:string) => {
-    assertLocal(event);
-    if(!captureModes.includes(mode))return {error:'未知的截图方式'};
-    if(!isValidShortcut(shortcut))return {error:'支持 F1–F24 单键，其他按键请搭配修饰键。'};
-    const current=state.settings.captureShortcuts[mode];
-    if(shortcut===current&&(!shortcut||globalShortcut.isRegistered(shortcut)))return {error:null};
-    const error=registerCaptureShortcut(mode,shortcut);if(error)return {error};
-    const captureShortcuts={...state.settings.captureShortcuts,[mode]:shortcut};
-    try{writeSettings(settingsPath,{...state.settings,captureShortcuts});}catch(error){if(shortcut)globalShortcut.unregister(shortcut);return {error:String(error)};}
-    if(current)globalShortcut.unregister(current);
-    state.settings={...state.settings,captureShortcuts};updateTray();publish();return {error:null};
+  ipcMain.handle('shell:action-shortcut', (event, action: GlobalActionId, shortcut: string) => { assertLocal(event); return saveActionShortcut(action, shortcut); });
+  ipcMain.handle('shell:capture-shortcut', (event, mode: CaptureMode, shortcut: string) => { assertLocal(event); return captureModes.includes(mode) ? saveActionShortcut(mode, shortcut) : { error: '未知的截图方式' }; });
+  ipcMain.handle('shell:shortcut', (event, shortcut: string) => { assertLocal(event); return saveActionShortcut('open-launcher', shortcut); });
+  ipcMain.handle('shell:editor-shortcuts', (event, shortcuts: EditorShortcutMap) => {
+    assertLocal(event); const error = validateEditorShortcuts(shortcuts); if (error) return { error };
+    return result(() => saveSettings({ ...state.settings, editorShortcuts: shortcuts }));
   });
-  ipcMain.handle('shell:shortcut', (event, shortcut: string) => {
+  ipcMain.handle('shell:ignored-apps', (event, rules: IgnoredAppRule[]) => {
     assertLocal(event);
-    if (!isValidShortcut(shortcut)) {
-      return { error: '支持 F1–F24 单键，其他按键请搭配修饰键；留空则取消绑定。' };
-    }
-    if (shortcut && Object.values(state.settings.captureShortcuts).includes(shortcut)) return { error: '唤起快捷键不能与截图相同。' };
-    if (shortcut === state.settings.shortcut && !state.shortcutError) return { error: null };
-    const error = registerShortcut(shortcut);
-    if (error) return { error };
-    try { writeSettings(settingsPath, { ...state.settings, shortcut }); }
-    catch (error) {
-      if (shortcut) globalShortcut.unregister(shortcut);
-      return { error: `无法保存设置：${(error as Error).message}` };
-    }
-    if (state.settings.shortcut && !state.shortcutError) globalShortcut.unregister(state.settings.shortcut);
-    state.settings = { ...state.settings, shortcut };
-    state.shortcutError = null;
-    publish();
-    return { error: null };
+    return result(() => {
+      const ids = new Set<string>();
+      if (!Array.isArray(rules)) throw Error('忽略应用规则无效');
+      for (const rule of rules) {
+        if (!rule || typeof rule.bundleId !== 'string' || !/^[\w-]+(?:\.[\w-]+)+$/.test(rule.bundleId) || ids.has(rule.bundleId) || typeof rule.name !== 'string' || !rule.name.trim() || typeof rule.enabled !== 'boolean' || !Array.isArray(rule.scopes) || !rule.scopes.length || new Set(rule.scopes).size !== rule.scopes.length || rule.scopes.some(scope => !['selection', 'shortcuts', 'capture-candidates'].includes(scope))) throw Error('应用规则需要唯一的 bundle ID、名称和有效作用范围');
+        ids.add(rule.bundleId);
+      }
+      saveSettings({ ...state.settings, ignoredApps: rules.map(rule => ({ ...rule, name: rule.name.trim() })) });
+      capture.configure(state.settings);
+    });
   });
 }
 async function boot() {
@@ -636,8 +658,6 @@ async function boot() {
       { label: '放大 / 还原', click: expand }
     ] }
   ]));
-  state.shortcutError = registerShortcut(state.settings.shortcut);
-  state.settingsOpen = Boolean(state.shortcutError);
   await win.loadFile(join(__dirname, 'renderer/index.html'));
   actionBar = new ActionBar(async (id, selection) => { await runPreset(id, selection); }, openSettings);
   capture = new SelectionCapture(selection => {
@@ -679,10 +699,16 @@ async function boot() {
     if(starting){actionBar.hide();setWindowPresence(win,true);motion.show(true);}
     if(next.error)showWindow();
   });
-  for (const mode of captureModes) {
-    const error = registerCaptureShortcut(mode, state.settings.captureShortcuts[mode]);
-    if (error) console.warn('[screenshot]', mode, error);
+  const conflicts: string[] = [], keys = new Set<string>();
+  for (const action of globalActionIds) {
+    const shortcut = state.settings.actionShortcuts[action] || '', key = canonicalShortcut(shortcut);
+    const error = !isValidShortcut(shortcut) ? '快捷键格式无效' : key === 'alt+space' ? 'Option+Space 已留给 Raycast' : key && keys.has(key) ? '快捷键与其他动作重复' : registerActionShortcut(action, shortcut);
+    if (key) keys.add(key);
+    if (error) { conflicts.push(`${globalActionLabels[action]}：${error}`); if (action === 'open-launcher') state.shortcutError = error; }
+    else if (shortcut) registeredActions.set(action, shortcut);
   }
+  if (conflicts.length) state.notice = conflicts.join('；');
+  state.settingsOpen = Boolean(state.shortcutError);
   capture.configure(state.settings);
   // The launcher stays task-free; showWindow prepares one reusable preferred webpage.
   showWindow();

@@ -19,7 +19,7 @@ export interface EditorCheckpoint {
   zoom: number;
   scrollLeft: number;
   scrollTop: number;
-  format: 'png' | 'jpeg';
+  format: ScreenshotOutputFormat;
   ocrMode: OCRMode;
   enhance: boolean;
 }

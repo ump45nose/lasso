@@ -4,6 +4,7 @@ import { Fragment, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, 
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, ImagePlus, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Slash, Square, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
 import type { CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
+import type { ScreenshotOutputFormat } from '../../shared/screenshot-settings';
 import { pixelRect } from '../../shared/capture';
 import { Glide, Segmented, spring } from '../motion';
 import { AnnotationEditor, intersects, type Style, type Tool } from './annotations';
@@ -58,7 +59,7 @@ const ColorLoupe = forwardRef<PickerHandle, { read: (x: number, y: number) => Re
 export function Editor({state, source:given}:{state:ScreenshotState; source?:HTMLCanvasElement}){
   const canvasRef=useRef<HTMLCanvasElement>(null),viewportRef=useRef<HTMLDivElement>(null),textRef=useRef<HTMLDivElement>(null),engine=useRef<AnnotationEditor|null>(null);
   const [ready,setReady]=useState(false),[tool,setTool]=useState<Tool>('text-select'),[style,setStyle]=useState<Style>({color:colors[0],width:4,fontSize:32}),[revision,setRevision]=useState(0),[zoom,setZoom]=useState(1),[crop,setCrop]=useState<CaptureRect|null>(null),[preview,setPreview]=useState<CaptureRect|null>(null);
-  const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<'png'|'jpeg'>(state.saveFormat??'png');
+  const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<ScreenshotOutputFormat>(state.saveFormat??'png');
   const [ocrMode,setOCRMode]=useState<OCRMode>('text'),[enhance,setEnhance]=useState(false);
   // Screen captures are edited in place, at their placement over the frozen screen; clipboard and pin images get a desk window with zoom.
   const region=state.editableRegion;

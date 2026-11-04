@@ -27,7 +27,8 @@ const screenshot: ScreenshotAPI = {
   scrollAction:async()=>({error:null}),
   recognize:frame=>ipcRenderer.invoke('pin:editor-recognize',frame),
   invalidateOCR:request=>ipcRenderer.send('pin:editor-invalidate',request),
-  export:(frame,action,format)=>ipcRenderer.invoke('pin:editor-export',frame,action,format),
+  export:(frame,action,format,contentMode)=>ipcRenderer.invoke('pin:editor-export',frame,action,format,contentMode),
+  saveAnnotationMemory:memory=>ipcRenderer.invoke('screenshot:save-annotation-memory',memory),
   copyText:request=>ipcRenderer.invoke('pin:editor-copy-text',request),
   sendText:request=>ipcRenderer.invoke('pin:editor-send',request)
 };

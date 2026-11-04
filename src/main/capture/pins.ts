@@ -1,12 +1,13 @@
 import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { pinOpacities, type CaptureFrame, type ExportAction, type OCRRequest, type PinAction, type PinState } from '../../shared/capture';
-import type { ScreenshotSettings } from '../../shared/screenshot-settings';
+import { screenshotOutputFormats, type AnnotationStyleMemory, type ScreenshotSettings, type ScreenshotOutputFormat, type ScreenshotExportContentMode } from '../../shared/screenshot-settings';
+import type { EditorShortcutMap } from '../../shared/shortcuts';
 import { validateAnnotations, type PinnedDocument } from './document';
 import { OCRService, type VisionOCR } from './ocr';
-import { assertPng, copyImage, copyPng, decodeFrameImage, encodeScreenshot, screenshotName } from './output';
+import { assertPng, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, encodeScreenshot, formatScreenshotName, runAfterSaveAction, saveAutomaticScreenshot } from './output';
 import { fitToWorkArea } from '../position';
 
 type Pin = {win:BrowserWindow;state:PinState;document:PinnedDocument;ocr:OCRService;bytes:number;restBounds?:Rectangle;drag?:{cursor:{x:number;y:number};bounds:Rectangle};editorRevision:number};
@@ -18,6 +19,8 @@ type PinOptions = {
   changed:()=>void;
   languages:()=>string[];
   preferences:()=>ScreenshotSettings;
+  editorShortcuts:()=>EditorShortcutMap|undefined;
+  saveAnnotationMemory:(memory:AnnotationStyleMemory)=>void;
   canEdit:()=>boolean;
 };
 
@@ -55,9 +58,9 @@ export class PinManager {
       if(!pin.state.editing||!pin.state.editId)throw Error('贴图未在编辑');
       const size=pin.document.source.getSize(),data=pin.document.source.toBitmap();
       if(data.byteLength!==size.width*size.height*4)throw Error('图片像素不完整');
-      return {editId:pin.state.editId,width:size.width,height:size.height,bgra:data,annotations:pin.document.annotations,pixelScale:pin.document.pixelScale,saveFormat:this.options.preferences().format};
+      return {editId:pin.state.editId,width:size.width,height:size.height,bgra:data,annotations:pin.document.annotations,pixelScale:pin.document.pixelScale,saveFormat:this.options.preferences().format,annotationMemory:this.options.preferences().annotationMemory,editorShortcuts:this.options.editorShortcuts()};
     });
-    ipcMain.handle('pin:editor-export',async(e,frame:CaptureFrame,action:ExportAction,format:'png'|'jpeg')=>{const pin=this.owner(e);try{await this.exportEdit(pin,frame,action,format);return {error:null};}catch(error){return {error:(error as Error).message};}});
+    ipcMain.handle('pin:editor-export',async(e,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode)=>{const pin=this.owner(e);try{await this.exportEdit(pin,frame,action,format,contentMode);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('pin:editor-recognize',(e,frame:OCRRequest)=>{
       const pin=this.owner(e);this.assertEditor(pin,frame?.id,frame?.revision);
       if(!frame||!['text','code'].includes(frame.mode)||typeof frame.enhance!=='boolean'||(frame.force!==undefined&&typeof frame.force!=='boolean')||!(frame.png instanceof Uint8Array))throw Error('无效的识别选项');
@@ -82,6 +85,7 @@ export class PinManager {
     screen.on('display-removed',this.fit);
     screen.on('display-metrics-changed',this.fit);
   }
+  saveAnnotationMemory(event:IpcMainInvokeEvent,memory:AnnotationStyleMemory){const pin=this.owner(event);if(!pin.state.editing)throw Error('贴图未在编辑');this.options.saveAnnotationMemory(memory);}
   get size(){return this.pins.size;}
   contains(id:string){return this.pins.has(id);}
   focus(id:string){const pin=this.pins.get(id);if(!pin||pin.win.isDestroyed())return;pin.win.show();app.focus({steal:true});pin.win.focus();pin.win.webContents.focus();}
@@ -164,23 +168,34 @@ export class PinManager {
     }
     this.publish(pin);this.recognize(pin);
   }
-  private async exportEdit(pin:Pin,frame:CaptureFrame,action:ExportAction,format:'png'|'jpeg'){
-    if(!['copy','save','image','pin','media'].includes(action)||!['png','jpeg'].includes(format))throw Error('不支持的输出操作');
+  private async exportEdit(pin:Pin,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode){
+    const preferences=this.options.preferences(),requestedMode=contentMode??preferences.exportContentMode,mode=action==='pin'?'result':requestedMode;
+    if(!['copy','save','quick-save','copy-file','copy-path','image','pin','media'].includes(action)||!screenshotOutputFormats.includes(format)||!['original','result','display'].includes(requestedMode))throw Error('不支持的输出操作');
     this.assertEditor(pin,frame?.id,frame?.revision);
     const size=pin.document.source.getSize(),crop=frame?.crop;
-    if(!crop||crop.x<0||crop.y<0||crop.width<1||crop.height<1||crop.x+crop.width>size.width||crop.y+crop.height>size.height)throw Error('无效的裁剪范围');
+    if(!crop||![crop.x,crop.y,crop.width,crop.height].every(Number.isSafeInteger)||crop.x<0||crop.y<0||crop.width<1||crop.height<1||crop.x+crop.width>size.width||crop.y+crop.height>size.height)throw Error('无效的裁剪范围');
     pin.editorRevision=frame.revision;this.options.suppress();
-    if(action==='copy'&&frame.png instanceof Uint8Array){await copyPng(assertPng(frame.png,crop.width,crop.height));this.showPin(pin);return;}
-    const image=decodeFrameImage(frame);
-    if(action==='copy')await copyImage(image);
-    else if(action==='save'){
-      const {filePath,canceled}=await dialog.showSaveDialog(pin.win,{title:'保存图片',defaultPath:join(this.options.preferences().directory,screenshotName(format)),filters:[{name:format==='jpeg'?'JPEG 图片':'PNG 图片',extensions:[format==='jpeg'?'jpg':'png']}]});
+    if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array){await copyPng(assertPng(frame.png,crop.width,crop.height));this.showPin(pin);return;}
+    let image=mode==='original'?pin.document.source.crop(crop):decodeFrameImage(frame);
+    if(mode==='display'&&pin.document.pixelScale){const scale=pin.document.pixelScale,px=image.getSize();image=image.resize({width:Math.max(1,Math.round(px.width/scale.x)),height:Math.max(1,Math.round(px.height/scale.y)),quality:'best'});}
+    const encoding={...preferences,resizeTo1x:mode==='display'?false:preferences.resizeTo1x};
+    const copy=action==='copy'?preferences.copyMode:action==='copy-file'?'file':action==='copy-path'?'path':null;
+    if(copy==='image')await copyImage(image);
+    else if(copy||action==='quick-save'){
+      const path=await saveAutomaticScreenshot(encodeScreenshot(image,encoding,format,pin.document.pixelScale),preferences.quickSaveDirectory,format,preferences.fileNameTemplate,image.getSize());
+      if(copy==='file')await copyFile(path);else if(copy==='path')await copyPath(path);else await runAfterSaveAction(path,preferences.afterSaveAction);
+    }else if(action==='save'){
+      const name=formatScreenshotName(preferences.fileNameTemplate,format,image.getSize());
+      const {filePath,canceled}=await dialog.showSaveDialog(pin.win,{title:'保存图片',defaultPath:join(preferences.directory,name.subDir,name.fileName),filters:[{name:format.toUpperCase()+' 图片',extensions:[name.ext]}]});
       if(canceled||!filePath)return;
-      await writeFile(filePath,encodeScreenshot(image,this.options.preferences(),format,pin.document.pixelScale));
+      await mkdir(dirname(filePath),{recursive:true});
+      await writeFile(filePath,encodeScreenshot(image,encoding,format,pin.document.pixelScale));
+      await runAfterSaveAction(filePath,preferences.afterSaveAction);
     }else if(action==='image')await this.options.image(image);
     else if(action==='media')await this.options.media(image);
     else{
-      const annotations=validateAnnotations(frame.annotations,pin.document.source,frame.crop),next={...pin.document,image,annotations},bytes=this.weight(next);
+      const annotations=validateAnnotations(frame.annotations,pin.document.source,frame.crop);
+      const next={...pin.document,image,annotations},bytes=this.weight(next);
       const used=[...this.pins.values()].reduce((n,item)=>n+item.bytes,0)-pin.bytes;
       if(used+bytes>256*1024*1024)throw Error('贴图占用较多，请先关闭部分贴图后重试。');
       pin.document=next;pin.bytes=bytes;const nextSize=image.getSize();pin.state.revision++;pin.state.image=image.toDataURL();pin.state.width=nextSize.width;pin.state.height=nextSize.height;pin.state.lines=[];
