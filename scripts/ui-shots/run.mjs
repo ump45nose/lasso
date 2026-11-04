@@ -56,7 +56,41 @@ try {
   symlinkSync(join(root, 'assets'), join(runtime, 'assets'), 'dir');
   // This runs before the real entrypoint. LASSO_DATA_ROOT and LASSO_PROFILE derive
   // the same userData path, so the disabled-selection settings are read on boot.
-  writeFileSync(bootstrap, `const { app, dialog } = require('electron');
+  writeFileSync(bootstrap, `const electron = require('electron');
+const { app, dialog, session } = electron;
+// Replace every native clipboard entry point before loading product modules.
+// Calls are recorded by name only; the user's clipboard is never inspected.
+let items = [];
+const calls = [];
+class MemoryClipboardItem {
+  constructor(values) { this.values = values; this.types = Object.keys(values); }
+  async getType(type) { const value = await this.values[type]; if(value===undefined)throw Error('Missing fixture clipboard type');return value instanceof Blob ? value : new Blob([value], { type }); }
+  static supports() { return true; }
+}
+const methods = {
+  read: async () => items,
+  write: async value => { items = Array.isArray(value) ? value : [new MemoryClipboardItem(Object.fromEntries(Object.entries(value).map(([type, data]) => [type === 'text' ? 'text/plain' : type, data])))]; },
+  readText: async () => { const item = items.find(item => item.types.includes('text/plain')); return item ? (await item.getType('text/plain')).text() : ''; },
+  writeText: async value => { items = [new MemoryClipboardItem({ 'text/plain': String(value) })]; },
+  clear: () => { items = []; },
+  availableFormats: () => items.flatMap(item => item.types),
+  has: type => items.some(item => item.types.includes(type)),
+  readImage: () => electron.nativeImage.createEmpty(),
+  readBuffer: () => Buffer.alloc(0),
+  readHTML: () => '', readRTF: () => '', readBookmark: () => ({title:'',url:''}), readFindText: () => '',
+  writeImage: image => { items = [new MemoryClipboardItem({ 'image/png': new Blob([new Uint8Array(image.toPNG())], {type:'image/png'}) })]; },
+  writeBuffer: (type, value) => { items = [new MemoryClipboardItem({ [type]: new Blob([new Uint8Array(value)], {type}) })]; },
+  writeHTML: value => { items = [new MemoryClipboardItem({ 'text/html': value })]; },
+  writeRTF: value => { items = [new MemoryClipboardItem({ 'text/rtf': value })]; },
+  writeBookmark: () => {}, writeFindText: () => {}
+};
+const memoryClipboard = Object.fromEntries(Object.entries(methods).map(([name,method])=>[name,(...args)=>{calls.push(name);return method(...args);} ]));
+memoryClipboard.__uiShotsMemory = true;
+const memoryElectron = Object.create(electron, {clipboard:{value:memoryClipboard},ClipboardItem:{value:MemoryClipboardItem}});
+const Module = require('node:module'), originalLoad = Module._load;
+Module._load = function(request, ...args) { return request==='electron' ? memoryElectron : originalLoad.call(this,request,...args); };
+global.uiShotsClipboard = {calls,systemReads:0,systemWrites:0};
+app.whenReady().then(() => session.defaultSession.registerPreloadScript({type:'frame',id:'ui-shots-memory-clipboard',filePath:${JSON.stringify(join(fixtures, 'preload.cjs'))}}));
 dialog.showErrorBox = (title, message) => console.error(title, message);
 const { mkdirSync } = require('node:fs');
 const paths = ${JSON.stringify(runtimePaths)};
@@ -124,6 +158,63 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       save: async (w, name) => { fs.writeFileSync(path.join(out, name + '.png'), (await w.webContents.capturePage()).toPNG()); return name; } };
   }, out, fixtures, runtime, captureOnly, surfacesOnly);
 
+  // S2 uses the public IPC contracts against a deterministic, persisted fixture store.
+  // No native pickers, WebDAV requests, real pins, or user files are used by these panels.
+  await main(async ({nativeImage}) => {
+    const { fs, path, app, out, find, ipcMain, BrowserWindow } = global.uiShots;
+    const pixels=Buffer.alloc(280*160*4);for(let y=0;y<160;y++)for(let x=0;x<280;x++){const rgb=y<24?[20,20,19]:x>24&&x<220&&y>50&&y<65?[189,118,88]:x>24&&x<180&&y>84&&y<96?[120,128,101]:[250,249,245],offset=(y*280+x)*4;pixels[offset]=rgb[2];pixels[offset+1]=rgb[1];pixels[offset+2]=rgb[0];pixels[offset+3]=255;}
+    const thumbnailDataUrl=nativeImage.createFromBitmap(pixels,{width:280,height:160}).toDataURL();
+    const groups = [{id:'default',name:'默认分组',color:'#bd7658',visible:true},{id:'research',name:'产品研究',color:'#788065',visible:true}];
+    const filePath = path.join(out,'fixture-file.txt'); fs.writeFileSync(filePath,'Lasso UI fixture — only this workspace file is used.\n');
+    const timestamp = Date.parse('2026-11-04T09:10:00+08:00');
+    const state = {
+      history: {items:[
+        {id:'history-marked',createdAt:timestamp,updatedAt:timestamp,width:1440,height:900,byteSize:1843200,captureKind:'area',ocrSnippet:'设计评审 · 截图中的文字可再次编辑',thumbnailDataUrl,hasAnnotations:true},
+        {id:'history-clean',createdAt:timestamp-3600000,updatedAt:timestamp-3600000,width:960,height:640,byteSize:614400,captureKind:'window',ocrSnippet:'工作空间和贴图分组',thumbnailDataUrl,hasAnnotations:false}
+      ],totalBytes:2457600,policy:{enabled:true,maxItems:50,maxDays:30,maxBytesMB:512}},
+      workspace: {settings:{restoreOnLaunch:true,floatingToolbar:false,wheelAction:'zoom',activeGroupId:'default',groups},closedCount:2,pins:[
+        {id:'pin-image',title:'设计评审截图',kind:'image',groupId:'default',locked:false,thumbnail:false,topmost:true,visible:true,opacity:1,width:360,height:225,preview:'设计评审',updatedAt:timestamp},
+        {id:'pin-text',title:'评审笔记',kind:'text',groupId:'research',locked:true,thumbnail:false,topmost:true,visible:true,opacity:.85,width:340,height:240,preview:'把想法留在桌面上，继续手头的工作。',updatedAt:timestamp},
+        {id:'pin-color',title:'陶土色',kind:'color',groupId:'default',locked:false,thumbnail:true,topmost:true,visible:true,opacity:1,width:280,height:200,preview:'#BD7658',updatedAt:timestamp},
+        {id:'pin-file',title:'fixture-file.txt',kind:'file',groupId:'research',locked:false,thumbnail:false,topmost:false,visible:false,opacity:1,width:360,height:225,preview:filePath,updatedAt:timestamp}
+      ]},
+      webdav:{enabled:true,url:'https://nas.example.invalid/webdav',remotePath:'/Lasso/config.json',username:'lasso-fixture',hasPassword:true,autoSync:false,status:'synced',lastSyncedAt:timestamp,message:'已同步到飞牛 NAS'},
+      receipts:[]
+    };
+    const store = path.join(app.getPath('userData'),'stage-4-fixtures.json');
+    const persist = () => fs.writeFileSync(store,JSON.stringify(state,null,2));
+    const receipt = (method,args=[]) => {state.receipts.push({method,args});persist();};
+    const originalState = ipcMain._invokeHandlers.get('shell:state');
+    // Seed the real isolated configuration before fixture overlays are installed;
+    // ordinary screenshot saves and their disk-equality assertion keep one source.
+    const sender=find().webContents,seedEvent={sender,senderFrame:sender.mainFrame},seedShell=await originalState(seedEvent);
+    const seeded=await ipcMain._invokeHandlers.get('shell:screenshot-settings')(seedEvent,{...seedShell.settings.screenshot,pinWorkspace:structuredClone(state.workspace.settings)});if(seeded.error)throw Error(seeded.error);
+    const fixtureShell = async event => {const shell=await originalState(event);return {...shell,settings:{...shell.settings,screenshot:{...shell.settings.screenshot,pinWorkspace:state.workspace.settings}}};};
+    const publish = async () => {for(const win of BrowserWindow.getAllWindows())win.webContents.send('pin-workspace:changed',state.workspace);const sender=find().webContents;sender.send('shell:changed',await fixtureShell({sender,senderFrame:sender.mainFrame}));persist();};
+    const handlers = {
+      'shell:state': fixtureShell,
+      'shell:capture-history': async (event,query='') => { const shell=await ipcMain._invokeHandlers.get('shell:state')(event);state.history.policy=shell.settings.screenshot.history;receipt('captureHistory',[query]);return {...state.history,items:state.history.items.filter(item=>(item.ocrSnippet+' '+item.captureKind+' '+item.width+'×'+item.height).toLowerCase().includes(query.toLowerCase()))}; },
+      'shell:capture-history-act': (_event,id,action) => {if(!state.history.items.some(item=>item.id===id))throw Error('Unknown fixture history');if(action==='delete')state.history.items=state.history.items.filter(item=>item.id!==id);receipt('actCaptureHistory',[id,action]);return {error:null};},
+      'shell:capture-history-clear': () => {state.history.items=[];state.history.totalBytes=0;receipt('clearCaptureHistory');return {error:null};},
+      'shell:pin-workspace': () => state.workspace,
+      'shell:pin-workspace-save': async (event,settings) => {state.workspace.settings=structuredClone(settings);for(const pin of state.workspace.pins)if(!settings.groups.some(group=>group.id===pin.groupId))pin.groupId=settings.activeGroupId;receipt('savePinWorkspace',[settings]);await publish(event);return {error:null};},
+      'shell:pin-create': (_event,input) => {state.workspace.pins.push({...state.workspace.pins[0],id:'created-'+state.receipts.length,title:input.text?.slice(0,24)||'新贴图',kind:input.kind,preview:input.text||input.color||input.filePath||'',groupId:input.groupId||state.workspace.settings.activeGroupId});receipt('createPin',[input]);publish();return {error:null};},
+      'shell:pin-clipboard': () => {receipt('pinClipboard');return {error:null};},
+      'shell:pin-reopen': () => {state.workspace.closedCount=Math.max(0,state.workspace.closedCount-1);receipt('reopenClosedPin');publish();return {error:null};},
+      'shell:pins-arrange': (_event,mode,groupId) => {receipt('arrangePins',[mode,groupId]);return {error:null};},
+      'shell:pin-act': (_event,id,action,groupId) => {const pin=state.workspace.pins.find(pin=>pin.id===id);if(!pin)throw Error('Unknown fixture pin');if(groupId)pin.groupId=groupId;for(const [name,key]of [['toggle-visible','visible'],['toggle-lock','locked'],['toggle-thumbnail','thumbnail']])if(action===name)pin[key]=!pin[key];if(action==='close'){state.workspace.pins=state.workspace.pins.filter(pin=>pin.id!==id);state.workspace.closedCount++;}receipt('actPin',[id,action,groupId]);publish();return {error:null};},
+      'shell:config-export': () => {const file=path.join(out,'fixture-config.json');fs.writeFileSync(file,JSON.stringify({schemaVersion:1,exportedAt:new Date(timestamp).toISOString(),settings:{selectionEnabled:false},presets:[]},null,2));receipt('exportConfig');return {path:file,error:null};},
+      'shell:config-import': () => {receipt('importConfig');return {error:null};},
+      'shell:webdav-config': () => state.webdav,
+      'shell:webdav-config-save': (_event,input) => {const {password,clearPassword,...config}=input;state.webdav={...state.webdav,...config,hasPassword:clearPassword?false:!!password||state.webdav.hasPassword};receipt('saveWebdavConfig',[{...config,hasPassword:state.webdav.hasPassword}]);return state.webdav;},
+      'shell:webdav-sync': async (_event,direction) => {receipt('syncWebdav',[direction]);state.webdav={...state.webdav,status:'syncing',message:'正在同步配置…'};persist();await new Promise(resolve=>setTimeout(resolve,350));state.webdav={...state.webdav,status:'synced',lastSyncedAt:timestamp,message:direction==='pull'?'已拉取远端配置':'已同步到飞牛 NAS'};persist();return {state:state.webdav,error:null};},
+      'ui-shots:pin-drop': (_event,files,text,groupId) => {receipt('dropFiles',[files,text,groupId]);return {error:null};}
+    };
+    for(const [channel,handler]of Object.entries(handlers)){ipcMain.removeHandler(channel);ipcMain.handle(channel,handler);}
+    ipcMain.handle('ui-shots:editor-text',(_event,action,request)=>{receipt('editorText',[action,request]);return {error:null};});
+    global.uiShots.stage4={state,persist,store,filePath,groups,thumbnailDataUrl,publish,fixtureShell};persist();
+  });
+
   // Main window: current view, command palette, settings.
   saved.push(...await main(async () => {
     const { find, page, wait, save, settingsTab } = global.uiShots, m = find(), names = [];
@@ -165,6 +256,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     shell = await page(m, 'window.desktop.getState()');
     await page(m, "window.desktop.act('settings')"); await wait(700); names.push(await save(m, 'settings'));
     await settingsTab(m, '截图');
+    await page(m, `document.querySelector('.l-shot-policy').closest('ul').previousElementSibling.scrollIntoView({block:'start',behavior:'instant'})`);await wait(200);
     names.push(await save(m, 'settings-screenshot-actions'));
     await page(m,`window.desktop.act('custom-capture')`);await wait(400);names.push(await save(m,'custom-capture'));await settingsTab(m,'截图');
     await page(m, `document.querySelector('[aria-label="全屏截图后复制"]').click(); document.querySelector('[aria-label="全屏截图后保存"]').click(); document.querySelector('[aria-label="截图保存格式"] button:last-child').click()`); await wait(250);
@@ -309,6 +401,39 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await page(m, `(async()=>{await window.desktop.saveActionShortcut('rect',${JSON.stringify(original.actionShortcuts.rect || '')});await window.desktop.saveEditorShortcuts(${JSON.stringify(original.editorShortcuts)});await window.desktop.saveIgnoredApps(${JSON.stringify(original.ignoredApps)});await window.desktop.saveScreenshot(${JSON.stringify(original.screenshot)});await window.desktop.act('close-settings');})()`); await wait(250);
     }
     return names;
+  }));
+  // Stage 4 settings: actions are checked against the persisted fixture receipts.
+  saved.push(...await main(async () => {
+    const {find,page,wait,ready,scrollTo,settingsTab,save,fs,path,out,stage4}=global.uiShots,names=[],checks=[],m=find(),s=stage4.state;
+    if(global.uiShots.surfacesOnly)return names;
+    const originalWorkspace=structuredClone(s.workspace.settings),originalScreenshot=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)');
+    const expect=(ok,text)=>{if(!ok)throw Error(text);};
+    const click=async(scope,text)=>{await page(m,`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(b=>b.textContent.trim().startsWith(${JSON.stringify(text)}));if(!b||b.disabled)throw Error('Unavailable stage 4 button: '+${JSON.stringify(text)});b.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});b.click();})()`);await wait(240);};
+    const fill=async(selector,value)=>{await page(m,`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing stage 4 input');e.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(260);};
+    const shot=async(selector,name)=>{await scrollTo(m,selector);await wait(180);names.push(await save(m,name));};
+    await settingsTab(m,'截图');await ready(m,`document.querySelectorAll('.l-history-list > li').length===2`);
+    await shot('#capture-history .l-set-row-head','settings-history');await shot('#capture-history .l-history-search','settings-history-list');
+    await fill('[aria-label="搜索截图历史"]','设计评审');expect(await page(m,`document.querySelectorAll('.l-history-list > li').length===1 && document.querySelector('.l-history-list').textContent.includes('含标注')`),'History search did not retain marked result');await shot('#capture-history .l-history-search','settings-history-search');
+    for(const label of ['再编辑','贴图','复制'])await click('#capture-history .l-history-list',label);
+    await click('#capture-history .l-history-list','删除');expect(s.history.items.length===2,'History delete skipped inline confirmation');await shot('#capture-history .l-history-search','settings-history-delete-confirm');await click('#capture-history .l-history-list','确认删除');expect(s.history.items.length===1,'History delete did not persist');
+    await fill('[aria-label="搜索截图历史"]','');await click('#capture-history','清空历史');expect(s.history.items.length===1,'History clear skipped inline confirmation');await click('#capture-history','确认清空');expect(!s.history.items.length,'History did not clear');await shot('#capture-history .l-history-search','settings-history-empty');
+    for(const [label,value]of [['保留条数',80],['保留天数',14],['容量上限',256]])await fill('[aria-label="'+label+'"]',value);
+    await click('.l-save-bar','保存');expect((await page(m,'window.desktop.getState().then(s=>s.settings.screenshot.history)')).maxBytesMB===256,'History policy did not save');checks.push('历史搜索、编辑/贴图/复制回执、删除/清空二次确认、容量策略保存');
+    await page(m,`document.querySelector('[aria-label="桌面悬浮工具栏"]').click();document.querySelector('[aria-label="启动自动恢复贴图"]').click();[...document.querySelectorAll('[aria-label="贴图滚轮默认动作"] button')].find(b=>b.textContent==='透明度').click()`);await wait(160);
+    await click('#pin-workspace','新建分组');await fill('[aria-label="分组名称 新分组"]','验收分组');await fill('[aria-label="分组颜色 验收分组"]','#788065');await page(m,`document.querySelector('[aria-label="显示分组 验收分组"]').click()`);await shot('#pin-workspace .l-set-row-head','settings-pin-workspace');await click('#pin-workspace','保存工作空间');
+    expect(s.workspace.settings.floatingToolbar&&!s.workspace.settings.restoreOnLaunch&&s.workspace.settings.wheelAction==='opacity'&&s.workspace.settings.groups.at(-1).name==='验收分组','Workspace preferences or groups did not persist');
+    await click('#pin-workspace','剪贴板贴图');await click('#pin-workspace','新建文字贴图');await fill('[aria-label="文字贴图内容"]','下一步：核对截图历史与同步状态。');await shot('#pin-workspace textarea','settings-pin-create-text');await click('#pin-workspace','创建文字贴图');await click('#pin-workspace','恢复刚关闭贴图');for(const label of ['网格排列','左对齐','顶对齐'])await click('#pin-workspace',label);
+    await page(m,`[...document.querySelectorAll('#pin-workspace h3')].find(e=>e.textContent==='活跃贴图').id='ui-shots-active-pins'`);await shot('#ui-shots-active-pins','settings-pin-active');
+    await click('#pin-workspace','锁定');await click('#pin-workspace','隐藏');await click('#pin-workspace','分组');await click('#pin-workspace','产品研究');expect(s.workspace.pins[0].locked&&!s.workspace.pins[0].visible&&s.workspace.pins[0].groupId==='research','Active pin controls did not persist');
+    for(let i=0;i<2;i++){await page(m,`document.querySelector('[aria-label="删除分组 验收分组"]').click()`);await wait(160);}await click('#pin-workspace','保存工作空间');expect(s.workspace.settings.groups.length===2,'Group delete did not save');checks.push('工作空间偏好、分组增改删/显隐、活跃贴图锁定/隐藏/分组、文字创建、恢复与三种排列回执');
+    await settingsTab(m,'通用');await shot('#config-transfer .l-set-row-head','settings-config-transfer');await click('#config-transfer','导出配置');await click('#config-transfer','导入配置');expect(!s.receipts.some(r=>r.method==='importConfig'),'Config import skipped inline confirmation');await click('#config-transfer','选择配置并导入');
+    await fill('#webdav-username','lasso-review');await fill('#webdav-password','fixture-only-password');await page(m,`document.querySelector('[aria-label="WebDAV 自动同步"]').click()`);await click('#webdav-settings','保存 WebDAV 配置');expect(s.webdav.username==='lasso-review'&&s.webdav.autoSync&&s.webdav.hasPassword,'WebDAV fields did not persist');await shot('#webdav-settings .l-set-row-head','settings-webdav');
+    for(const [status,message]of [['synced','已同步到飞牛 NAS'],['syncing','正在同步配置…'],['offline','无法连接服务器，请检查地址与网络'],['error','远端响应无效，请检查 WebDAV 路径'],['conflict','本机与远端配置都有更新，请选择保留哪一份']]){Object.assign(s.webdav,{status,message});stage4.persist();await click('#webdav-settings','刷新同步状态');await shot('#webdav-settings .l-sync-status','settings-webdav-'+status);}
+    for(const [label,confirmation]of [['采用本机配置','确认上传'],['立即拉取','确认拉取']]){const before=s.receipts.filter(r=>r.method==='syncWebdav').length;await click('#webdav-settings',label);expect(s.receipts.filter(r=>r.method==='syncWebdav').length===before,'WebDAV skipped inline confirmation');await shot('#webdav-settings .l-sync-confirm','settings-webdav-'+(confirmation==='确认上传'?'push':'pull')+'-confirm');await click('#webdav-settings',confirmation);await wait(220);}
+    await click('#webdav-settings','检查同步');await wait(220);expect(s.receipts.filter(r=>r.method==='syncWebdav').map(r=>r.args[0]).join(',')==='push,pull,auto','WebDAV direction receipts differ');checks.push('配置迁移确认、WebDAV凭据脱敏保存、同步/离线/错误/冲突状态、上传/拉取二次确认');
+    const persisted=JSON.parse(fs.readFileSync(stage4.store,'utf8'));expect(persisted.workspace.settings.groups.length===2&&!JSON.stringify(persisted).includes('fixture-only-password'),'Fixture state was not persisted or leaked its password');
+    fs.writeFileSync(path.join(out,'stage-4-settings.json'),JSON.stringify({status:'passed',checks,receipts:s.receipts,workspace:s.workspace,webdav:s.webdav,configuration:'public DesktopAPI with isolated fixture persistence; no real WebDAV or native pickers'},null,2));
+    s.workspace.settings=originalWorkspace;await page(m,`window.desktop.saveScreenshot(${JSON.stringify(originalScreenshot)})`);await stage4.publish({sender:m.webContents});await page(m,"window.desktop.act('close-settings')");return names;
   }));
   // Dedicated image-generation surface: fixtures exercise layout without sending paid requests.
   saved.push(...await main(async () => {
@@ -794,10 +919,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     }
     ipcMain.removeHandler('ui-shots:state');
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
-    const pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false };
-    const pinActions = [];
+    let pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false, kind:'image',title:'设计评审截图',groupId:'default',groups:global.uiShots.stage4.groups,zoomPercent:100,wheelAction:'zoom',locked:false,thumbnail:false };
+    const basePin=structuredClone(pin),pinActions = [],pinUpdates=[],pinDrags=[];
+    const changed=event=>{event.sender.send('ui-shots:pin-changed',pin);};
     ipcMain.removeHandler('ui-shots:pin'); ipcMain.handle('ui-shots:pin', () => pin);
-    ipcMain.removeHandler('ui-shots:pin-action'); ipcMain.handle('ui-shots:pin-action', (_event, action) => { pinActions.push(action); return { error: null }; });
+    ipcMain.removeHandler('ui-shots:pin-action'); ipcMain.handle('ui-shots:pin-action', (event, action) => {pinActions.push(action);for(const [name,key]of [['lock','locked'],['thumbnail','thumbnail'],['topmost','topmost'],['passthrough','passthrough']])if(action===name)pin[key]=!pin[key];if(action==='reset-zoom')pin.zoomPercent=100;if(action==='thumbnail')BrowserWindow.fromWebContents(event.sender).setSize(pin.thumbnail?160:pin.width,pin.thumbnail?96:pin.height);changed(event);return { error: null }; });
+    ipcMain.handle('ui-shots:pin-update',(event,key,value,...args)=>{pinUpdates.push({key,value,args});if(key==='updateText'){pin.payload={...pin.payload,text:value};pin.revision++;}else if(key==='zoom')pin.zoomPercent=Math.round(value*100);else if(key==='group')pin.groupId=value;else if(key!=='text')pin[key]=value;changed(event);return {error:null};});
+    const pinDrag=(_event,phase)=>pinDrags.push(phase),toolbarHeight=(event,height)=>BrowserWindow.fromWebContents(event.sender).setSize(360,Math.ceil(height));ipcMain.on('ui-shots:pin-drag',pinDrag);ipcMain.on('ui-shots:toolbar-height',toolbarHeight);
     const p = new BrowserWindow({ x: 120, y: 120, width: 360, height: 225, frame: false, show: true, webPreferences: { preload: path.join(fixtures, 'pin-preload.cjs'), contextIsolation: true, sandbox: true } });
     await p.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'pin' } }); p.focus(); await wait(600);
     names.push(await save(p, 'pin'));
@@ -828,9 +956,37 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(p, `Array.from(document.querySelectorAll('[aria-label="保存与导出"] [role="menuitem"]')).find(b=>b.textContent==='复制路径').click()`);await global.uiShots.ready(p, `document.querySelector('.ed').getAttribute('aria-busy')==='false'`);
     if(exports.length!==1||exports[0].action!=='copy-path'||exports[0].format!=='webp'||exports[0].contentMode!=='original')throw Error('PinEdit did not forward extended export');
     fs.writeFileSync(path.join(out,'stage-2-pin.json'),JSON.stringify({status:'passed',restoredToolStyle:true,sourceFormat:'webp',export:{action:exports[0].action,contentMode:exports[0].contentMode}},null,2));
-    for(const channel of ['ui-shots:pin-action','ui-shots:pin-source','ui-shots:export','ui-shots:annotation-memory'])ipcMain.removeHandler(channel);p.destroy();
+    p.destroy();
+    // Each content type starts in a fresh renderer; fixture setters publish real PinState updates.
+    const {stage4}=global.uiShots,pinChecks=[],expect=(ok,text)=>{if(!ok)throw Error(text);};
+    const colorBytes=Buffer.alloc(80*80*4);for(let i=0;i<colorBytes.length;i+=4){colorBytes[i]=88;colorBytes[i+1]=118;colorBytes[i+2]=189;colorBytes[i+3]=255;}
+    const colorImage=nativeImage.createFromBitmap(colorBytes,{width:80,height:80}).toDataURL();
+    for(const kind of ['image','text','color','file','locked','thumbnail']){
+      const [width,height]=kind==='text'?[320,160]:['color','file'].includes(kind)?[240,160]:[360,225];
+      pin={...structuredClone(basePin),id:'stage-4-'+kind,width,height,kind:['locked','thumbnail'].includes(kind)?'image':kind,locked:kind==='locked',thumbnail:kind==='thumbnail',status:'',payload:kind==='text'?{kind,text:'把想法留在桌面上。\n核对历史、分组和同步状态。'}:kind==='color'?{kind,colorHex:'#BD7658',colorRgb:'rgb(189, 118, 88)'}:kind==='file'?{kind,fileName:'fixture-file.txt',filePath:stage4.filePath,fileSize:fs.statSync(stage4.filePath).size}:undefined};if(kind==='color')pin.image=colorImage;
+      const w=new BrowserWindow({x:120,y:120,width:pin.thumbnail?160:width,height:pin.thumbnail?96:height,frame:false,show:true,webPreferences:{preload:path.join(fixtures,'pin-preload.cjs'),contextIsolation:true,sandbox:true}});
+      await w.loadFile(path.join(process.cwd(),'dist/renderer/index.html'),{query:{surface:'pin'}});await wait(500);names.push(await save(w,'pin-'+kind));await move(w,pin.thumbnail?80:width/2,pin.thumbnail?48:height/2);
+      const click=async label=>{await page(w,`(()=>{const b=document.querySelector('button[aria-label="${label}"]');if(!b||b.disabled)throw Error('Unavailable pin action: ${label}');b.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});b.click();})()`);await wait(180);};
+      const fill=async(label,value)=>{await page(w,`(()=>{const e=document.querySelector('[aria-label="${label}"]');e.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(180);};
+      const settle=()=>global.uiShots.ready(w,`Boolean(document.querySelector('.pin-options'))&&[...document.querySelectorAll('.pin-bar')].every(e=>{const style=getComputedStyle(e);return Number(style.opacity)===1&&new DOMMatrixReadOnly(style.transform).isIdentity&&!e.getAnimations().some(animation=>animation.playState==='running');})`);
+      if(kind==='image'){await click('贴图选项');await fill('透明度',63);await fill('贴图缩放',135);expect(pin.opacity===.63&&pin.zoomPercent===135,'Continuous pin controls did not publish');await settle();names.push(await save(w,'pin-continuous-options'));await click('贴图分组');await page(w,`[...document.querySelectorAll('.pin-group-menu [role="option"]')].find(option=>option.textContent.includes('产品研究')).scrollIntoView({block:'nearest',behavior:'instant'})`);await settle();names.push(await save(w,'pin-group-menu'));await page(w,`(()=>{const b=[...document.querySelectorAll('[role="option"]')].find(b=>b.textContent.includes('产品研究'));b.scrollIntoView({block:'nearest',behavior:'instant'});b.click();})()`);await wait(180);expect(pin.groupId==='research','Pin group did not persist');await click('恢复100%缩放');await page(w,`document.querySelector('.pin').dispatchEvent(new WheelEvent('wheel',{deltaY:40,bubbles:true,cancelable:true}));`);await wait(180);expect(pin.zoomPercent<100,'Default wheel did not zoom');const opacity=pin.opacity;await page(w,`document.querySelector('.pin').dispatchEvent(new WheelEvent('wheel',{deltaY:40,altKey:true,bubbles:true,cancelable:true}));`);await wait(180);expect(pin.opacity<opacity,'Option wheel did not change opacity');await click('快速保存');await click('保存贴图');pinChecks.push('透明度/缩放连续值、复位、分组与两种滚轮、保存回执');}
+      if(kind==='image'){await page(w,`(()=>{const data=new DataTransfer();data.setData('text/plain','拖放文字fixture');data.items.add(new File(['Lasso UI fixture'],'fixture-file.txt',{type:'text/plain'}));window.__pinFixtureDrop=data;document.querySelector('.pin').dispatchEvent(new DragEvent('dragenter',{bubbles:true,dataTransfer:data}));})()`);await wait(150);names.push(await save(w,'pin-drop'));await page(w,`document.querySelector('.pin').dispatchEvent(new DragEvent('drop',{bubbles:true,cancelable:true,dataTransfer:window.__pinFixtureDrop}));delete window.__pinFixtureDrop;`);await wait(150);expect(stage4.state.receipts.some(r=>r.method==='dropFiles'&&r.args[1]==='拖放文字fixture'),'Pin drop did not reach workspace bridge');pinChecks.push('文字与fixture文件拖放回执');}
+      if(kind==='text'){await click('编辑文字');await fill('贴图文字','文字已内联更新，接着核对颜色和文件。');names.push(await save(w,'pin-text-edit'));await page(w,`[...document.querySelectorAll('button')].find(b=>b.textContent==='保存文字').click()`);await wait(180);expect(pin.payload.text.startsWith('文字已内联更新'),'Text pin did not update');await click('文字预设');await click('复制');pinChecks.push('文字内联编辑、复制与预设发送回执');}
+      if(kind==='color'){await click('复制HEX色值');await click('复制RGB色值');expect(pinUpdates.some(update=>update.key==='text'&&update.value==='rgb(189, 118, 88)'),'RGB copy did not reach PinAPI');pinChecks.push('HEX/RGB显示与复制回执');}
+      if(kind==='file'){await click('复制文件');await click('复制文件路径');pinChecks.push('工作区fixture文件信息与复制文件/路径回执');}
+      if(kind==='locked'){const starts=pinDrags.filter(phase=>phase==='start').length;await page(w,`document.querySelector('.pin-viewport').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1}))`);expect(pinDrags.filter(phase=>phase==='start').length===starts,'Locked pin started dragging');await click('贴图选项');await settle();names.push(await save(w,'pin-locked-options'));expect(await page(w,`document.querySelector('[aria-label="贴图缩放"]').disabled`),'Locked pin zoom was enabled');pinChecks.push('锁定标记、禁止拖动与缩放');}
+      if(kind==='thumbnail'){await click('展开贴图');expect(!pin.thumbnail,'Thumbnail did not expand');pinChecks.push('缩略态与展开回执');}
+      const overflow=await page(w,`document.documentElement.scrollWidth>innerWidth||document.body.scrollWidth>innerWidth`);expect(!overflow,'Pin horizontal overflow: '+kind);w.destroy();
+    }
+    const toolbar=new BrowserWindow({width:360,height:52,frame:false,show:true,webPreferences:{preload:path.join(fixtures,'pin-preload.cjs'),contextIsolation:true,sandbox:true}});
+    await toolbar.loadFile(path.join(process.cwd(),'dist/renderer/index.html'),{query:{surface:'pin-toolbar'}});await wait(500);names.push(await save(toolbar,'pin-floating-toolbar'));
+    await page(toolbar,`document.querySelector('[aria-label="当前分组"]').click()`);await wait(250);names.push(await save(toolbar,'pin-floating-groups'));await page(toolbar,`[...document.querySelectorAll('[role="option"]')].find(b=>b.textContent.includes('产品研究')).click()`);await wait(200);
+    for(const label of ['剪贴板贴图','新建文字贴图','网格排列','左对齐','顶对齐','关闭悬浮工具栏']){await page(toolbar,`document.querySelector('[aria-label="${label}"]').click()`);await wait(180);}expect(stage4.state.workspace.settings.activeGroupId==='research'&&!stage4.state.workspace.settings.floatingToolbar,'Floating toolbar did not update workspace');toolbar.destroy();
+    fs.writeFileSync(path.join(out,'stage-4-pins.json'),JSON.stringify({status:'passed',checks:pinChecks,actions:pinActions,updates:pinUpdates,dragStarts:pinDrags.filter(phase=>phase==='start').length,floatingToolbar:true},null,2));
+    for(const channel of ['ui-shots:pin','ui-shots:pin-action','ui-shots:pin-update','ui-shots:pin-source','ui-shots:export','ui-shots:annotation-memory'])ipcMain.removeHandler(channel);ipcMain.removeListener('ui-shots:pin-drag',pinDrag);ipcMain.removeListener('ui-shots:toolbar-height',toolbarHeight);
     return names;
   }));
+  await main(async ({clipboard})=>{const {fs,path,out,BrowserWindow,page,stage4}=global.uiShots;if(!clipboard.__uiShotsMemory)throw Error('Native clipboard isolation was lost');const renderers=[];for(const win of BrowserWindow.getAllWindows()){if(!win.webContents.getURL().startsWith('file:'))continue;const audit=await page(win,'window.__uiShotsClipboard');if(!audit)throw Error('Renderer clipboard isolation missing');renderers.push({surface:new URL(win.webContents.getURL()).searchParams.get('surface')||'main',...audit});}fs.writeFileSync(path.join(out,'stage-4-isolation.json'),JSON.stringify({systemClipboardReads:0,systemClipboardWrites:0,main:global.uiShotsClipboard,renderers,receipts:stage4.state.receipts,fixtureState:JSON.parse(fs.readFileSync(stage4.store,'utf8'))},null,2));});
   console.log(`Saved ${saved.length} shots to outputs/ui-shots:\n` + saved.map(name => `  ${name}.png`).join('\n'));
 } finally {
   if (ws?.readyState === WebSocket.OPEN) await Promise.race([
