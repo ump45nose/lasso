@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, FolderOpen, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { ScreenshotSettings as Preferences, ScreenshotActions, ScreenshotKind } from '../shared/screenshot-settings';
-import { screenshotKinds } from '../shared/screenshot-settings';
+import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings } from '../shared/screenshot-settings';
 import { captureModeLabels } from '../shared/capture';
 import { Segmented, collapse } from './motion';
 import './styles/screenshot-settings.css';
@@ -20,6 +20,8 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
   useEffect(() => { void window.desktop.ocrLanguages().then(setSupported).catch(e => setError(String(e))); }, []);
   // Presets can change through the custom-capture panel while other settings are drafted.
   useEffect(() => { setDraft(current => ({ ...current, regionPresets: structuredClone(settings.regionPresets) })); }, [settings.regionPresets]);
+  // Editor style updates must survive saving an unrelated output preference.
+  useEffect(() => { setDraft(current => ({ ...current, annotationMemory: { ...structuredClone(settings.annotationMemory), rememberToolStyles: current.annotationMemory.rememberToolStyles } })); }, [settings.annotationMemory]);
   const patch = (next: Partial<Preferences>) => { setDraft(value => ({ ...value, ...next })); setError(''); setSaved(false); };
   function action(kind: ScreenshotKind, key: keyof ScreenshotActions) {
     setError(''); setSaved(false);
@@ -33,8 +35,9 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
   }
   async function save() {
     if (!/^\d+$/.test(height) || !Number.isSafeInteger(Number(height)) || Number(height) < 1) { setError('最大高度请输入正整数'); return; }
+    if (!draft.directory.startsWith('/') || !draft.quickSaveDirectory.startsWith('/')) { setError('截图文件夹和快速保存目录需使用绝对路径'); return; }
     setSaving(true);
-    try { const next = { ...draft, scrollMaxHeight: Number(height) }; const result = await window.desktop.saveScreenshot(next); setError(result.error || ''); if (!result.error) { setDraft(next); setHeight(String(next.scrollMaxHeight)); setSaved(true); } }
+    try { const next = { ...draft, scrollMaxHeight: Number(height) }; validateScreenshotSettings(next, supported); const result = await window.desktop.saveScreenshot(next); setError(result.error || ''); if (!result.error) { setDraft(next); setHeight(String(next.scrollMaxHeight)); setSaved(true); } }
     catch (e) { setError(String(e)); } finally { setSaving(false); }
   }
   return <>
@@ -44,11 +47,18 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
       <p className="l-field-help">复制和保存输出截图完成时的图片。后续标注通过编辑器手动输出。</p>
       <div className="l-set-row-head l-gap"><h3>贴图</h3></div>
       <ul className="l-group"><li><div className="l-row-label"><span>保持原尺寸</span><span>按截图在屏幕上的大小显示，不拖边改变大小。关闭后缩进窗口，并可拖动边缘调整。</span></div><Switch label="贴图保持原尺寸" value={draft.pinKeepsSize} change={() => patch({ pinKeepsSize: !draft.pinKeepsSize })} /></li></ul>
-      <div className="l-set-row-head l-gap"><h3>保存</h3></div>
+      <div id="screenshot-editing" className="l-set-row-head l-gap"><h3>编辑</h3></div>
+      <ul className="l-group"><li><div className="l-row-label"><span>记住标注工具样式</span><span>下次编辑恢复所用工具及各工具的颜色、粗细、字号与强度。</span></div><Switch label="记住标注工具样式" value={draft.annotationMemory.rememberToolStyles} change={() => patch({ annotationMemory: { ...draft.annotationMemory, rememberToolStyles: !draft.annotationMemory.rememberToolStyles } })} /></li></ul>
+      <div id="screenshot-output" className="l-set-row-head l-gap"><h3>保存与输出</h3></div>
       <ul className="l-group">
         <li className="col"><div className="l-field"><label htmlFor="screenshot-directory">截图文件夹</label><div className="l-row"><input id="screenshot-directory" className="l-input mono" value={draft.directory} onChange={e => patch({ directory: e.target.value })} /><button className="l-btn" aria-label="选择截图文件夹" onClick={() => void window.desktop.choosePath('directory').then(result => { if (result) patch({ directory: result.path }); }).catch(e => setError(String(e)))}><FolderOpen size={16} />选择</button></div></div></li>
-        <li><span>默认格式</span><Segmented label="截图保存格式" value={draft.format} onChange={format => patch({ format })} options={ [['png', 'PNG'], ['jpeg', 'JPEG']] } /></li>
-        {draft.format === 'jpeg' && <li><p className="l-field-help">透明区域以{draft.background === 'solid' ? '所选背景色' : '白色'}填充。</p></li>}
+        <li className="l-shot-option"><span>默认格式</span><Segmented label="截图保存格式" value={draft.format} onChange={format => patch({ format })} options={screenshotOutputFormats.map(format => [format, format.toUpperCase()] as const)} /></li>
+        <li className="col"><div className="l-field"><label htmlFor="screenshot-quality">JPEG 质量</label><div className="l-row"><input id="screenshot-quality" className="l-shot-quality" type="range" min="10" max="100" step="1" value={draft.jpegQuality} onChange={e => patch({ jpegQuality: Number(e.target.value) })} /><output htmlFor="screenshot-quality" className="mono">{draft.jpegQuality}%</output></div><p className="l-field-help">只影响 JPEG 输出。JPEG、BMP 的透明区域以{draft.background === 'solid' ? '所选背景色' : '白色'}填充。</p></div></li>
+        <li className="col"><div className="l-field"><label htmlFor="screenshot-quick-directory">快速保存目录</label><div className="l-row"><input id="screenshot-quick-directory" className="l-input mono" value={draft.quickSaveDirectory} onChange={e => patch({ quickSaveDirectory: e.target.value })} /><button className="l-btn" aria-label="选择快速保存目录" onClick={() => void window.desktop.choosePath('directory').then(result => { if (result) patch({ quickSaveDirectory: result.path }); }).catch(e => setError(String(e)))}><FolderOpen size={16} />选择</button></div><p className="l-field-help">快速保存直接写入此目录，无需再次选择位置。</p></div></li>
+        <li className="col"><div className="l-field"><label htmlFor="screenshot-template">文件命名模板</label><input id="screenshot-template" className="l-input mono" spellCheck={false} value={draft.fileNameTemplate} onChange={e => patch({ fileNameTemplate: e.target.value })} aria-describedby="screenshot-template-help" /><p id="screenshot-template-help" className="l-field-help l-shot-template-help">{'日期时间：{YYYY} {MM} {DD} {HH} {mm} {ss}；应用：{app}；像素：{width} {height}；序号：{seq}。可用 / 创建子文件夹，不用填写扩展名。'}</p></div></li>
+        <li className="l-shot-option"><span>默认复制方式</span><Segmented label="默认复制方式" value={draft.copyMode} onChange={copyMode => patch({ copyMode })} options={ [['image', '图片'], ['file', '文件'], ['path', '路径']] } /></li>
+        <li className="l-shot-option"><span>默认导出内容</span><Segmented label="默认导出内容" value={draft.exportContentMode} onChange={exportContentMode => patch({ exportContentMode })} options={ [['result', '编辑结果'], ['original', '原始底图'], ['display', '显示效果']] } /></li>
+        <li className="l-shot-option"><span>保存后动作</span><Segmented label="保存后动作" value={draft.afterSaveAction} onChange={afterSaveAction => patch({ afterSaveAction })} options={ [['none', '无'], ['reveal', '显示文件'], ['copy-path', '复制路径'], ['copy-file', '复制文件']] } /></li>
         <li><div className="l-row-label"><span>保存时缩小至 1×</span><span>仅缩小保存文件，编辑、复制和贴图保留原始像素。</span></div><Switch label="保存时缩小至 1×" value={draft.resizeTo1x} change={() => patch({ resizeTo1x: !draft.resizeTo1x })} /></li>
       </ul>
       <div className="l-set-row-head l-gap"><h3>区域记忆</h3></div><ul className="l-group"><li><div className="l-row-label"><span>重启后记住上次区域</span></div><Switch label="重启后记住上次区域" value={draft.rememberRegionAcrossLaunches} change={() => patch({ rememberRegionAcrossLaunches: !draft.rememberRegionAcrossLaunches })} /></li></ul>

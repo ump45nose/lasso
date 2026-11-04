@@ -6,6 +6,13 @@
 .l-shot-height { width: 100px; }
 .l-shot-swatch { width: 24px; height: 24px; border: 1px solid var(--line); border-radius: 7px; }
 .l-shot-languages { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; overflow: hidden; }
+.l-shot-option { justify-content: space-between; flex-wrap: wrap; }
+.l-shot-quality { flex: 1; min-width: 0; accent-color: var(--clay); }
+.l-shot-quality + output { min-width: 42px; text-align: right; font-size: 12.5px; }
+.l-shot-template-help { overflow-wrap: anywhere; }
+.l-ignored-scopes { display: flex; flex-wrap: wrap; gap: 6px; }
+.l-ignored-scopes [aria-checked="true"] { color: var(--clay-ink); background: var(--clay-wash-2); border-color: var(--clay-line); }
+.l-ignored-scopes [aria-checked="false"] svg { visibility: hidden; }
 .l-set-nav { flex-shrink: 0; overflow-x: auto; }
 .l-set-nav button { white-space: nowrap; }
 @media (max-width: 520px) {

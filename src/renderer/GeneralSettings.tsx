@@ -1,36 +1,45 @@
 import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import type { ShellState } from '../shared/contracts';
-import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import { shortcutLabel } from './targets';
-import { isValidShortcut } from '../shared/shortcuts';
+import { editorActionIds, editorActionLabels, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type EditorActionId, type GlobalActionId, type IgnoredAppRule, type IgnoredAppScope } from '../shared/shortcuts';
 import { Segmented } from './motion';
+import './styles/screenshot-settings.css';
 
-const captureHelp: Record<CaptureMode, string> = { rect: '直接拖动框选，不自动吸附窗口或识别区域', area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口' };
+const actionHelp: Record<GlobalActionId, string> = {
+  rect: '直接拖动框选，不自动吸附窗口或识别区域', area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口',
+  'repeat-last': '按上次截图的区域再次截取', 'custom-capture': '打开自定义尺寸与区域预设', 'scroll-capture': '选择窗口中的滚动区域', 'delay-3s': '倒计时 3 秒后框选截图', 'delay-5s': '倒计时 5 秒后框选截图', 'delay-10s': '倒计时 10 秒后框选截图', 'pin-clipboard': '将剪贴板中的图片贴到屏幕上', 'open-launcher': '有选区时同时打开指令面板；不绑定也可从菜单栏打开'
+};
+const ignoredScopes: readonly (readonly [IgnoredAppScope, string])[] = [['selection', '划词'], ['shortcuts', '快捷键'], ['capture-candidates', '窗口候选']];
 
 /** Records on keydown and saves right away; main validates and rejects reserved combinations such as ⌥ Space. */
-function ShortcutField({ id, label, help, value, save, error: external }: { id: string; label: string; help: string; value: string; save: (value: string) => Promise<{ error: string | null }>; error?: string | null }) {
+function ShortcutField({ id, label, help, value, save, local = false, error: external }: { id: string; label: string; help?: string; value: string; save: (value: string) => Promise<{ error: string | null }>; local?: boolean; error?: string | null }) {
   const [recording, setRecording] = useState(false);
-  const [error, setError] = useState('');
-  async function commit(next: string) { setRecording(false); setError((await save(next)).error || ''); }
+  const [error, setError] = useState(''), [saving, setSaving] = useState(false);
+  async function commit(next: string) {
+    setRecording(false); setSaving(true);
+    try { setError((await save(next)).error || ''); } catch (error) { setError(String(error)); }
+    finally { setSaving(false); }
+  }
   function key(event: React.KeyboardEvent) {
     if (!recording) return;
-    event.preventDefault();
+    event.preventDefault(); event.stopPropagation();
     if (event.key === 'Escape') { setRecording(false); return; }
-    if (['Meta', 'Alt', 'Control', 'Shift'].includes(event.key)) return;
+    if (event.repeat || ['Meta', 'Alt', 'Control', 'Shift'].includes(event.key)) return;
     const modifiers = [event.metaKey && 'Command', event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift'].filter(Boolean);
-    const shortcut = [...modifiers, event.code === 'Space' ? 'Space' : event.code.replace(/^(Key|Digit)/, '')].join('+');
-    if (!isValidShortcut(shortcut)) { setError('支持 F1–F24 单键，其他按键请搭配 ⌘、⌥、⌃ 或 ⇧。'); return; }
+    const code = event.code.replace(/^(Key|Digit|Arrow)/, '').replace(/^Backquote$/, 'Backtick').replace(/^NumpadEnter$/, 'Enter');
+    const shortcut = [...modifiers, code].join('+');
+    if (!local && !isValidShortcut(shortcut)) { setError('支持 F1–F24 单键，其他按键请搭配 ⌘、⌥、⌃ 或 ⇧。'); return; }
     void commit(shortcut);
   }
   const message = error || external;
   return <li className="col">
     <div className="l-row">
-      <div className="l-row-label"><span>{label}</span><span>{help}</span></div>
-      <button id={id} className={'l-btn small' + (recording ? ' primary' : '')} aria-label={`${label}快捷键：${value ? shortcutLabel(value) : '未绑定'}，点击录制`}
+      <div className="l-row-label"><span>{label}</span>{help && <span>{help}</span>}</div>
+      <button id={id} className={'l-btn small' + (recording ? ' primary' : '')} disabled={saving} aria-label={`${label}快捷键：${value ? shortcutLabel(value) : '未绑定'}，点击录制`}
         onClick={() => { setRecording(!recording); setError(''); }} onKeyDown={key} onBlur={() => setRecording(false)}>
         {recording ? '请按快捷键…' : <span className="mono">{value ? shortcutLabel(value) : '未绑定'}</span>}</button>
-      {value && !recording && <button className="l-icon" aria-label={'取消绑定' + label} title="取消绑定" onClick={() => void commit('')}><X size={14} /></button>}
+      {value && !recording && <button className="l-icon" disabled={saving} aria-label={'取消绑定' + label} data-tip="取消绑定" onClick={() => void commit('')}><X size={14} /></button>}
     </div>
     {message && <p className="l-field-help error" role="alert">{message}</p>}
   </li>;
@@ -39,6 +48,29 @@ function ShortcutField({ id, label, help, value, save, error: external }: { id: 
 export function GeneralSettings({ state }: { state: ShellState }) {
   const { settings, capture } = state;
   const [error, setError] = useState('');
+  const [ignoredError, setIgnoredError] = useState(''), [ignoredSaving, setIgnoredSaving] = useState(false);
+  async function saveIgnored(rules: IgnoredAppRule[]) {
+    setIgnoredSaving(true); setIgnoredError('');
+    try { setIgnoredError((await window.desktop.saveIgnoredApps(rules)).error || ''); }
+    catch (error) { setIgnoredError(String(error)); } finally { setIgnoredSaving(false); }
+  }
+  async function addIgnored() {
+    try {
+      const choice = await window.desktop.choosePath('application');
+      if (!choice) return;
+      if (!choice.bundleId || !choice.name) { setIgnoredError('所选应用缺少名称或 bundle ID'); return; }
+      if (settings.ignoredApps.some(rule => rule.bundleId === choice.bundleId)) { setIgnoredError('这个应用已在忽略列表中'); return; }
+      await saveIgnored([...settings.ignoredApps, { bundleId: choice.bundleId, name: choice.name, enabled: true, scopes: ['selection', 'shortcuts', 'capture-candidates'] }]);
+    } catch (error) { setIgnoredError(String(error)); }
+  }
+  function updateIgnored(index: number, patch: Partial<IgnoredAppRule>) {
+    if (patch.scopes?.length === 0) { setIgnoredError('至少保留一个忽略范围；无需忽略时可关闭这条规则。'); return; }
+    void saveIgnored(settings.ignoredApps.map((rule, i) => i === index ? { ...rule, ...patch } : rule));
+  }
+  async function saveEditor(action: EditorActionId, shortcut: string) {
+    const next = { ...settings.editorShortcuts, [action]: shortcut }, error = validateEditorShortcuts(next);
+    return error ? { error } : window.desktop.saveEditorShortcuts(next);
+  }
   const saveCapture = async (next: Partial<Pick<typeof settings, 'selectionEnabled' | 'clipboardFallback'>>) => setError((await window.desktop.saveCapture({ selectionEnabled: settings.selectionEnabled, clipboardFallback: settings.clipboardFallback, ...next })).error || '');
   const [minutes, setMinutes] = useState(String(settings.memory.idleMinutes));
   useEffect(()=>setMinutes(String(settings.memory.idleMinutes)),[settings.memory.idleMinutes]);
@@ -65,11 +97,20 @@ export function GeneralSettings({ state }: { state: ShellState }) {
       <li><div className="l-row-label"><span>允许模拟复制取词</span><span>只在辅助功能取不到文字时模拟 ⌘C，可能改动剪贴板。默认关闭。</span></div>
         <button className="l-switch" role="switch" aria-checked={settings.clipboardFallback} aria-label="允许模拟复制取词" onClick={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })}><span /></button></li>
     </ul>
-    <div className="l-set-row-head l-gap"><h3>快捷键</h3><span>支持 F1–F24 单键 · 默认不绑定</span></div>
+    <div id="global-shortcuts" className="l-set-row-head l-gap"><h3>全局动作快捷键</h3><span>F1–F24 或组合键 · 立即保存</span></div>
     <ul className="l-group">
-      <ShortcutField id="shortcut-open" label="唤起小窗" help="有选区时同时打开指令面板；不绑定也可从菜单栏打开" value={settings.shortcut} save={window.desktop.saveShortcut} error={state.shortcutError} />
-      {captureModes.map(mode => <ShortcutField key={mode} id={'shortcut-' + mode} label={captureModeLabels[mode]} help={captureHelp[mode]} value={settings.captureShortcuts[mode]} save={shortcut => window.desktop.saveCaptureShortcut(mode, shortcut)} />)}
+      {globalActionIds.map(action => <ShortcutField key={action} id={'shortcut-' + action} label={globalActionLabels[action]} help={actionHelp[action]} value={settings.actionShortcuts[action] || ''} save={shortcut => window.desktop.saveActionShortcut(action, shortcut)} error={action === 'open-launcher' ? state.shortcutError : null} />)}
     </ul>
+    <div id="editor-shortcuts" className="l-set-row-head l-gap"><h3>编辑器局部快捷键</h3><span>支持单键 · 立即保存</span></div>
+    <p className="l-field-help">仅在截图编辑器与贴图编辑时生效。点击录制，按 Esc 取消；右侧 × 清空绑定。</p>
+    <ul className="l-group">{editorActionIds.map(action => <ShortcutField key={action} id={'editor-shortcut-' + action} label={editorActionLabels[action]} value={settings.editorShortcuts[action]} local save={shortcut => saveEditor(action, shortcut)} />)}</ul>
+    <div id="ignored-apps" className="l-set-row-head l-gap"><h3>忽略应用</h3><button className="l-text-btn" disabled={ignoredSaving} onClick={() => void addIgnored()}>选择忽略应用…</button></div>
+    <p className="l-field-help">在这些应用中暂停所选功能。窗口候选只过滤截图可选窗口，修改后立即保存。</p>
+    <ul className="l-group">{settings.ignoredApps.length ? settings.ignoredApps.map((rule, index) => <li className="col" key={rule.bundleId}>
+      <div className="l-row"><div className="l-row-label"><span>{rule.name}</span><span className="mono">{rule.bundleId}</span></div><button className="l-switch" role="switch" aria-label={'启用忽略 ' + rule.name} aria-checked={rule.enabled} disabled={ignoredSaving} onClick={() => updateIgnored(index, { enabled: !rule.enabled })}><span /></button><button className="l-icon" aria-label={'删除忽略应用 ' + rule.name} disabled={ignoredSaving} onClick={() => void saveIgnored(settings.ignoredApps.filter((_, i) => i !== index))}><X size={14} /></button></div>
+      <div className="l-ignored-scopes">{ignoredScopes.map(([scope, label]) => <button key={scope} className="l-btn small" role="checkbox" aria-label={`${rule.name}：忽略${label}`} aria-checked={rule.scopes.includes(scope)} disabled={ignoredSaving} onClick={() => updateIgnored(index, { scopes: rule.scopes.includes(scope) ? rule.scopes.filter(value => value !== scope) : [...rule.scopes, scope] })}><Check size={14} aria-hidden="true" />{label}</button>)}</div>
+    </li>) : <li><p className="l-field-help">尚未添加忽略应用</p></li>}</ul>
+    {ignoredError && <p className="l-field-help error" role="alert">{ignoredError}</p>}
     <div className="l-set-row-head l-gap"><h3>窗口与任务</h3></div>
     <ul className="l-group">
       <li><div className="l-row-label"><span>始终置顶</span><span>未置顶时，点击窗外会隐藏小窗；任务继续在后台运行。</span></div>
