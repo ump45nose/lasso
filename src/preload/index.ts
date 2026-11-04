@@ -1,6 +1,21 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopAPI, ShellState, AgentEvent, PaletteEvent } from '../shared/contracts';
 const api: DesktopAPI = {
+  captureHistory: query => ipcRenderer.invoke('shell:capture-history',query),
+  actCaptureHistory: (id,action) => ipcRenderer.invoke('shell:capture-history-act',id,action),
+  clearCaptureHistory: () => ipcRenderer.invoke('shell:capture-history-clear'),
+  pinWorkspace: () => ipcRenderer.invoke('shell:pin-workspace'),
+  savePinWorkspace: settings => ipcRenderer.invoke('shell:pin-workspace-save',settings),
+  createPin: input => ipcRenderer.invoke('shell:pin-create',input),
+  pinClipboard: () => ipcRenderer.invoke('shell:pin-clipboard'),
+  reopenClosedPin: () => ipcRenderer.invoke('shell:pin-reopen'),
+  arrangePins: (mode,groupId) => ipcRenderer.invoke('shell:pins-arrange',mode,groupId),
+  actPin: (id,action,groupId) => ipcRenderer.invoke('shell:pin-act',id,action,groupId),
+  exportConfig: () => ipcRenderer.invoke('shell:config-export'),
+  importConfig: () => ipcRenderer.invoke('shell:config-import'),
+  webdavConfig: () => ipcRenderer.invoke('shell:webdav-config'),
+  saveWebdavConfig: input => ipcRenderer.invoke('shell:webdav-config-save',input),
+  syncWebdav: direction => ipcRenderer.invoke('shell:webdav-sync',direction),
   saveMemory: options => ipcRenderer.invoke('shell:memory', options),
   captureRegions:()=>ipcRenderer.invoke('shell:regions'),
   customScreenshot:r=>ipcRenderer.invoke('shell:custom-screenshot',r),

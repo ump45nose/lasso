@@ -13,6 +13,8 @@ import { Images, type ImageInput } from './images';
 import { applicationIcon } from './app-icons';
 import { MediaWindow } from './media-window';
 import { readSettings, writeSettings } from './settings';
+import { WebDavSyncService } from './sync-webdav';
+import type { PinArrangeMode, PinWorkspaceSettings, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
 import { fitToWorkArea, placeNear } from './position';
 import { SelectionCapture, frontmostApplicationId, ignoresApplication } from './selection';
@@ -26,7 +28,7 @@ import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
 import { canonicalShortcut, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type GlobalActionId, type EditorShortcutMap, type IgnoredAppRule } from '../shared/shortcuts';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import type { CaptureDelay, EfficiencyCaptureMode } from '../shared/capture-efficiency';
-import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope } from '../shared/contracts';
+import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope, DesktopAPI } from '../shared/contracts';
 
 app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
@@ -51,6 +53,7 @@ let presetsPath: string;
 let fontsDir: string;
 let images: Images;
 let screenshots: CaptureManager;
+let webdav: WebDavSyncService;
 let media: MediaWindow;
 let fileServices: { start(callback: (path: string) => void): void; stop(): void } | undefined;
 const pendingMediaFiles: string[] = [];
@@ -224,7 +227,7 @@ function updateTray() {
       ...([3,5,10] as const).map(delay=>({label:`${delay}秒延时截图`,accelerator:state.settings.actionShortcuts[`delay-${delay}s`]||undefined,enabled:!screenshots?.active,click:()=>void startScreenshot('area',delay)})),
       ...(capturePending?[{label:'取消延时截图',click:()=>screenshots.efficiency.cancel()}]:[])
     ] },
-    { label: '贴出剪贴板图片', accelerator: state.settings.actionShortcuts['pin-clipboard'] || undefined, click: () => { void runGlobalAction('pin-clipboard').catch(error => { state.notice = error.message; publish(); }); } },
+    { label: '贴出剪贴板内容', accelerator: state.settings.actionShortcuts['pin-clipboard'] || undefined, click: () => { void runGlobalAction('pin-clipboard').catch(error => { state.notice = error.message; publish(); }); } },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
     { label: '运行预设…', click: () => void openPalette('all') },
     { label: '暂停划词', type: 'checkbox', checked: !state.settings.selectionEnabled, click: () => { const result = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback }); if (result.error) dialog.showErrorBox('未能保存划词设置', result.error); } },
@@ -242,13 +245,7 @@ async function runGlobalAction(action: GlobalActionId) {
   else if (action === 'repeat-last') await startScreenshot('repeat');
   else if (action === 'scroll-capture') await startScreenshot('area', 0, true);
   else if (action.startsWith('delay-')) await startScreenshot('area', Number(action.slice(6, -1)) as CaptureDelay);
-  else if (action === 'pin-clipboard') {
-    const input = await images.capture();
-    try {
-      const image = nativeImage.createFromPath(input.path), crop = { x: 0, y: 0, ...image.getSize() };
-      capture.suppress(); await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop, privacy: [], nextNumber: 1 } });
-    } finally { images.remove(input); }
-  }
+  else if (action === 'pin-clipboard') { capture.suppress(); await screenshots.pins.pinClipboard(); }
 }
 function registerActionShortcut(action: GlobalActionId, shortcut: string): string | null {
   if (!shortcut) return null;
@@ -262,6 +259,36 @@ function registerActionShortcut(action: GlobalActionId, shortcut: string): strin
     }) ? null : `${shortcut} 已被占用，请换一组快捷键。`;
   } catch { return '快捷键格式无效。'; }
 }
+function configureActionShortcuts(settings: Settings): string[] {
+  for(const shortcut of registeredActions.values())globalShortcut.unregister(shortcut);
+  registeredActions.clear();state.shortcutError=null;
+  const conflicts:string[]=[],keys=new Set<string>();
+  for(const action of globalActionIds){
+    const shortcut=settings.actionShortcuts[action]||'',key=canonicalShortcut(shortcut);
+    const error=!isValidShortcut(shortcut)?'快捷键格式无效':key==='alt+space'?'Option+Space 已留给 Raycast':key&&keys.has(key)?'快捷键与其他动作重复':registerActionShortcut(action,shortcut);
+    if(key)keys.add(key);
+    if(error){conflicts.push(`${globalActionLabels[action]}：${error}`);if(action==='open-launcher')state.shortcutError=error;}
+    else if(shortcut)registeredActions.set(action,shortcut);
+  }
+  return conflicts;
+}
+function persistSettings(next: Settings) {
+  const changed=JSON.stringify(next)!==JSON.stringify(state.settings);
+  writeSettings(settingsPath,next);state.settings=next;if(changed)webdav?.scheduleAutoSync();
+}
+function persistPresets(next: Preset[]) {
+  const changed=JSON.stringify(next)!==JSON.stringify(state.presets);
+  writePresets(presetsPath,next);state.presets=next;if(changed)webdav?.scheduleAutoSync();tasks.warmPreferred();publish();
+}
+function applyImportedSettings(next: Settings) {
+  validateScreenshotSettings(next.screenshot,screenshots.supportedLanguages());
+  const previous=state.settings,conflicts=configureActionShortcuts(next);
+  if(conflicts.length){configureActionShortcuts(previous);throw Error(conflicts.join('；'));}
+  try{persistSettings(next);}catch(error){configureActionShortcuts(previous);throw error;}
+  actionBar.hide();clearSelection();capture.configure(next);screenshots.memoryChanged();tasks.memoryChanged();
+  void screenshots.preferencesChanged().catch(error=>{state.notice=(error as Error).message;publish();});
+  tasks.warmPreferred();updateTray();layout();publish();
+}
 function saveActionShortcut(action: GlobalActionId, shortcut: string) {
   if (!globalActionIds.includes(action)) return { error: '未知的全局动作' };
   if (!isValidShortcut(shortcut)) return { error: '支持 F1–F24 单键，其他按键请搭配修饰键；留空则取消绑定。' };
@@ -274,11 +301,11 @@ function saveActionShortcut(action: GlobalActionId, shortcut: string) {
   const next = { ...state.settings, actionShortcuts: { ...state.settings.actionShortcuts, [action]: shortcut },
     shortcut: action === 'open-launcher' ? shortcut : state.settings.shortcut,
     captureShortcuts: captureModes.includes(action as CaptureMode) ? { ...state.settings.captureShortcuts, [action]: shortcut } : state.settings.captureShortcuts };
-  try { writeSettings(settingsPath, next); }
+  try { persistSettings(next); }
   catch (error) { if (changed && shortcut) globalShortcut.unregister(shortcut); return { error: (error as Error).message }; }
   if (changed && current) globalShortcut.unregister(current);
   if (shortcut) registeredActions.set(action, shortcut); else registeredActions.delete(action);
-  state.settings = next; if (action === 'open-launcher') state.shortcutError = null;
+  if (action === 'open-launcher') state.shortcutError = null;
   updateTray(); publish(); return { error: null };
 }
 async function startScreenshot(mode: EfficiencyCaptureMode,delay:CaptureDelay=0,scroll=false) {
@@ -306,9 +333,8 @@ function clearSelection() {
 function saveCaptureSettings(options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>) {
   if (!options || typeof options.selectionEnabled !== 'boolean' || typeof options.clipboardFallback !== 'boolean') return { error: '划词开关值无效' };
   const next = { ...state.settings, ...options };
-  try { writeSettings(settingsPath, next); }
+  try { persistSettings(next); }
   catch (error) { return { error: (error as Error).message }; }
-  state.settings = next;
   capture.configure(next); updateTray(); publish();
   return { error: null };
 }
@@ -364,7 +390,7 @@ async function choosePath(kind: 'directory' | 'executable' | 'application') {
 function rememberTarget(target: Target) {
   if (state.settings.lastTarget === target) return;
   const settings = { ...state.settings, lastTarget: target };
-  writeSettings(settingsPath, settings); state.settings = settings; updateTray();
+  persistSettings(settings); updateTray();
 }
 function launchTask(options: LaunchOptions) {
   closePalette(false); state.settingsOpen = false; state.inputOpen = false; clearSelection();
@@ -419,6 +445,21 @@ function installIPC() {
   ipcMain.handle('shell:image-presets', event => { assertLocal(event); return openPalette('images'); });
   ipcMain.handle('shell:external', (event, url: string) => { assertLocal(event); if (['https:', 'http:'].includes(new URL(url).protocol)) return shell.openExternal(url); });
   const result = async (action: () => unknown) => { try { await action(); return { error: null }; } catch (error) { return { error: (error as Error).message }; } };
+  ipcMain.handle('shell:capture-history',(event,query?:string)=>{assertLocal(event);if(query!==undefined&&typeof query!=='string')throw Error('历史搜索词无效');return screenshots.history.state(query);});
+  ipcMain.handle('shell:capture-history-act',(event,id:string,action:Parameters<DesktopAPI['actCaptureHistory']>[1])=>{assertLocal(event);return result(()=>screenshots.actCaptureHistory(id,action));});
+  ipcMain.handle('shell:capture-history-clear',event=>{assertLocal(event);return result(()=>screenshots.history.clear());});
+  ipcMain.handle('shell:pin-workspace',async event=>{assertLocal(event);await screenshots.pins.ready;return screenshots.pins.state();});
+  ipcMain.handle('shell:pin-workspace-save',(event,settings:PinWorkspaceSettings)=>{assertLocal(event);return result(()=>screenshots.pins.saveWorkspace(settings));});
+  ipcMain.handle('shell:pin-create',(event,input:Parameters<DesktopAPI['createPin']>[0])=>{assertLocal(event);return result(()=>screenshots.pins.create(input));});
+  ipcMain.handle('shell:pin-clipboard',event=>{assertLocal(event);return result(()=>runGlobalAction('pin-clipboard'));});
+  ipcMain.handle('shell:pin-reopen',event=>{assertLocal(event);return result(()=>screenshots.pins.reopenClosedPin());});
+  ipcMain.handle('shell:pins-arrange',(event,mode:PinArrangeMode,groupId?:string)=>{assertLocal(event);return result(async()=>{await screenshots.pins.ready;screenshots.pins.arrange(mode,groupId);});});
+  ipcMain.handle('shell:pin-act',(event,id:string,action:Parameters<DesktopAPI['actPin']>[1],groupId?:string)=>{assertLocal(event);return result(async()=>{await screenshots.pins.ready;await screenshots.pins.actPin(id,action,groupId);});});
+  ipcMain.handle('shell:config-export',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.exportConfig();}finally{nativeDialogs--;}});
+  ipcMain.handle('shell:config-import',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.importConfig();}finally{nativeDialogs--;}});
+  ipcMain.handle('shell:webdav-config',event=>{assertLocal(event);return webdav.config();});
+  ipcMain.handle('shell:webdav-config-save',(event,input:WebDavConfigInput)=>{assertLocal(event);return webdav.saveConfig(input);});
+  ipcMain.handle('shell:webdav-sync',(event,direction:WebDavSyncDirection)=>{assertLocal(event);return webdav.sync(direction);});
   ipcMain.handle('shell:integrations', (event, value: Pick<Settings, 'local' | 'appPrompts'>) => {
     assertLocal(event);
     return result(() => {
@@ -432,10 +473,10 @@ function installIPC() {
         ids.add(rule.bundleId);
       }
       const next = { ...state.settings, local: value.local, appPrompts: value.appPrompts };
-      writeSettings(settingsPath, next); state.settings = next; publish();
+      persistSettings(next); publish();
     });
   });
-  const saveSettings = (next: Settings) => { writeSettings(settingsPath, next); state.settings = next; publish(); };
+  const saveSettings = (next: Settings) => { persistSettings(next); publish(); };
   ipcMain.handle('shell:fonts', (event, fonts: Settings['fonts']) => {
     assertLocal(event);
     return result(() => { validateFonts(fonts); saveSettings({ ...state.settings, fonts: { display: fonts.display.trim(), text: fonts.text.trim(), ui: fonts.ui.trim(), mono: fonts.mono.trim() } }); });
@@ -494,23 +535,20 @@ function installIPC() {
     try{
       if(!validMemorySettings(options))throw Error('休眠时间请输入 1–1440 的整数分钟');
       const next={...state.settings,memory:{enabled:options.enabled,idleMinutes:options.idleMinutes}};
-      writeSettings(settingsPath,next);state.settings=next;
+      persistSettings(next);
       screenshots.memoryChanged();tasks.memoryChanged();publish();return {error:null};
     }catch(error){return {error:(error as Error).message};}
   });
-  ipcMain.handle('shell:screenshot-settings', (event, options: ScreenshotSettings) => {
+  ipcMain.handle('shell:screenshot-settings', async (event, options: ScreenshotSettings) => {
     assertLocal(event);
-    try { validateScreenshotSettings(options, screenshots.supportedLanguages()); const next = { ...state.settings, screenshot: options }; writeSettings(settingsPath, next); state.settings = next; screenshots.syncRegionPreferences(); publish(); return { error: null }; }
+    try { validateScreenshotSettings(options, screenshots.supportedLanguages()); const next = { ...state.settings, screenshot: options }; persistSettings(next); await screenshots.preferencesChanged(); publish(); return { error: null }; }
     catch (error) { return { error: (error as Error).message }; }
   });
   ipcMain.handle('shell:capture', (event, options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>) => { assertLocal(event); return saveCaptureSettings(options); });
   ipcMain.handle('shell:presets-save', (event, presets: Preset[]) => {
     assertLocal(event);
-    try { writePresets(presetsPath, presets); }
+    try { persistPresets(presets); }
     catch (error) { return { error: (error as Error).message }; }
-    state.presets = presets;
-    tasks.warmPreferred();
-    publish();
     return { error: null };
   });
   ipcMain.handle('shell:preset-run', (event, id: string, options?: LaunchOptions) => { assertLocal(event); return runPreset(id, options?.imageId ? null : lastSelection, options); });
@@ -674,7 +712,7 @@ async function boot() {
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
-  }, () => { const visible=win.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{writeSettings(settingsPath,{...state.settings,screenshot:preferences});state.settings={...state.settings,screenshot:preferences};publish();});
+  }, () => { const visible=win.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{persistSettings({...state.settings,screenshot:preferences});publish();});
   const mediaDirectory = join(app.getPath('userData'), 'generated-media');
   mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
   state.presets = migrateImagePresets(presetsPath, mediaDirectory);
@@ -682,6 +720,8 @@ async function boot() {
     const size = image.getSize();
     await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
   }, () => state.settings, () => openPalette('images'));
+  webdav=new WebDavSyncService(app.getPath('userData'),{readSettings:()=>state.settings,writeSettings:applyImportedSettings,readPresets:()=>state.presets,writePresets:persistPresets});
+  webdav.scheduleAutoSync();
   fileServices = require(join(__dirname, 'native/file-services.node'));
   fileServices!.start(path => { void receiveMediaFile(path); });
   if (pendingMediaFiles.length) {
@@ -699,14 +739,7 @@ async function boot() {
     if(starting){actionBar.hide();setWindowPresence(win,true);motion.show(true);}
     if(next.error)showWindow();
   });
-  const conflicts: string[] = [], keys = new Set<string>();
-  for (const action of globalActionIds) {
-    const shortcut = state.settings.actionShortcuts[action] || '', key = canonicalShortcut(shortcut);
-    const error = !isValidShortcut(shortcut) ? '快捷键格式无效' : key === 'alt+space' ? 'Option+Space 已留给 Raycast' : key && keys.has(key) ? '快捷键与其他动作重复' : registerActionShortcut(action, shortcut);
-    if (key) keys.add(key);
-    if (error) { conflicts.push(`${globalActionLabels[action]}：${error}`); if (action === 'open-launcher') state.shortcutError = error; }
-    else if (shortcut) registeredActions.set(action, shortcut);
-  }
+  const conflicts = configureActionShortcuts(state.settings);
   if (conflicts.length) state.notice = conflicts.join('；');
   state.settingsOpen = Boolean(state.shortcutError);
   capture.configure(state.settings);
@@ -720,7 +753,7 @@ else {
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
   app.on('before-quit', () => { quitting = true; screenshots?.dispose(); });
-  app.on('will-quit', () => { fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('will-quit', () => { webdav?.dispose();fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));
     quitting = true;

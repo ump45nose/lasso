@@ -6,6 +6,11 @@ contextBridge.exposeInMainWorld('pin', {
   action: action => ipcRenderer.invoke('ui-shots:pin-action', action),
   source: () => ipcRenderer.invoke('ui-shots:pin-source'),
   text: async () => ({ error: null }),
+  setOpacity: async () => ({ error: null }),
+  setZoom: async () => ({ error: null }),
+  setGroup: async () => ({ error: null }),
+  setTitle: async () => ({ error: null }),
+  updateText: async () => ({ error: null }),
   startDrag: () => {},
   drag: () => {},
   endDrag: () => {}

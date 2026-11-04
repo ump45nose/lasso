@@ -170,7 +170,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   }
   async function output(action:ExportAction){
     if(exporting.current)return;exporting.current=true;setBusy(true);setError('');
-    try{const result=await window.screenshot.export(await frame(action==='pin',action==='copy'),action,format,contentMode);if(result.error)setError(result.error);}
+    try{const result=await window.screenshot.export(await frame(true,action==='copy'),action,format,contentMode);if(result.error)setError(result.error);}
     catch(e){setError((e as Error).message);}finally{exporting.current=false;if(alive.current)setBusy(false);}
   }
   useEffect(()=>{if(ready&&state.copyIntent&&state.copyIntent!==lastCopy.current){lastCopy.current=state.copyIntent;void output('copy');}},[ready,state.copyIntent]);

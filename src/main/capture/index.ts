@@ -15,7 +15,8 @@ import { pixelRect } from '../../shared/capture';
 import { updateNativeAppearance, loadNativeCapture, excludedCaptureWindows, type NativeCapture, type NativeFrame, type NativeCaptureEvent } from './native';
 import { clip, contains, rank } from './candidates';
 import { OCRService, type VisionOCR } from './ocr';
-import { normalizeRegionAnnotations, validateAnnotations, type PinnedDocument } from './document';
+import { imageDocument, normalizeRegionAnnotations, validateAnnotations, type PinnedDocument } from './document';
+import { CaptureHistoryStore } from './history-store';
 import { PinManager } from './pins';
 import { ScrollSession, type ScrollReply } from './scroll-session';
 import { defaultLocalImageCopyPath, saveLocalImageCopy, type LocalImageSource } from './local-images';
@@ -96,6 +97,9 @@ export class CaptureManager {
   private scrollFinishing=false;
   private scrollEditing=false;
   readonly pins: PinManager;
+  readonly history: CaptureHistoryStore;
+  private historyId?: string;
+  private historyOCR?: { id: string; revision: number; text: string };
   readonly efficiency=new CaptureEfficiencyControl({
     displays:()=>screen.getAllDisplays().map(bindDisplay),
     capture:async request=>{
@@ -124,7 +128,8 @@ export class CaptureManager {
     this.native=loadNativeCapture(event=>this.nativeEvent(event));
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
-    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,languages:()=>this.settings().languages,preferences:()=>this.settings(),editorShortcuts:()=>this.appearance?.().editorShortcuts,saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active});
+    this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
+    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,languages:()=>this.settings().languages,preferences:()=>this.settings(),editorShortcuts:()=>this.appearance?.().editorShortcuts,saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,saveWorkspaceSettings:pinWorkspace=>this.savePreferences?.({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
     const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>Boolean(this.cachedWindow&&e.sender===this.cachedWindow.webContents&&e.senderFrame===this.cachedWindow.webContents.mainFrame);
     const assert=(e:IpcMainEvent|IpcMainInvokeEvent)=>{if(!owns(e))throw new Error('截图操作只允许截图窗口调用');};
     ipcMain.handle('screenshot:checkpoint',(e,editId:string,checkpoint:EditorCheckpoint|null)=>{assert(e);if(this.state?.editId===editId)this.checkpointReply?.(checkpoint);});
@@ -375,6 +380,15 @@ export class CaptureManager {
   private keepFrame(frame:NativeFrame,rect?:CaptureRect){this.ownedFrames.add(frame.id);const id=randomUUID();this.pixelSources.set(id,{frame,rect});return id;}
   private importFrame(image:NativeImage,bounds?:CaptureRect){const size=image.getSize(),frame=this.native.createFrame({...size,data:image.toBitmap(),...(bounds?{logicalX:bounds.x,logicalY:bounds.y,logicalWidth:bounds.width,logicalHeight:bounds.height}:{})});this.ownedFrames.add(frame.id);return frame;}
   syncRegionPreferences(){this.regionsStore.save();}
+  async preferencesChanged(){this.syncRegionPreferences();await this.history.prune();await this.pins.saveWorkspace(this.settings().pinWorkspace);}
+  async actCaptureHistory(id:string,action:'edit'|'pin'|'copy'|'delete'){
+    if(typeof id!=='string'||!['edit','pin','copy','delete'].includes(action))throw Error('无效的历史操作');
+    if(action==='delete'){await this.history.delete(id);return;}
+    const document=await this.history.load(id);
+    if(action==='copy'){this.after();await copyImage(document.image);}
+    else if(action==='pin')await this.pins.put(document);
+    else{await this.openImage(document.source,'clipboard',document,undefined,'history:'+id);this.historyId=id;}
+  }
   regionConfiguration(){
     const displays=screen.getAllDisplays().map(d=>({...bindDisplay(d),label:d.label||`${d.bounds.width} × ${d.bounds.height}`}));
     const presets=this.settings().regionPresets;
@@ -598,9 +612,13 @@ export class CaptureManager {
     const shouldOutput=!this.automaticCompleted&&(actions.copy||actions.save);
     if(shouldOutput)this.automaticCompleted=true;
     // Start reading the bound source now; later selection/scroll transitions may replace the loader.
-    const original=shouldOutput?this.originalImage():null;
+    const original=shouldOutput||preferences.history.enabled?this.originalImage():null;
     original?.catch(()=>{});
-    const execute=()=>{if(!original)return;void original.then(image=>this.automaticResult(s,image,preferences,actions,pixelScale,editId)).catch(error=>{if(this.state===s&&s.editId===editId){s.outputError=(error as Error).message;this.publish();}else this.notice((error as Error).message);});};
+    if(preferences.history.enabled){
+      const meta={id:s.id,captureKind:s.captureKind,region:s.editableRegion?{...s.editableRegion.currentCrop}:s.selection?{...s.selection}:undefined,displayId:this.displayId??undefined};
+      void original!.then(image=>this.history.add({...imageDocument(image),pixelScale},meta)).catch(error=>this.notice('截图历史保存失败：'+(error as Error).message));
+    }
+    const execute=()=>{if(!original||!shouldOutput)return;void original.then(image=>this.automaticResult(s,image,preferences,actions,pixelScale,editId)).catch(error=>{if(this.state===s&&s.editId===editId){s.outputError=(error as Error).message;this.publish();}else this.notice((error as Error).message);});};
     if(actions.show){this.configureResult();this.automaticReady=execute;this.publish(true);}
     else{this.win?.hide();this.presented=false;execute();}
   }
@@ -691,7 +709,7 @@ export class CaptureManager {
   private recognize(frame:OCRRequest):Promise<OCRResult>{
     if(!frame||!['text','code'].includes(frame.mode)||typeof frame.enhance!=='boolean'||(frame.force!==undefined&&typeof frame.force!=='boolean')||!(frame.png instanceof Uint8Array))throw Error('无效的识别选项');
     this.frameImage(frame);
-    return this.ocr.recognize({id:frame.id,revision:frame.revision,png:Buffer.from(frame.png),mode:frame.mode,enhance:frame.enhance,force:frame.force,languages:this.settings().languages});
+    return this.ocr.recognize({id:frame.id,revision:frame.revision,png:Buffer.from(frame.png),mode:frame.mode,enhance:frame.enhance,force:frame.force,languages:this.settings().languages}).then(result=>{if(this.state?.editId===result.id&&this.editRevision===result.revision)this.historyOCR={id:result.id,revision:result.revision,text:result.lines.map(line=>line.text).join('\n')};return result;});
   }
   /** Display export uses screen logical dimensions; result keeps the composed pixels. */
   private contentImage(image:NativeImage,mode:ScreenshotExportContentMode,scale?:{x:number;y:number}){
@@ -699,19 +717,31 @@ export class CaptureManager {
     const size=image.getSize();
     return image.resize({width:Math.max(1,Math.round(size.width/scale.x)),height:Math.max(1,Math.round(size.height/scale.y)),quality:'best'});
   }
+  private async frameDocument(frame:CaptureFrame,image:NativeImage):Promise<PinnedDocument>{
+    const s=this.state!,context=s.editableRegion;
+    if(context&&this.screenFrame){
+      const snapshot=validateAnnotations(frame.annotations,{getSize:()=>context.sourceSize},frame.crop);
+      const data=await this.native.pixels(this.screenFrame.id,{format:'bgra',rect:frame.crop});
+      return {source:nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height}),image,annotations:normalizeRegionAnnotations(snapshot,frame.crop),pixelScale:{x:context.sourceSize.width/context.display.bounds.width,y:context.sourceSize.height/context.display.bounds.height}};
+    }
+    const source=await this.originalImage();
+    return {source,image,annotations:validateAnnotations(frame.annotations,source,frame.crop),pixelScale:s.pixelScale};
+  }
   private async exportFrame(frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode){
     if(this.exporting)throw Error('正在输出图片');
     const preferences=this.preferences,requestedMode=contentMode??preferences.exportContentMode,mode=action==='pin'?'result':requestedMode;
     if(!['copy','save','quick-save','copy-file','copy-path','image','pin','media'].includes(action)||!screenshotOutputFormats.includes(format)||!['original','result','display'].includes(requestedMode))throw Error('不支持的输出操作');
-    if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array){const r=this.assertCrop(frame),png=assertPng(frame.png,r.width,r.height);this.acceptVersion(frame.id,frame.revision);this.exporting=true;try{await copyPng(png);if(this.state?.editId===frame.id)this.cancel();}finally{this.exporting=false;}return;}
+    if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!frame.annotations){const r=this.assertCrop(frame),png=assertPng(frame.png,r.width,r.height);this.acceptVersion(frame.id,frame.revision);this.exporting=true;try{await copyPng(png);if(this.state?.editId===frame.id)this.cancel();}finally{this.exporting=false;}return;}
     const crop=this.assertCrop(frame),id=frame.id;this.acceptVersion(id,frame.revision);this.exporting=true;
     let pinnedId:string|undefined;
     try{
+      const result=action==='pin'||frame.annotations?await this.frameDocument(frame,decodeFrameImage(frame)):undefined;
+      this.acceptVersion(id,frame.revision);
       let image:NativeImage;
       if(mode==='original'){
         if(this.state?.editableRegion&&this.screenFrame){const data=await this.native.pixels(this.screenFrame.id,{format:'bgra',rect:crop});image=nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height});}
         else image=(await this.originalImage()).crop(crop);
-      }else image=this.contentImage(decodeFrameImage(frame),mode,this.state?.pixelScale);
+      }else image=this.contentImage(result?.image??decodeFrameImage(frame),mode,this.state?.pixelScale);
       const encoding={...preferences,resizeTo1x:mode==='display'?false:preferences.resizeTo1x};
       const copy=action==='copy'?preferences.copyMode:action==='copy-file'?'file':action==='copy-path'?'path':null;
       if(copy==='image')await copyImage(image);
@@ -722,21 +752,12 @@ export class CaptureManager {
       else if(action==='image')await this.receive(image);
       else if(action==='media'){if(!this.receiveMedia)throw Error('图片生成尚未接入');await this.receiveMedia(image);}
       else if(action==='pin'){
-        let source:NativeImage,annotations;
-        if(this.state?.editableRegion&&this.screenFrame){
-          const full=this.state.editableRegion.sourceSize;
-          const snapshot=validateAnnotations(frame.annotations,{getSize:()=>full},frame.crop);
-          const data=await this.native.pixels(this.screenFrame.id,{format:'bgra',rect:frame.crop});
-          source=nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height});
-          annotations=normalizeRegionAnnotations(snapshot,frame.crop);
-        }else{source=await this.originalImage();annotations=validateAnnotations(frame.annotations,source,frame.crop);}
         if(this.state?.pinId&&!this.pins.contains(this.state.pinId)){
           this.state.pinId=undefined;this.editorKey=null;this.publish();
           throw Error('原贴图已关闭，当前编辑已保留；点击「贴图」可重新创建。');
         }
         this.acceptVersion(id,frame.revision);
-        const c=this.state?.editableRegion;
-        pinnedId=await this.pins.put({source,image,annotations,pixelScale:c?{x:c.sourceSize.width/c.display.bounds.width,y:c.sourceSize.height/c.display.bounds.height}:this.state?.pixelScale},this.state?.pinId);
+        pinnedId=await this.pins.put(result!,this.state?.pinId);
       }
       else{
         const source=this.localSource,name=formatScreenshotName(preferences.fileNameTemplate,format,{app:this.sourceApp,...image.getSize()});
@@ -747,6 +768,11 @@ export class CaptureManager {
         const bytes=encodeScreenshot(image,encoding,format,this.state?.pixelScale);
         if(source)await saveLocalImageCopy(source,filePath,bytes);else{await mkdir(dirname(filePath),{recursive:true});await writeFile(filePath,bytes);}
         await runAfterSaveAction(filePath,preferences.afterSaveAction);
+      }
+      if(result&&this.state?.editId===id){
+        const s=this.state,ocr=this.historyOCR;
+        try{await this.history.add(result,{id:this.historyId??s.id,captureKind:s.captureKind??'image',region:s.editableRegion?.currentCrop,displayId:this.displayId??undefined,ocrSnippet:ocr?.id===id&&ocr.revision===frame.revision?ocr.text:''});}
+        catch(error){this.notice('截图历史保存失败：'+(error as Error).message);}
       }
       if(this.state?.editId===id)this.cancel();
       if(pinnedId)this.pins.focus(pinnedId);
@@ -761,7 +787,7 @@ export class CaptureManager {
     throw Error('不支持的截图操作');
   }
   private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}
-  private release(restore=false){this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.detectionStarting=false;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
+  private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.detectionStarting=false;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
   cancel(restore=false){this.release(restore);}
   dispose(){this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:regions','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:recognize','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:invalidate-ocr','screenshot:ready'])ipcMain.removeAllListeners(name);}
 }
