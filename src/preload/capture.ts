@@ -31,7 +31,8 @@ const api: ScreenshotAPI = {
   scrollAction:action=>ipcRenderer.invoke('screenshot:scroll-action',action),
   recognize:frame=>ipcRenderer.invoke('screenshot:recognize',frame),
   invalidateOCR:request=>ipcRenderer.send('screenshot:invalidate-ocr',request),
-  export:(frame,action,format)=>ipcRenderer.invoke('screenshot:export',frame,action,format),
+  export:(frame,action,format,contentMode)=>ipcRenderer.invoke('screenshot:export',frame,action,format,contentMode),
+  saveAnnotationMemory:memory=>ipcRenderer.invoke('screenshot:save-annotation-memory',memory),
   copyText:request=>ipcRenderer.invoke('screenshot:copy-text',request),
   sendText:request=>ipcRenderer.invoke('screenshot:send-text',request)
 };
