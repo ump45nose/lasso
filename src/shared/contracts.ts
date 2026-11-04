@@ -4,6 +4,7 @@ import type { MemorySettings } from './memory';
 import type { ImageOptions, MediaConfig, MediaConfigInput } from './media';
 import type { CaptureMode } from './capture';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
+import type { EditorShortcutMap, GlobalActionId, IgnoredAppRule } from './shortcuts';
 export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
 /** Native web views are placed below the title bar and above any footer rows. */
 export const HEADER_HEIGHT = 44;
@@ -33,6 +34,9 @@ export interface Settings {
   shortcut: string;
   /** Empty means unbound, per capture mode. */
   captureShortcuts: Record<CaptureMode, string>;
+  actionShortcuts: Partial<Record<GlobalActionId, string>>;
+  editorShortcuts: EditorShortcutMap;
+  ignoredApps: IgnoredAppRule[];
   lastTarget: Target;
   selectionEnabled: boolean;
   clipboardFallback: boolean;
@@ -136,6 +140,9 @@ export interface DesktopAPI {
   openLocalImage(): Promise<{ error: string | null }>;
   saveCaptureShortcut(mode: CaptureMode, shortcut: string): Promise<{ error: string | null }>;
   saveShortcut(shortcut: string): Promise<{ error: string | null }>;
+  saveActionShortcut(action: GlobalActionId, shortcut: string): Promise<{ error: string | null }>;
+  saveEditorShortcuts(shortcuts: EditorShortcutMap): Promise<{ error: string | null }>;
+  saveIgnoredApps(rules: IgnoredAppRule[]): Promise<{ error: string | null }>;
   saveScreenshot(options: ScreenshotSettings): Promise<{ error: string | null }>;
   ocrLanguages(): Promise<string[]>;
   saveCapture(options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>): Promise<{ error: string | null }>;
