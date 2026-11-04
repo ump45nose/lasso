@@ -1,13 +1,23 @@
 import { ActiveSelection, Canvas, Circle, Ellipse, FabricImage, FabricObject, FabricText, Group, IText, Line, Path, PencilBrush, Rect, util, type BasicTransformEvent } from 'fabric';
 import type { AnnotationSnapshot, CaptureRect, EditorCheckpoint } from '../../shared/capture';
+import { screenshotDefaults, type AnnotationStyleConfig } from '../../shared/screenshot-settings';
 import { constrainedEnd } from './annotation-geometry';
 
 export type Tool = 'text-select' | 'select' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'pen' | 'highlight' | 'text' | 'number' | 'redact' | 'mosaic' | 'blur' | 'crop' | 'picker';
-export type Style = { color: string; width: number; fontSize: number };
+export type Style = AnnotationStyleConfig;
 type Mark = FabricObject & { lassoTool?: Tool };
 type Snapshot = AnnotationSnapshot;
 const box = (a: { x: number; y: number }, b: { x: number; y: number }): CaptureRect => ({ x: Math.round(Math.min(a.x,b.x)), y: Math.round(Math.min(a.y,b.y)), width: Math.round(Math.abs(b.x-a.x)), height: Math.round(Math.abs(b.y-a.y)) });
 const shapeTools = new Set<Tool>(['arrow', 'line', 'rectangle', 'ellipse', 'highlight', 'redact', 'mosaic', 'blur']);
+const arrowPoints=(start:{x:number;y:number},end:{x:number;y:number},style:Style)=>{
+  const angle=Math.atan2(end.y-start.y,end.x-start.x),head=Math.max(14,style.width*4);
+  const wing=(tip:typeof start,a:number)=>[{x:tip.x-head*Math.cos(a-.5),y:tip.y-head*Math.sin(a-.5)},tip,{x:tip.x-head*Math.cos(a+.5),y:tip.y-head*Math.sin(a+.5)}];
+  return [wing(end,angle),...(style.arrowType==='double'?[wing(start,angle+Math.PI)]:[])];
+};
+const textBackground=(style:Style)=>{
+  const rgb=style.color.slice(1).match(/../g)!.map(v=>parseInt(v,16));
+  return style.textBackground?(rgb[0]*.299+rgb[1]*.587+rgb[2]*.114>150?'rgba(20, 20, 19, 0.8)':'rgba(250, 249, 245, 0.88)'):'';
+};
 export const intersects = (a: CaptureRect,b: CaptureRect) => a.x < b.x+b.width && a.x+a.width > b.x && a.y < b.y+b.height && a.y+a.height > b.y;
 // ActiveSelection stores children in group coordinates; history and clipboard always store image coordinates.
 const serializeMark=(o:FabricObject):Record<string,unknown>=>{
@@ -22,7 +32,7 @@ export class AnnotationEditor {
   readonly canvas: Canvas;
   crop: CaptureRect;
   tool: Tool = 'text-select';
-  style: Style = { color: '#e24a35', width: 4, fontSize: 32 };
+  style: Style = screenshotDefaults().annotationMemory.defaultStyle;
   private history: string[] = [];
   private cursor = -1;
   private restoring = false;
@@ -39,7 +49,7 @@ export class AnnotationEditor {
   private flat: HTMLCanvasElement | null = null;
   private loupe: HTMLCanvasElement | null = null;
   private shift = false;
-  constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void, initialCrop?:CaptureRect) {
+  constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void, initialCrop?:CaptureRect, selected?:()=>void) {
     this.crop = initialCrop?{...initialCrop}:{ x:0,y:0,width:source.width,height:source.height };
     this.canvas = new Canvas(element, { width:source.width,height:source.height,enableRetinaScaling:false,preserveObjectStacking:true,selection:false,altActionKey:undefined,backgroundColor:'',renderOnAddRemove:false });
     const wrapper=this.canvas.wrapperEl;
@@ -55,6 +65,7 @@ export class AnnotationEditor {
     this.canvas.on('object:rotating',e=>this.constrainTransform(e));
     this.canvas.on('text:changed',()=>this.invalidate());
     this.canvas.on('text:editing:exited',()=>this.commit());
+    if(selected)for(const event of ['selection:created','selection:updated','selection:cleared'] as const)this.canvas.on(event,selected);
     this.save(); this.setTool(this.tool); this.canvas.requestRenderAll();
   }
   get canUndo(){return this.cursor>0&&!this.restoring;}
@@ -81,10 +92,11 @@ export class AnnotationEditor {
   async restoreCheckpoint(checkpoint: EditorCheckpoint) {
     await this.load(JSON.parse(checkpoint.history[checkpoint.cursor]) as Snapshot);
     this.history = [...checkpoint.history]; this.cursor = checkpoint.cursor;
-    this.style = {...checkpoint.style}; this.objectClipboard = checkpoint.objectClipboard;
+    this.style = {...this.style,...checkpoint.style}; this.objectClipboard = checkpoint.objectClipboard;
     this.setTool(checkpoint.tool as Tool);
   }
   get isEditingText(){return this.canvas.getActiveObject() instanceof IText && (this.canvas.getActiveObject() as IText).isEditing;}
+  get selectedTextBackground(){const text=this.canvas.getActiveObjects().find(o=>o instanceof IText);return text?Boolean(text.backgroundColor):null;}
   get privacy(){return this.canvas.getObjects().filter(o=>['redact','mosaic','blur'].includes((o as Mark).lassoTool||'')).map(o=>{const r=o.getBoundingRect();return {x:r.left,y:r.top,width:r.width,height:r.height};});}
   /** Warm the flattened pixels after the tool changes, so the first loupe move does not composite. */
   prepareSample(){if(!this.disposed&&!this.flat)this.flat=this.compose();}
@@ -106,16 +118,20 @@ export class AnnotationEditor {
     for(const o of this.canvas.getObjects())o.set({selectable:tool==='select',evented:tool==='select'});
     this.canvas.defaultCursor=tool==='select'?'default':'crosshair';this.canvas.requestRenderAll();
   }
-  setStyle(style: Style){
+  setStyle(style: Style, properties: (keyof Style)[]=Object.keys(style) as (keyof Style)[]){
     this.style=style;
     if(this.canvas.freeDrawingBrush){this.canvas.freeDrawingBrush.color=style.color;this.canvas.freeDrawingBrush.width=style.width;}
     const active=this.canvas.getActiveObjects();
     const paint=(o: Mark)=>{
       if(['mosaic','blur'].includes(o.lassoTool||''))return;
-      if(o instanceof Group){o.getObjects().forEach(c=>{if((o as Mark).lassoTool==='number'&&c instanceof FabricText)c.set({fontSize:style.fontSize});else paint(c);});return;}
-      if(o instanceof FabricText)o.set({fill:style.color,fontSize:style.fontSize});
-      else if(['redact','highlight','number'].includes(o.lassoTool||''))o.set({fill:o.lassoTool==='redact'?'#171717':style.color});
-      else o.set({stroke:style.color,strokeWidth:style.width});
+      if(o instanceof Group){o.getObjects().forEach(c=>{if((o as Mark).lassoTool==='number'&&c instanceof FabricText){if(properties.includes('fontSize'))c.set({fontSize:style.fontSize});}else paint(c);});return;}
+      if(o instanceof FabricText){
+        if(properties.includes('color'))o.set({fill:style.color});
+        if(properties.includes('fontSize'))o.set({fontSize:style.fontSize});
+        if(o instanceof IText&&(properties.includes('textBackground')||properties.includes('color')))o.set({backgroundColor:textBackground({...style,color:typeof o.fill==='string'?o.fill:style.color,textBackground:properties.includes('textBackground')?style.textBackground:Boolean(o.backgroundColor)})});
+      }
+      else if(['redact','highlight','number'].includes(o.lassoTool||'')){if(properties.includes('color'))o.set({fill:o.lassoTool==='redact'?'#171717':style.color});}
+      else {if(properties.includes('color'))o.set({stroke:style.color});if(properties.includes('width'))o.set({strokeWidth:style.width});}
       o.setCoords();
     };
     if(active.length){this.invalidate();active.forEach(o=>paint(o));this.canvas.requestRenderAll();this.commit();}
@@ -128,7 +144,7 @@ export class AnnotationEditor {
     const point=this.point(p);this.invalidate();
     if(this.tool==='pen')return;
     if(this.tool==='text'){
-      const text=new IText('输入文字',{left:point.x,top:point.y,originX:'left',originY:'top',fill:this.style.color,fontSize:this.style.fontSize,fontFamily:'-apple-system, PingFang SC, sans-serif'});
+      const text=new IText('输入文字',{left:point.x,top:point.y,originX:'left',originY:'top',fill:this.style.color,fontSize:this.style.fontSize,backgroundColor:textBackground(this.style),fontFamily:'-apple-system, PingFang SC, sans-serif'});
       this.canvas.add(this.decorate(text,'text'));this.setTool('select');this.canvas.setActiveObject(text);text.enterEditing();text.selectAll();this.canvas.requestRenderAll();return;
     }
     if(this.tool==='number'){
@@ -160,11 +176,12 @@ export class AnnotationEditor {
     ctx.fillStyle=this.tool==='redact'||this.tool==='mosaic'||this.tool==='blur'?'#171717':this.style.color;
     if(this.tool==='line'||this.tool==='arrow'){
       ctx.beginPath();ctx.moveTo(start.x,start.y);ctx.lineTo(end.x,end.y);
-      if(this.tool==='arrow'){const head=Math.max(14,this.style.width*4),angle=Math.atan2(end.y-start.y,end.x-start.x);ctx.moveTo(end.x-head*Math.cos(angle-.5),end.y-head*Math.sin(angle-.5));ctx.lineTo(end.x,end.y);ctx.lineTo(end.x-head*Math.cos(angle+.5),end.y-head*Math.sin(angle+.5));}
+      if(this.tool==='arrow')for(const [a,b,c] of arrowPoints(start,end,this.style)){ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.lineTo(c.x,c.y);}
       ctx.stroke();
     }else if(this.tool==='ellipse'){ctx.beginPath();ctx.ellipse(r.x+r.width/2,r.y+r.height/2,Math.max(.5,r.width/2),Math.max(.5,r.height/2),0,0,Math.PI*2);ctx.stroke();}
     else if(this.tool==='highlight'){ctx.globalAlpha=.3;ctx.fillRect(r.x,r.y,r.width,r.height);}
     else if(this.tool==='rectangle')ctx.strokeRect(r.x,r.y,r.width,r.height);
+    else if((this.tool==='mosaic'||this.tool==='blur')&&r.width&&r.height)ctx.drawImage(this.pixelEffect(r,this.tool),r.x,r.y);
     else ctx.fillRect(r.x,r.y,r.width,r.height);
     ctx.restore();
   }
@@ -189,8 +206,8 @@ export class AnnotationEditor {
     let o:FabricObject;
     if(this.tool==='line')o=new Line([start.x,start.y,end.x,end.y],options);
     else if(this.tool==='arrow'){
-      const angle=Math.atan2(end.y-start.y,end.x-start.x),head=Math.max(14,this.style.width*4);
-      o=new Path(`M ${start.x} ${start.y} L ${end.x} ${end.y} M ${end.x-head*Math.cos(angle-.5)} ${end.y-head*Math.sin(angle-.5)} L ${end.x} ${end.y} L ${end.x-head*Math.cos(angle+.5)} ${end.y-head*Math.sin(angle+.5)}`,{...options,strokeLineCap:'round',strokeLineJoin:'round'});
+      const heads=arrowPoints(start,end,this.style).map(([a,b,c])=>`M ${a.x} ${a.y} L ${b.x} ${b.y} L ${c.x} ${c.y}`).join(' ');
+      o=new Path(`M ${start.x} ${start.y} L ${end.x} ${end.y} ${heads}`,{...options,strokeLineCap:'round',strokeLineJoin:'round'});
     }else if(this.tool==='ellipse')o=new Ellipse({...options,left:r.x,top:r.y,rx:r.width/2,ry:r.height/2});
     else if(this.tool==='mosaic'||this.tool==='blur')o=new FabricImage(this.pixelEffect(r,this.tool),{left:r.x,top:r.y,originX:'left',originY:'top'});
     else if(this.tool==='highlight')o=new Rect({...options,left:r.x,top:r.y,width:r.width,height:r.height,fill:this.style.color,strokeWidth:0,opacity:.3});
@@ -203,11 +220,12 @@ export class AnnotationEditor {
   private pixelEffect(region:CaptureRect,tool:'mosaic'|'blur'){
     const raw=this.compose(region),pixels=document.createElement('canvas');pixels.width=region.width;pixels.height=region.height;const ctx=pixels.getContext('2d')!;
     if(tool==='mosaic'){
-      const small=document.createElement('canvas');small.width=Math.max(1,Math.ceil(raw.width/16));small.height=Math.max(1,Math.ceil(raw.height/16));
+      const small=document.createElement('canvas');small.width=Math.max(1,Math.ceil(raw.width/this.style.mosaicSize));small.height=Math.max(1,Math.ceil(raw.height/this.style.mosaicSize));
       small.getContext('2d')!.drawImage(raw,0,0,small.width,small.height);ctx.imageSmoothingEnabled=false;ctx.drawImage(small,0,0,pixels.width,pixels.height);
     }else{
       // Fill the edges before blurring so the mask stays fully opaque.
-      ctx.drawImage(raw,0,0);ctx.filter='blur(12px)';ctx.drawImage(raw,-16,-16,raw.width+32,raw.height+32);
+      const padding=Math.ceil(this.style.blurRadius*1.5);
+      ctx.drawImage(raw,0,0);ctx.filter=`blur(${this.style.blurRadius}px)`;ctx.drawImage(raw,-padding,-padding,raw.width+padding*2,raw.height+padding*2);
     }
     return pixels;
   }

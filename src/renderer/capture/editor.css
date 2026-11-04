@@ -36,7 +36,7 @@
 .ed-window .ed-dock { left: 50%; bottom: 20px; align-items: center; translate: -50% 0; }
 .ed-window .ed-bars { justify-content: center; }
 .ed-bars { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.ed-bar { display: flex; align-items: center; gap: 2px; height: 44px; padding: 0 5px; border-radius: 13px; }
+.ed-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; min-height: 44px; max-width: 100%; padding: 5px; border-radius: 13px; }
 .ed-sep { width: 1px; height: 16px; margin: 0 4px; flex-shrink: 0; background: var(--line-strong); }
 .ed-tool, .ed-caret, .ed-text, .ed-primary { position: relative; height: 32px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 9px; background: transparent; color: var(--ink-2); white-space: nowrap; transition: background var(--t-fast), color var(--t-fast), transform 100ms; }
 .ed-tool { width: 32px; padding: 0; }
@@ -67,7 +67,7 @@
 .ed-tool[data-tip]:hover::after { opacity: 1; transform: none; transition-delay: 380ms; }
 
 /* Style panel */
-.ed-panel { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 12px; border-radius: 13px; }
+.ed-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; min-height: 44px; max-width: 100%; padding: 10px 12px; border-radius: 13px; }
 .ed-colors { display: flex; gap: 6px; }
 .ed-colors button { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: var(--swatch); box-shadow: inset 0 0 0 0.5px rgba(20, 20, 19, 0.3); transition: transform var(--t-fast) var(--ease-out), box-shadow var(--t-fast); }
 .ed-colors button:hover { transform: scale(1.12); }
@@ -171,3 +171,29 @@
 .ed-inline .ed-chip .ed-pop { position:static; flex:0 0 100%; width:100%; margin-top:8px; }
 .ed-inline .ed-panel { align-self:flex-end; flex-shrink:0; }
 .ed-inline .ed-format-panel { position:static; display:flex; align-self:flex-end; width:auto; }
+
+/* Tool controls and export choices share the editor's ink surface. */
+.ed-bar, .ed-panel, .ed-menu { background:var(--ink); color:var(--on-ink); border-color:rgba(250, 249, 245, 0.12); }
+.ed-bar .ed-tool, .ed-bar .ed-caret, .ed-bar .ed-text, .ed-panel .ed-text, .ed-menu button { color:var(--on-ink); }
+.ed-bar .ed-tool:hover:not(:disabled), .ed-bar .ed-caret:hover:not(:disabled), .ed-bar .ed-text:hover:not(:disabled), .ed-panel .ed-text:hover:not(:disabled), .ed-menu button:hover { background:var(--clay); color:var(--on-ink); }
+.ed-bar .ed-tool:active:not(:disabled), .ed-bar .ed-text:active:not(:disabled), .ed-menu button:active { background:var(--clay-press); }
+.ed-bar .ed-primary { background:var(--clay); color:var(--on-ink); }
+.ed-bar .ed-primary:hover:not(:disabled) { background:var(--clay-press); }
+.ed-bar .ed-sep, .ed-panel .ed-sep { background:rgba(250, 249, 245, 0.2); }
+.ed-panel .mono, .ed-panel .ed-hint { color:rgba(250, 249, 245, 0.68); }
+.ed-panel .ed-hint { white-space:normal; }
+.ed-panel .l-seg, .ed-menu .l-seg { background:rgba(250, 249, 245, 0.08); border-color:rgba(250, 249, 245, 0.16); }
+.ed-panel .l-seg button, .ed-menu .l-seg button { color:rgba(250, 249, 245, 0.68); }
+.ed-panel .l-seg button:hover, .ed-menu .l-seg button:hover { background:var(--clay); color:var(--on-ink); }
+.ed-panel .l-seg button[aria-checked="true"], .ed-menu .l-seg button[aria-checked="true"] { color:var(--on-ink); }
+.ed-panel .l-seg-thumb, .ed-menu .l-seg-thumb { background:var(--clay); box-shadow:none; }
+.ed-toggle { display:flex; align-items:center; gap:10px; white-space:nowrap; }
+.ed-panel .l-switch { background:rgba(250, 249, 245, 0.22); }
+.ed-panel .l-switch[aria-checked="true"] { background:var(--clay); }
+.ed-format-panel, .ed-inline .ed-format-panel { position:static; width:380px; max-width:100%; align-self:flex-end; gap:8px; padding:12px; }
+.ed-format-panel .l-seg { display:flex; flex-wrap:wrap; }
+.ed-format-panel .l-seg button { flex:1; padding:0 7px; font-family:var(--font-ui); white-space:nowrap; }
+.ed-format-panel .l-seg button[aria-checked="true"]::after { content:none; }
+.ed-menu-label { color:rgba(250, 249, 245, 0.68); font-size:11.5px; }
+.ed-menu-actions { display:flex; flex-wrap:wrap; gap:4px; padding-top:8px; border-top:1px solid rgba(250, 249, 245, 0.16); }
+.ed-menu-actions button { flex:1; text-align:center; font-family:var(--font-ui); white-space:nowrap; }

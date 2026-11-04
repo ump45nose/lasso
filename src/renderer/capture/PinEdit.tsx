@@ -29,7 +29,7 @@ export function PinEdit({editId, pinId}:{editId:string; pinId:string}) {
     void window.pin.source().then(payload => {
       if (!alive || payload.editId !== editId) return;
       setSource(canvasFromBGRA(payload.width, payload.height, payload.bgra));
-      setShot({presentation:'window', id:pinId, editId, width:payload.width, height:payload.height, pixelWidth:payload.width, pixelHeight:payload.height, candidates:[], phase:'result', selection:{x:0, y:0, width:payload.width, height:payload.height}, status:'', origin:'pin', pinId, annotations:payload.annotations, pixelScale:payload.pixelScale, saveFormat:payload.saveFormat});
+      setShot({presentation:'window', id:pinId, editId, width:payload.width, height:payload.height, pixelWidth:payload.width, pixelHeight:payload.height, candidates:[], phase:'result', selection:{x:0, y:0, width:payload.width, height:payload.height}, status:'', origin:'pin', pinId, annotations:payload.annotations, pixelScale:payload.pixelScale, saveFormat:payload.saveFormat, annotationMemory:payload.annotationMemory, editorShortcuts:payload.editorShortcuts});
     }).catch(e => { if (alive) setError((e as Error).message); });
     return () => { alive = false; };
   }, [editId, pinId]);

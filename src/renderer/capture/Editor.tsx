@@ -4,11 +4,12 @@ import { Fragment, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, 
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, ImagePlus, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Slash, Square, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
 import type { CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
-import type { ScreenshotOutputFormat } from '../../shared/screenshot-settings';
+import { screenshotDefaults, screenshotOutputFormats, type AnnotationStyleMemory, type ScreenshotExportContentMode, type ScreenshotOutputFormat } from '../../shared/screenshot-settings';
+import { defaultEditorShortcuts, type EditorShortcutMap } from '../../shared/shortcuts';
 import { pixelRect } from '../../shared/capture';
 import { Glide, Segmented, spring } from '../motion';
 import { AnnotationEditor, intersects, type Style, type Tool } from './annotations';
-import { toolForKey, toolKeys } from './editor-shortcuts';
+import { editorActionForEvent, toolKeys } from './editor-shortcuts';
 import './text-layer.css';
 import './editor.css';
 import { selectedOCRText } from './selected-text';
@@ -57,9 +58,14 @@ const ColorLoupe = forwardRef<PickerHandle, { read: (x: number, y: number) => Re
   return <aside className={'ed-loupe' + (locked ? ' locked' : '')} style={{ left: sample.left, top: sample.top }} aria-label="像素放大镜"><div className="ed-loupe-pixels"><canvas ref={pixels} width={120} height={120} /><i /></div><span className="ed-color-value"><b style={{ background: sample.color }} /><code className={format === 'rgb' ? 'ed-rgb' : undefined}>{format === 'hex' ? sample.color : sample.rgb.replaceAll(', ', ',')}</code></span><div className="ed-loupe-controls"><Segmented label="取色格式" value={format} onChange={setFormat} options={[['hex', 'HEX'], ['rgb', 'RGB']]} /><button className="ed-tool" aria-label="复制颜色" disabled={busy} onClick={() => void copy(format === 'hex' ? sample.color : sample.rgb).then(() => setCopied(true)).catch(e => fail((e as Error).message))}><Copy /></button></div><small role="status">{copied ? `已复制 ${format.toUpperCase()}` : `${sample.x}, ${sample.y} · ${locked ? '点击画面重选' : '点击固定取色'}`}</small></aside>;
 });
 export function Editor({state, source:given}:{state:ScreenshotState; source?:HTMLCanvasElement}){
+  const memory=useRef<AnnotationStyleMemory>(state.annotationMemory??screenshotDefaults().annotationMemory),memorySave=useRef(Promise.resolve());
+  const initialTool=Object.hasOwn(toolKeys,memory.current.lastTool)?memory.current.lastTool as Tool:'text-select';
+  const rememberedStyle=(next:Tool):Style=>({...memory.current.defaultStyle,...(memory.current.rememberToolStyles?memory.current.perTool[next]:{})});
+  const shortcuts:EditorShortcutMap={...defaultEditorShortcuts(),...state.editorShortcuts};
   const canvasRef=useRef<HTMLCanvasElement>(null),viewportRef=useRef<HTMLDivElement>(null),textRef=useRef<HTMLDivElement>(null),engine=useRef<AnnotationEditor|null>(null);
-  const [ready,setReady]=useState(false),[tool,setTool]=useState<Tool>('text-select'),[style,setStyle]=useState<Style>({color:colors[0],width:4,fontSize:32}),[revision,setRevision]=useState(0),[zoom,setZoom]=useState(1),[crop,setCrop]=useState<CaptureRect|null>(null),[preview,setPreview]=useState<CaptureRect|null>(null);
+  const [ready,setReady]=useState(false),[tool,setTool]=useState<Tool>(initialTool),[style,setStyle]=useState<Style>(()=>rememberedStyle(initialTool)),[revision,setRevision]=useState(0),[zoom,setZoom]=useState(1),[crop,setCrop]=useState<CaptureRect|null>(null),[preview,setPreview]=useState<CaptureRect|null>(null);
   const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<ScreenshotOutputFormat>(state.saveFormat??'png');
+  const [contentMode,setContentMode]=useState<ScreenshotExportContentMode|undefined>(),[selectedBackground,setSelectedBackground]=useState<boolean|null>(null);
   const [ocrMode,setOCRMode]=useState<OCRMode>('text'),[enhance,setEnhance]=useState(false);
   // Screen captures are edited in place, at their placement over the frozen screen; clipboard and pin images get a desk window with zoom.
   const region=state.editableRegion;
@@ -98,13 +104,14 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
         inputWidth=input.width;cropWidth=r.width;
       }
       if(canceled||!canvasRef.current)return;
-      editor=new AnnotationEditor(canvasRef.current,source,changed,invalidate,setPreview,region?.initialCrop);engine.current=editor;
+      editor=new AnnotationEditor(canvasRef.current,source,changed,invalidate,setPreview,region?.initialCrop,()=>setSelectedBackground(engine.current?.selectedTextBackground??null));engine.current=editor;
+      editor.setStyle(rememberedStyle(initialTool));editor.setTool(initialTool);
       if(state.checkpoint)await editor.restoreCheckpoint(state.checkpoint);
       else if(state.annotations)await editor.load(state.annotations);
       if(canceled)return;
       const area=viewportRef.current!;setZoom(region?region.display.bounds.width/inputWidth:place?place.width/cropWidth:Math.min(1,Math.max(.05,Math.min((area.clientWidth-120)/source.width,(area.clientHeight-200)/source.height))));
       if(state.checkpoint){
-        const saved=state.checkpoint;setZoom(saved.zoom);setFormat(saved.format);setOCRMode(saved.ocrMode);setEnhance(saved.enhance);setStyle({...saved.style});
+        const saved=state.checkpoint;setZoom(saved.zoom);setFormat(saved.format);setOCRMode(saved.ocrMode);setEnhance(saved.enhance);setStyle({...editor.style});
         requestAnimationFrame(()=>{if(!canceled&&viewportRef.current){viewportRef.current.scrollLeft=saved.scrollLeft;viewportRef.current.scrollTop=saved.scrollTop;}});
       }
       editor.canvas.renderAll();setReady(true);changed();
@@ -143,9 +150,15 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
     const update=()=>{const value=selectedOCRText(textRef.current);selection.current=value;setSelectedText(value);};
     document.addEventListener('selectionchange',update);return()=>document.removeEventListener('selectionchange',update);
   },[]);
-  const choose=(next:Tool)=>{if(exporting.current||!ready||(mutating.current&&!engine.current?.isEditingText))return;engine.current?.setTool(next);setTool(next);clearSelection();if(next==='picker')requestAnimationFrame(()=>engine.current?.prepareSample());};
+  const remember=(next:Tool,config:Style)=>{
+    const current=memory.current;
+    const value={...current,lastTool:next,...(current.rememberToolStyles?{perTool:{...current.perTool,[next]:{...config}}}:{defaultStyle:{...config}})};
+    memory.current=value;
+    memorySave.current=memorySave.current.then(()=>window.screenshot.saveAnnotationMemory(value)).catch(e=>{if(alive.current)setError((e as Error).message);});
+  };
+  const choose=(next:Tool)=>{if(exporting.current||!ready||(mutating.current&&!engine.current?.isEditingText))return;const config=rememberedStyle(next);engine.current?.setTool(next);engine.current?.setStyle(config);setTool(next);setStyle(config);remember(next,config);clearSelection();if(next==='picker')requestAnimationFrame(()=>engine.current?.prepareSample());};
   const changeOCR=(mode:OCRMode,small:boolean,force=false)=>{if(engine.current?.isEditingText)(engine.current.canvas.getActiveObject() as import('fabric').IText).exitEditing();invalidate();mutating.current=false;forceOCR.current=force;setOCRMode(mode);setEnhance(small);setRevision(version.current);if(force)setRetry(n=>n+1);};
-  const changeStyle=(next:Style)=>{setStyle(next);engine.current?.setStyle(next);};
+  const changeStyle=(patch:Partial<Style>)=>{const next={...style,...patch};setStyle(next);engine.current?.setStyle(next,Object.keys(patch) as (keyof Style)[]);setSelectedBackground(engine.current?.selectedTextBackground??null);remember(tool,next);};
   async function frame(includeAnnotations=false,encoded=false):Promise<CaptureFrame>{
     const editor=engine.current;if(!editor)throw Error('截图尚未加载');
     if(editor.isEditingText){(editor.canvas.getActiveObject() as import('fabric').IText).exitEditing();}
@@ -157,7 +170,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   }
   async function output(action:ExportAction){
     if(exporting.current)return;exporting.current=true;setBusy(true);setError('');
-    try{const result=await window.screenshot.export(await frame(action==='pin',action==='copy'),action,format);if(result.error)setError(result.error);}
+    try{const result=await window.screenshot.export(await frame(action==='pin',action==='copy'),action,format,contentMode);if(result.error)setError(result.error);}
     catch(e){setError((e as Error).message);}finally{exporting.current=false;if(alive.current)setBusy(false);}
   }
   useEffect(()=>{if(ready&&state.copyIntent&&state.copyIntent!==lastCopy.current){lastCopy.current=state.copyIntent;void output('copy');}},[ready,state.copyIntent]);
@@ -172,11 +185,12 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
       if(region&&mutating.current&&!keyGesture.current)return;
       if(keyGesture.current&&!e.key.startsWith('Arrow')){keyGesture.current=false;engine.current?.commitCrop();}
       const command=e.metaKey||e.ctrlKey;
-      const editor=engine.current,lower=e.key.toLowerCase();
-      if(command&&lower==='c'){e.preventDefault();if(exporting.current)return;if(editor?.copy())return;if(selection.current)void copyText();else void output('copy');}
+      const editor=engine.current,lower=e.key.toLowerCase(),action=editorActionForEvent(e,shortcuts);
+      if(region&&tool==='crop'&&lower==='r'&&!command&&!e.altKey&&!e.shiftKey){e.preventDefault();void window.screenshot.lastRegion().then(r=>{if(r)engine.current?.applyCrop(r);}).catch(e=>setError(e.message));}
+      else if(action){e.preventDefault();if(['copy','save','quick-save','pin'].includes(action)){if(!mutating.current)void output(action as ExportAction);}else choose(action as Tool);}
+      else if(command&&lower==='c'){e.preventDefault();if(exporting.current)return;if(editor?.copy())return;if(selection.current)void copyText();else void output('copy');}
       else if(command&&lower==='v'&&editor?.hasCopiedObjects){e.preventDefault();if(!exporting.current)void editor.paste().catch(e=>setError(e.message));}
       else if(command&&lower==='d'&&editor?.hasSelection){e.preventDefault();if(!exporting.current)void editor.duplicate().catch(e=>setError(e.message));}
-      else if(command&&e.key.toLowerCase()==='s'){e.preventDefault();void output('save');}
       else if(command&&e.key.toLowerCase()==='z'){e.preventDefault();if(!exporting.current)void engine.current?.restore(e.shiftKey?1:-1).catch(e=>setError(e.message));}
       else if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();if(tool==='select'&&!exporting.current)engine.current?.remove();}
       else if(tool==='select'&&editor?.hasSelection&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const n=e.shiftKey?10:1;if(!exporting.current)engine.current?.nudge(e.key==='ArrowLeft'?-n:e.key==='ArrowRight'?n:0,e.key==='ArrowUp'?-n:e.key==='ArrowDown'?n:0);}
@@ -187,16 +201,13 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
         const next=e.shiftKey||e.metaKey?resizeRegion(editor.crop,side,dx*(e.shiftKey?-1:1),dy*(e.shiftKey?-1:1),region.sourceSize,ratio):moveRegion(editor.crop,dx,dy,region.sourceSize);
         invalidate();editor.applyCrop(next,false);
       }
-      else if(e.key==='Enter'){e.preventDefault();if(!mutating.current)void output('copy');}
-      else if(region&&tool==='crop'&&lower==='r'&&!command){e.preventDefault();void window.screenshot.lastRegion().then(r=>{if(r)engine.current?.applyCrop(r);}).catch(e=>setError(e.message));}
       else if(e.key==='Escape'){e.preventDefault();if(!exporting.current)void window.screenshot.action('cancel');}
-      else if(!command&&!e.altKey&&!e.shiftKey){const next=toolForKey(e.key);if(next){e.preventDefault();choose(next);}}
     };
     const keyUp=(e:KeyboardEvent)=>{if(keyGesture.current&&e.key.startsWith('Arrow')){keyGesture.current=false;engine.current?.commitCrop();}if(e.key==='Shift')engine.current?.setShift(false);};
     const blur=()=>{if(keyGesture.current){keyGesture.current=false;engine.current?.commitCrop();}composing=false;engine.current?.setShift(false);};
     window.addEventListener('keydown',key);window.addEventListener('keyup',keyUp);window.addEventListener('blur',blur);window.addEventListener('compositionstart',compositionStart);window.addEventListener('compositionend',compositionEnd);
     return()=>{window.removeEventListener('keydown',key);window.removeEventListener('keyup',keyUp);window.removeEventListener('blur',blur);window.removeEventListener('compositionstart',compositionStart);window.removeEventListener('compositionend',compositionEnd);};
-  },[tool,format,ready,ratio]);
+  },[tool,format,contentMode,ready,ratio,state.editorShortcuts]);
   const editor=engine.current,activeCrop=preview||crop;
   useLayoutEffect(()=>{const el=dockRef.current;if(!el)return;const observer=new ResizeObserver(()=>setDockSize({width:el.offsetWidth,height:el.offsetHeight}));observer.observe(el);return()=>observer.disconnect();},[]);
   const sel=region&&activeCrop?regionPoints(activeCrop,region.display.bounds,region.sourceSize):place??state.selection!,W=window.innerWidth,H=window.innerHeight,GAP=10;
@@ -212,16 +223,22 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   useEffect(()=>{if(!armed)return;const timer=setTimeout(()=>setArmed(null),3000);return()=>clearTimeout(timer);},[armed]);
   const reselect=()=>{if(editor?.count&&armed!=='reselect'){setArmed('reselect');return;}void window.screenshot.action('reselect');};
   const startScroll=async()=>{if(!editor||exporting.current||mutating.current)return;if(editor.count&&!scrollArmed){setScrollArmed(true);return;}exporting.current=true;setBusy(true);try{const result=await window.screenshot.startScroll(editor.crop);if(result.error)setError(result.error);}catch(e){setError((e as Error).message);}finally{exporting.current=false;if(alive.current){setBusy(false);setScrollArmed(false);}}};
-  const panelKind=styled.includes(tool)?'style':['redact','mosaic','blur'].includes(tool)?'privacy':tool==='crop'?'crop':null;
+  const backgroundControl=<label className="ed-toggle"><span>文字背景衬底</span><button className="l-switch" role="switch" aria-label="文字背景衬底" aria-checked={selectedBackground??style.textBackground} disabled={busy} onClick={()=>changeStyle({textBackground:!(selectedBackground??style.textBackground)})}><span/></button></label>;
+  const panelKind=styled.includes(tool)?'style':selectedBackground!==null&&tool==='select'?'text-background':['redact','mosaic','blur'].includes(tool)?'privacy':tool==='crop'?'crop':null;
   const panel=panelKind==='style'?<>
-      <div className="ed-colors" role="radiogroup" aria-label="标注颜色">{colors.map(color=><button key={color} role="radio" aria-checked={style.color===color} aria-label={`颜色 ${color}`} style={{'--swatch':color} as React.CSSProperties} disabled={busy} onClick={()=>changeStyle({...style,color})}/>)}</div>
+      <div className="ed-colors" role="radiogroup" aria-label="标注颜色">{colors.map(color=><button key={color} role="radio" aria-checked={style.color===color} aria-label={`颜色 ${color}`} style={{'--swatch':color} as React.CSSProperties} disabled={busy} onClick={()=>changeStyle({color})}/>)}</div>
       <span className="ed-sep"/>
-      {tool==='text'||tool==='number'?<Segmented label="文字字号" value={String(style.fontSize)} onChange={size=>changeStyle({...style,fontSize:Number(size)})} options={sizes.map(n=>[String(n),String(n)] as const)}/>
+      {tool==='text'||tool==='number'?<Segmented label="文字字号" value={String(style.fontSize)} onChange={size=>changeStyle({fontSize:Number(size)})} options={sizes.map(n=>[String(n),String(n)] as const)}/>
         :<label className="ed-width" title="线条粗细"><span className="ed-width-dot"><i style={{width:Math.min(16,style.width+2),height:Math.min(16,style.width+2),background:style.color}}/></span>
-          <input type="range" min="1" max="24" value={style.width} aria-label="线条粗细" disabled={busy} onChange={e=>changeStyle({...style,width:Number(e.target.value)})}/><span className="mono">{style.width}</span></label>}
-    </>:panelKind==='privacy'?<span className="ed-hint">敏感内容请用「遮挡」，马赛克和模糊只是视觉效果</span>
+          <input type="range" min="1" max="24" value={style.width} aria-label="线条粗细" disabled={busy} onChange={e=>changeStyle({width:Number(e.target.value)})}/><span className="mono">{style.width}</span></label>}
+      {tool==='arrow'&&<><span className="ed-sep"/><Segmented label="箭头样式" value={style.arrowType} onChange={arrowType=>changeStyle({arrowType})} options={[["single","单向"],["double","双向"]]}/></>}
+      {tool==='text'&&<><span className="ed-sep"/>{backgroundControl}</>}
+    </>:panelKind==='text-background'?backgroundControl:panelKind==='privacy'?<>
+      {(tool==='mosaic'||tool==='blur')&&<label className="ed-width"><span>{tool==='mosaic'?'马赛克强度':'模糊强度'}</span><input type="range" min={tool==='mosaic'?4:1} max={tool==='mosaic'?48:32} value={tool==='mosaic'?style.mosaicSize:style.blurRadius} aria-label={tool==='mosaic'?'马赛克强度':'模糊强度'} disabled={busy} onChange={e=>changeStyle(tool==='mosaic'?{mosaicSize:Number(e.target.value)}:{blurRadius:Number(e.target.value)})}/><span className="mono">{tool==='mosaic'?style.mosaicSize:style.blurRadius}</span></label>}
+      <span className="ed-hint">敏感内容请用「遮挡」，马赛克和模糊只是视觉效果</span>
+    </>
     :panelKind==='crop'?<><span className="ed-hint">{region?'拖动移动 · 框外重画 · ⌥ 拖动移动':'拖动画面或边角裁剪'}</span><button className="ed-text" disabled={busy} onClick={()=>{if(region){setRatio(region.ratio);editor?.applyCrop(region.initialCrop);}else editor?.resetCrop();}}>{region?'恢复选区':'恢复裁剪'}</button></>:null;
-  const toolButton=(id:Tool,label:string,icon:ReactNode)=>{if(region&&id==='crop')label='选区 · 移动、调整范围';return <button key={id} className="ed-tool" data-tip={`${label} ${toolKeys[id]}${id==='select'?' · ⌘C / ⌘V / ⌘D':['rectangle','ellipse','line','arrow'].includes(id)?' · ⇧ 约束':''}`} aria-label={label} aria-keyshortcuts={toolKeys[id]} aria-pressed={tool===id} disabled={!ready||busy} onClick={()=>choose(id)}>{tool===id&&<Glide id="ed-tool" className="ed-tool-on"/>}{icon}</button>;};
+  const toolButton=(id:Tool,label:string,icon:ReactNode)=>{if(region&&id==='crop')label='选区 · 移动、调整范围';return <button key={id} className="ed-tool" data-tip={`${label}${shortcuts[id]?' '+shortcuts[id]:''}${id==='select'?' · ⌘C / ⌘V / ⌘D':['rectangle','ellipse','line','arrow'].includes(id)?' · ⇧ 约束':''}`} aria-label={label} aria-keyshortcuts={shortcuts[id]||undefined} aria-pressed={tool===id} disabled={!ready||busy} onClick={()=>choose(id)}>{tool===id&&<Glide id="ed-tool" className="ed-tool-on"/>}{icon}</button>;};
   const ocrChip=<motion.div className={'ed-chip'+(ocrOpen?' open':'')} initial={{opacity:0,y:4}} animate={{opacity:1,y:0}} transition={{...spring,delay:.04}}>
       <button className="ed-chip-main" aria-expanded={ocrOpen} aria-label="文字识别选项" disabled={!ready} onClick={()=>{setRegionPanelOpen(false);setFormatOpen(false);setOCROpen(o=>!o);}}><span className={'ed-dot '+ocrTone(ocrStatus)}/><ScanText/><span className="ed-chip-text" role="status">{ocrStatus}</span><ChevronDown className="ed-chev"/></button>
       <AnimatePresence initial={false}>{selectedText&&<motion.span key="text" className="ed-chip-actions" initial={{opacity:0,width:0}} animate={{opacity:1,width:'auto'}} exit={{opacity:0,width:0}} transition={spring}>
@@ -239,7 +256,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
       :<header className="ed-drag"><strong>图片编辑</strong><span className="mono">{crop?`${crop.width} × ${crop.height}`:'正在加载…'}</span></header>}
     <div className="ed-viewport" ref={viewportRef} inert={busy} onPointerDown={closeMenus}
       >
-      <div className="editor-stage ed-stage" style={{...(inline?{left:region?0:sel.x,top:region?0:sel.y}:{}),width:editor?editor.source.width*zoom:0,height:editor?editor.source.height*zoom:0}} onPointerMove={e=>{if(tool!=='picker'||busy)return;const r=e.currentTarget.getBoundingClientRect();picker.current?.move((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom,e.clientX,e.clientY);}} onPointerLeave={()=>picker.current?.leave()} onClick={e=>{if(tool!=='picker'||busy)return;const r=e.currentTarget.getBoundingClientRect();const color=picker.current?.lock((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom,e.clientX,e.clientY);if(color)changeStyle({...style,color});}}>
+      <div className="editor-stage ed-stage" style={{...(inline?{left:region?0:sel.x,top:region?0:sel.y}:{}),width:editor?editor.source.width*zoom:0,height:editor?editor.source.height*zoom:0}} onPointerMove={e=>{if(tool!=='picker'||busy)return;const r=e.currentTarget.getBoundingClientRect();picker.current?.move((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom,e.clientX,e.clientY);}} onPointerLeave={()=>picker.current?.leave()} onClick={e=>{if(tool!=='picker'||busy)return;const r=e.currentTarget.getBoundingClientRect();const color=picker.current?.lock((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom,e.clientX,e.clientY);if(color)changeStyle({color});}}>
         <div className="editor-pixels" style={{transform:`scale(${zoom},${region?region.display.bounds.height/region.sourceSize.height:zoom})`,...(region&&activeCrop?{clipPath:`inset(${activeCrop.y}px ${region.sourceSize.width-activeCrop.x-activeCrop.width}px ${region.sourceSize.height-activeCrop.y-activeCrop.height}px ${activeCrop.x}px)`}:{}),width:editor?.source.width,height:editor?.source.height}}>
           <canvas ref={canvasRef} aria-label="标注画布"/>
           <div ref={textRef} className={'editor-text-layer '+(tool==='text-select'?'enabled':'')} aria-label="识别文字"
@@ -264,7 +281,11 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
     <motion.div ref={dockRef} className={'ed-dock'+(up?' up':'')} style={dockStyle} initial={{opacity:0,y:up?6:-6}} animate={{opacity:1,y:0}} transition={spring}>
       {inline&&<div className="ed-meta"><div className="ed-size-host" ref={setControlsHost}/>{ocrChip}</div>}
       <AnimatePresence initial={false}>{panel&&<motion.div key={panelKind} className="ed-panel" initial={{opacity:0,y:up?4:-4,scale:.98}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,transition:{duration:.1}}} transition={spring}>{panel}</motion.div>}</AnimatePresence>
-      <AnimatePresence>{inline&&formatOpen&&<motion.div className="ed-menu ed-format-panel" role="menu" initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}>{(['png','jpeg'] as const).map(f=><button key={f} role="menuitemradio" aria-checked={format===f} onClick={()=>{setFormat(f);setFormatOpen(false);}}>{f.toUpperCase()}</button>)}</motion.div>}</AnimatePresence>
+      <AnimatePresence>{formatOpen&&<motion.div className="ed-menu ed-format-panel" role="menu" aria-label="保存与导出" inert={busy} initial={{opacity:0,y:up?4:-4}} animate={{opacity:1,y:0}} exit={{opacity:0,transition:{duration:.1}}} transition={spring}>
+        <span className="ed-menu-label">保存格式</span><Segmented label="保存格式" value={format} onChange={setFormat} options={screenshotOutputFormats.map(f=>[f,f.toUpperCase()] as const)}/>
+        <span className="ed-menu-label">导出内容</span><Segmented label="导出内容" value={contentMode??'settings'} onChange={mode=>setContentMode(mode==='settings'?undefined:mode)} options={[["settings","按截图设置"],["result","编辑结果"],["original","原始底图"],["display","显示效果"]]}/>
+        <div className="ed-menu-actions">{([['quick-save','快速保存'],['copy-file','复制文件'],['copy-path','复制路径']] as const).map(([action,label])=><button key={action} role="menuitem" onClick={()=>{setFormatOpen(false);void output(action);}}>{label}</button>)}</div>
+      </motion.div>}</AnimatePresence>
       <div className="ed-bars">
         <div className="ed-bar" role="toolbar" aria-label="标注工具">
           {tools.map((group,index)=><Fragment key={index}>{index>0&&<span className="ed-sep"/>}{group.map(([id,label,icon])=>toolButton(id,label,icon))}</Fragment>)}
@@ -278,10 +299,8 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
             :<button className="ed-tool" data-tip="重新截图" aria-label="重新截图" disabled={busy} onClick={reselect}><ScanLine/></button>)}
           {region&&<button className="ed-text" disabled={busy||!ready} onClick={()=>void startScroll()}><GalleryVerticalEnd/>{scrollArmed?'再点一次清除标注并开始':'长截图'}</button>}
           <span className="ed-split">
-            <button className="ed-tool" data-tip={`另存副本 ${format.toUpperCase()} ⌘S`} aria-label="保存" disabled={!ready||busy} onClick={()=>void output('save')}><Download/></button>
+            <button className="ed-tool" data-tip={`另存副本 ${format.toUpperCase()} ${shortcuts.save}`} aria-label="保存" disabled={!ready||busy} onClick={()=>void output('save')}><Download/></button>
             <button className="ed-caret" aria-label="保存格式" aria-expanded={formatOpen} disabled={busy} onClick={()=>{setRegionPanelOpen(false);setOCROpen(false);setFormatOpen(o=>!o);}}><ChevronDown/></button>
-            <AnimatePresence>{!inline&&formatOpen&&<motion.span className="ed-menu" role="menu" initial={{opacity:0,y:up?4:-4}} animate={{opacity:1,y:0}} exit={{opacity:0,transition:{duration:.1}}} transition={spring}>
-              {(['png','jpeg'] as const).map(f=><button key={f} role="menuitemradio" aria-checked={format===f} onClick={()=>{setFormat(f);setFormatOpen(false);}}>{f.toUpperCase()}</button>)}</motion.span>}</AnimatePresence>
           </span>
           <button className="ed-tool" data-tip={state.pinId?'更新贴图':'贴到桌面'} aria-label={state.pinId?'更新贴图':'贴图'} disabled={!ready||busy} onClick={()=>void output('pin')}><Pin/></button>
           <button className="ed-tool" data-tip="用于生图 · 使用处理后的图片" aria-label="用于生图" disabled={!ready||busy} onClick={()=>void output('media')}><ImagePlus/></button>
