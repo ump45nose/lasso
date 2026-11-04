@@ -31,6 +31,15 @@ interface StoredSession { version: 1; state: RecordingSessionState; frames: Stor
 export interface RecordingResult { state: RecordingSessionState | null; path?: string | null; error: string | null }
 const validBounds = (r?: CaptureRect): r is CaptureRect => !!r && [r.x, r.y, r.width, r.height].every(Number.isFinite) && r.width > 0 && r.height > 0;
 const dataURL = (bytes: Buffer) => `data:image/png;base64,${bytes.toString('base64')}`;
+const sourceFrameAt = (frames: StoredFrame[], timestamp: number, selected = 0) => {
+  while (selected < frames.length - 1 && frames[selected + 1].timestampMs <= timestamp) selected++;
+  return selected;
+};
+const immediatelyBefore = (timestamp: number) => {
+  const bits = Buffer.allocUnsafe(8); bits.writeDoubleLE(timestamp);
+  bits.writeBigUInt64LE(bits.readBigUInt64LE() - 1n);
+  return bits.readDoubleLE();
+};
 
 /** Owns disk-backed frames, media and paired capture/input lifetimes. */
 export class RecordingManager {
@@ -44,6 +53,8 @@ export class RecordingManager {
   private activeAt = 0;
   private elapsed = 0;
   private frameTask: Promise<void> | null = null;
+  private cameraTask: Promise<void> | null = null;
+  private mediaCancellation: Promise<void> | null = null;
   private interruption: Promise<void> | null = null;
   private releaseInput?: () => void;
   private capturePrepared = false;
@@ -110,8 +121,17 @@ export class RecordingManager {
     this.timer = setInterval(() => { void this.tick().catch(error => console.warn('[recording]', String(error))); }, 1000 / this.session!.state.settings.fps);
   }
   private unschedule() { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
+  private cancelCameraSwitch() {
+    if (!this.cameraTask || !this.mediaPrepared || !this.session) return;
+    this.mediaPrepared = false;
+    const id = this.session.state.id, frame = this.frameTask;
+    this.mediaCancellation = (async () => { await frame?.catch(() => {}); await this.media.cancel(id); })();
+    void this.mediaCancellation.catch(() => {});
+  }
   private async releaseResources(cancel = false) {
     let failure: unknown;
+    try { await this.mediaCancellation; } catch (error) { failure = error; }
+    this.mediaCancellation = null;
     if (this.mediaPrepared) {
       this.mediaPrepared = false;
       try {
@@ -180,7 +200,6 @@ export class RecordingManager {
     await writeFile(join(this.path(), file), png);
     session.frames.push({ file, timestampMs }); s.frameCount = session.frames.length;
     s.durationMs = Math.max(timestampMs, manifest.durationMs); s.trimEndMs = s.durationMs;
-    if (s.previewFrames.length < 8) s.previewFrames.push(dataURL(png));
     s.recentKeys = session.keys.filter(c => timestampMs >= c.timestampMs && timestampMs - c.timestampMs < 1200);
     s.recentClicks = session.clicks.filter(c => timestampMs >= c.timestampMs && timestampMs - c.timestampMs < 600);
     await this.persist(); this.emit();
@@ -194,13 +213,13 @@ export class RecordingManager {
     this.session.clicks.push({ ...cue, timestampMs: cue.timestampMs ?? this.duration() });
   }
   action(action: RecordingAction): Promise<RecordingResult> {
-    if (action?.type === 'cancel') this.invalidate();
+    if (action?.type === 'cancel') { this.invalidate(); this.cancelCameraSwitch(); }
     const generation = this.generation;
     const task = this.actions.then(async () => {
       await this.ready; await this.interruption;
       try {
         if (this.disposed) throw Error('录制器已关闭');
-        if (action?.type === 'start' || action?.type === 'resume') this.assertCurrent(generation);
+        if (action?.type === 'start' || action?.type === 'resume' || action?.type === 'camera') this.assertCurrent(generation);
         return await this.apply(action, generation);
       }
       catch (error) { return { state: this.state(), error: error instanceof Error ? error.message : String(error) }; }
@@ -208,7 +227,7 @@ export class RecordingManager {
     this.actions = task; return task;
   }
   private async apply(action: RecordingAction, generation: number): Promise<RecordingResult> {
-    if (!action || !['start', 'recover', 'discard-recovery', 'cancel', 'pause', 'resume', 'stop', 'trim', 'export'].includes(action.type)) throw Error('录制操作无效');
+    if (!action || !['start', 'recover', 'discard-recovery', 'cancel', 'pause', 'resume', 'stop', 'camera', 'trim', 'export'].includes(action.type)) throw Error('录制操作无效');
     let path: string | null | undefined;
     if (action.type === 'start') {
       if (this.session) throw Error('请先完成或丢弃当前录制');
@@ -222,7 +241,7 @@ export class RecordingManager {
         if (!validBounds(prepared.bounds)) throw Error('请先选择有效的录制范围');
         const state: RecordingSessionState = { id: `${Date.now()}-${randomUUID()}`, status: 'countdown', mode: action.mode,
           bounds: { ...prepared.bounds }, countdownLeft: settings.countdown, durationMs: 0, frameCount: 0, settings, trimStartMs: 0, trimEndMs: 0,
-          previewFrames: [], recentKeys: [], recentClicks: [], message: '' };
+          previewFrames: [], previewTimestampsMs: [], recentKeys: [], recentClicks: [], message: '' };
         this.session = { version: 1, state, frames: [], keys: [], clicks: [] }; this.elapsed = 0;
         await this.persist(); this.assertCurrent(generation); this.mediaPrepared = true;
         await this.media.prepare({ sessionId: state.id, directory: this.path(), displayId: prepared.displayId, systemAudio: settings.systemAudio, microphone: settings.microphone, camera: settings.cameraOverlay });
@@ -244,10 +263,11 @@ export class RecordingManager {
     } else if (action.type === 'recover') {
       if (this.session && this.session.state.status !== 'recoverable') throw Error('当前录制尚未结束');
       const id = action.sessionId ?? this.session?.state.id; if (!id) throw Error('没有可恢复的录制');
-      this.session = await this.readSession(id); const s = this.session.state, savedReview = s.status === 'review';
-      s.status = 'review'; s.durationMs = Math.max(s.durationMs, (this.session.frames.at(-1)?.timestampMs ?? 0) + (this.session.media ? 0 : 1000 / s.settings.fps));
-      s.trimEndMs = savedReview ? Math.min(s.trimEndMs || s.durationMs, s.durationMs) : s.durationMs; s.frameCount = this.session.frames.length; s.countdownLeft = 0;
-      s.message = '已恢复中断的录制'; this.elapsed = s.durationMs; await this.persist();
+      const recovered = await this.readSession(id), s = recovered.state, savedReview = s.status === 'review';
+      s.status = 'review'; s.durationMs = Math.max(s.durationMs, (recovered.frames.at(-1)?.timestampMs ?? 0) + (recovered.media ? 0 : 1000 / s.settings.fps));
+      s.trimEndMs = savedReview ? Math.min(s.trimEndMs || s.durationMs, s.durationMs) : s.durationMs; s.frameCount = recovered.frames.length; s.countdownLeft = 0;
+      Object.assign(s, await this.preview(recovered));
+      s.message = '已恢复中断的录制'; this.session = recovered; this.elapsed = s.durationMs; await this.persist();
     } else if (action.type === 'discard-recovery' || action.type === 'cancel') {
       const id = action.type === 'discard-recovery' ? action.sessionId ?? this.session?.state.id : this.session?.state.id;
       if (id && !/^[a-zA-Z0-9-]+$/.test(id)) throw Error('恢复会话无效');
@@ -282,20 +302,54 @@ export class RecordingManager {
             this.elapsed = this.duration(); s.status = 'paused';
             await this.releaseResources(); this.elapsed = this.session.media?.durationMs ?? this.duration();
             s.durationMs = this.elapsed; s.trimEndMs = this.elapsed; s.status = 'review'; s.countdownLeft = 0;
+            Object.assign(s, await this.preview(this.session));
           }
         } catch (error) { await this.interrupt(error); throw error; }
+      } else if (action.type === 'camera') {
+        if (typeof action.enabled !== 'boolean' || !['countdown', 'recording', 'paused'].includes(s.status)) throw Error('当前不能切换摄像头');
+        if (action.enabled !== s.settings.cameraOverlay) {
+          this.cameraTask = this.media.setCamera({ sessionId: s.id, enabled: action.enabled });
+          try {
+            await this.cameraTask; await this.frameTask; this.assertCurrent(generation);
+            if (!['countdown', 'recording', 'paused'].includes(s.status)) throw Error('当前不能切换摄像头');
+            // Commit at a frame boundary; device/permission waits leave screen and audio capture running.
+            this.frameTask = (async () => { s.settings.cameraOverlay = action.enabled; await this.persist(); })();
+            try { await this.frameTask; } finally { this.frameTask = null; }
+          } finally { this.cameraTask = null; }
+        }
       } else if (action.type === 'trim') {
         if (s.status !== 'review' || ![action.startMs, action.endMs].every(Number.isFinite) || action.startMs < 0 || action.endMs > s.durationMs || action.startMs >= action.endMs) throw Error('裁剪时间范围无效');
         if (!this.session.frames.length) throw Error('裁剪范围内没有画面');
-        s.trimStartMs = action.startMs; s.trimEndMs = action.endMs;
+        const preview = await this.preview(this.session, action.startMs, action.endMs);
+        Object.assign(s, preview); s.trimStartMs = action.startMs; s.trimEndMs = action.endMs;
       } else if (action.type === 'export') {
         if (s.status !== 'review' || !recordingFormats.includes(action.format) || !['save', 'quick-save', 'copy-file', 'pin'].includes(action.action)) throw Error('当前不能导出录制');
         if (!this.options.exportOutput) throw Error('录制输出尚未接入');
         path = await this.options.exportOutput(await this.output(action.format), action.action);
       }
-      await this.persist();
+      if (action.type !== 'camera') await this.persist();
     }
     this.emit(); return { state: this.state(), ...(path !== undefined ? { path } : {}), error: null };
+  }
+  private async preview(session: StoredSession, startMs = session.state.trimStartMs, endMs = session.state.trimEndMs) {
+    const { state: s, frames, keys, clicks } = session;
+    const previewFrames: string[] = [];
+    const previewTimestampsMs = frames.length ? [...new Set([...Array.from({ length: 8 }, (_, i) => s.durationMs * i / 7), startMs, endMs])].sort((a, b) => a - b) : [];
+    let source = -1, image: NativeImage | undefined;
+    for (const point of previewTimestampsMs) {
+      // The displayed end marks [start, end); render its left limit for both image and cues.
+      const timestamp = point === endMs && endMs > 0 ? immediatelyBefore(point) : point;
+      const selected = sourceFrameAt(frames, timestamp, Math.max(0, source));
+      if (selected !== source) {
+        source = selected; image = nativeImage.createFromBuffer(await readFile(join(this.path(s.id), frames[source].file)));
+        if (image.isEmpty()) throw Error('录制帧已损坏');
+      }
+      let composed = compositeRecordingFrame(image!, s.bounds, timestamp, s.settings, keys, clicks);
+      const { width, height } = composed.getSize(), scale = Math.min(1, 640 / Math.max(width, height));
+      if (scale < 1) composed = composed.resize({ width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)), quality: 'best' });
+      previewFrames.push(dataURL(composed.toPNG()));
+    }
+    return { previewFrames, previewTimestampsMs };
   }
   async output(format: RecordingFormat): Promise<RecordingOutput> {
     await this.ready;
@@ -307,8 +361,7 @@ export class RecordingManager {
     const images: NativeImage[] = [], delays: number[] = []; let source = -1, sourceImage: NativeImage | undefined;
     for (let i = 0; i < frameCount; i++) {
       const timestamp = s.trimStartMs + i * frameDelayMs;
-      let selected = Math.max(0, source);
-      while (selected < sourceFrames.length - 1 && sourceFrames[selected + 1].timestampMs <= timestamp) selected++;
+      const selected = sourceFrameAt(sourceFrames, timestamp, Math.max(0, source));
       if (selected !== source) {
         source = selected; sourceImage = nativeImage.createFromBuffer(await readFile(join(this.path(), sourceFrames[source].file)));
         if (sourceImage.isEmpty()) throw Error('录制帧已损坏');
@@ -321,7 +374,7 @@ export class RecordingManager {
     return { bytes, format, frames: images.map(image => dataURL(image.toPNG())), frameDelayMs, durationMs, ...images[0].getSize(), loop: true };
   }
   async dispose() {
-    this.disposed = true; this.invalidate(); await this.ready; await this.actions; await this.frameTask?.catch(() => {}); await this.interruption; this.unschedule();
+    this.disposed = true; this.invalidate(); this.cancelCameraSwitch(); await this.ready; await this.actions; await this.frameTask?.catch(() => {}); await this.interruption; this.unschedule();
     if (this.session && ['recording', 'paused', 'countdown'].includes(this.session.state.status)) await this.interrupt(Error('应用退出'));
     else await this.releaseResources();
   }

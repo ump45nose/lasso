@@ -28,7 +28,7 @@ export function loadNativeCapture(callback: (event: NativeCaptureEvent) => void)
 export function excludedCaptureWindows(native: NativeCapture): number[] {
   return BrowserWindow.getAllWindows().filter(window => {
     const url = window.webContents.getURL();
-    return !url.includes('surface=pin') && (url.includes('surface=action-bar') || url.includes('surface=screenshot') || !url.includes('surface='));
+    return !url.includes('surface=pin') && (url.includes('surface=action-bar') || url.includes('surface=screenshot') || url.includes('surface=recording') || !url.includes('surface='));
   }).map(window => native.windowID(window.getNativeWindowHandle()));
 }
 

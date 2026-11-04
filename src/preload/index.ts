@@ -2,6 +2,8 @@ import type { RecordingSessionState } from '../shared/recording';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopAPI, ShellState, AgentEvent, PaletteEvent } from '../shared/contracts';
 const api: DesktopAPI = {
+  recordingPanel:open=>ipcRenderer.invoke('shell:recording-panel',open),
+  onRecordingClose:callback=>{const listener=()=>callback();ipcRenderer.on('shell:recording-close-request',listener);return()=>ipcRenderer.removeListener('shell:recording-close-request',listener);},
   recordingState:()=>ipcRenderer.invoke('shell:recording-state'),
   recordingAction:action=>ipcRenderer.invoke('shell:recording-action',action),
   onRecording:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:RecordingSessionState|null)=>callback(state);ipcRenderer.on('shell:recording-changed',listener);return()=>ipcRenderer.removeListener('shell:recording-changed',listener);},

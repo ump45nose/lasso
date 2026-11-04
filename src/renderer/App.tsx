@@ -1,6 +1,6 @@
 import { CustomCapture } from './CustomCapture';
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { CircleAlert } from 'lucide-react';
+import { CircleAlert, Video } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { DesktopAPI, PaletteEvent, ShellState } from '../shared/contracts';
 import { useFonts } from './fonts';
@@ -45,7 +45,7 @@ export default function App() {
           : view === 'image' ? <ImageEntry key={state.inputImage!.id} image={state.inputImage!} presets={state.presets} initialPrompt={state.inputImagePrompt} />
           : view === 'chat' ? <Suspense fallback={null}><AgentChat taskId={state.activeTaskId!} /></Suspense>
           : view === 'error' ? <div className="l-empty"><CircleAlert size={22} className="l-danger" /><h2>网页还没打开。</h2><p>{state.pageError}</p><button className="l-btn primary" onClick={() => void window.desktop.act('reload')}>重新加载</button></div>
-          : view === 'launcher' ? <Launcher state={state} openPermission={() => { setSettingsTab('general'); void window.desktop.act('settings'); }} />
+          : view === 'launcher' ? <><Launcher state={state} openPermission={() => { setSettingsTab('general'); void window.desktop.act('settings'); }} /><div className="l-launch-foot"><button className="l-ghost" onClick={() => void window.desktop.recordingPanel(true)}><Video size={14} />屏幕录制</button></div></>
           : <div className="l-web-slot" aria-label={`${state.hostname} 网页区域`} />}
       </motion.div></AnimatePresence></main>
       <AnimatePresence initial={false}>{state.delivery && <motion.div key="delivery" className="l-foot-wrap" {...collapse}><DeliveryRow delivery={state.delivery} /></motion.div>}</AnimatePresence>

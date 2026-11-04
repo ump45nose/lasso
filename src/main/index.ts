@@ -1,4 +1,4 @@
-import type { RecordingAction, RecordingFormat } from '../shared/recording';
+import type { RecordingAction, RecordingFormat, RecordingSessionState } from '../shared/recording';
 import { RecordingManager } from './capture/recording';
 import { saveRecordingOutput } from './capture/output';
 import type { CustomCaptureRequest,RegionPreset } from '../shared/capture-regions';
@@ -59,6 +59,8 @@ let fontsDir: string;
 let images: Images;
 let screenshots: CaptureManager;
 let recording: RecordingManager | undefined;
+let recordingWindow: BrowserWindow | null = null;
+let recordingWindowReady: Promise<void> | null = null;
 let webdav: WebDavSyncService;
 let media: MediaWindow;
 let intelligence: IntelligenceService;
@@ -92,6 +94,7 @@ function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send('shell:changed', snapshot());
+  if (recordingWindow && !recordingWindow.isDestroyed()) recordingWindow.webContents.send('shell:changed', snapshot());
   actionBar?.update(state.presets, false, state.settings);
 }
 function layout() {
@@ -215,16 +218,50 @@ function selectTask(id: string) {
   closePalette(false); state.settingsOpen = false; state.inputOpen = false;
   tasks.select(id); layout(); showWindow(); publish();
 }
+function ownsRecordingPanel(event: IpcMainInvokeEvent) {
+  return !!recordingWindow && !recordingWindow.isDestroyed() && event.sender === recordingWindow.webContents && event.senderFrame === recordingWindow.webContents.mainFrame;
+}
+function layoutRecordingPanel(session: RecordingSessionState | null) {
+  if (!recordingWindow || recordingWindow.isDestroyed()) return;
+  const live = session && ['countdown', 'recording', 'paused'].includes(session.status);
+  const [width, height] = live ? [720, 200] : session?.status === 'review' ? [680, 680] : [520, 350];
+  const old = recordingWindow.getBounds(), area = screen.getDisplayMatching(old).workArea;
+  if(old.width!==width||old.height!==height)recordingWindow.setBounds(fitToWorkArea({ ...old, width, height }, area));
+}
+async function showRecordingPanel() {
+  if (quitting) return;
+  if (!recordingWindow || recordingWindow.isDestroyed()) {
+    const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+    const panel = new BrowserWindow({ ...fitToWorkArea({ x: area.x + area.width - 540, y: area.y + 28, width: 520, height: 350 }, area), frame: false, show: false, resizable: false, fullscreenable: false, alwaysOnTop: true, backgroundColor: '#FAF9F5', title: 'Lasso 屏幕录制', webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
+    recordingWindow = panel;
+    panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    panel.webContents.on('will-navigate', event => event.preventDefault());
+    panel.on('close', event => { if (!quitting) { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });
+    panel.on('closed', () => { if (recordingWindow === panel) { recordingWindow = null; recordingWindowReady = null; } });
+    panel.webContents.on('before-input-event', (event, input) => { if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });
+    recordingWindowReady = panel.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'recording' } }).catch(error => { panel.destroy(); throw error; });
+  }
+  await recordingWindowReady;
+  if (!recordingWindow || recordingWindow.isDestroyed() || quitting) return;
+  layoutRecordingPanel(recording?.state() ?? null); recordingWindow.showInactive();
+}
+async function closeRecordingPanel() {
+  const panel = recordingWindow;
+  const result = await actRecording({ type: 'cancel' });
+  if (!result.error && panel && !panel.isDestroyed()) panel.destroy();
+}
 async function actRecording(action:RecordingAction){
   if(!recording)return {state:null,error:'录制尚未就绪'};
   if(action?.type==='cancel')screenshots.cancelRecordingSelection();
+  if(action?.type==='start')recordingWindow?.hide();
   const result=await recording.action(action);
   if(result.error){state.notice=result.error;layout();publish();}
+  if(action?.type==='start' && !quitting)await showRecordingPanel();
   return result;
 }
 function recordingTrayItems():Electron.MenuItemConstructorOptions[]{
   const session=recording?.state(),run=(action:RecordingAction)=>()=>{void actRecording(action);};
-  if(!session)return (['rect','window','screen'] as const).map(mode=>({label:{rect:'区域录制…',window:'窗口录制…',screen:'全屏录制'}[mode],enabled:!!recording&&!screenshots?.active,click:run({type:'start',mode})}));
+  if(!session)return [{label:'打开录制面板…',click:()=>{void showRecordingPanel();}},...(['rect','window','screen'] as const).map(mode=>({label:{rect:'区域录制…',window:'窗口录制…',screen:'全屏录制'}[mode],enabled:!!recording&&!screenshots?.active,click:run({type:'start',mode})}))];
   if(session.status==='recoverable')return [{label:'恢复未完成录制',click:run({type:'recover'})},{label:'删除未完成录制',click:run({type:'discard-recovery'})}];
   if(session.status==='review')return [
     ...(['mp4','gif','webp'] as RecordingFormat[]).map(format=>({label:format.toUpperCase(),submenu:(['save','quick-save','copy-file'] as const).map(action=>({label:{save:'保存…','quick-save':'快速保存','copy-file':'复制文件'}[action],click:run({type:'export',format,action})}))})),
@@ -462,7 +499,8 @@ function removeImage(taskId?: string) {
 }
 
 function installIPC() {
-  const assertRecording=(event:IpcMainInvokeEvent)=>{if(!screenshots?.ownsRecording(event)&&!screenshots?.pins.owns(event))assertLocal(event);};
+  const assertRecording=(event:IpcMainInvokeEvent)=>{if(!ownsRecordingPanel(event)&&!screenshots?.ownsRecording(event)&&!screenshots?.pins.owns(event))assertLocal(event);};
+  ipcMain.handle('shell:recording-panel',async (event,open:boolean)=>{if(!ownsRecordingPanel(event))assertLocal(event);if(typeof open!=='boolean')throw Error('录制窗口操作无效');if(open)await showRecordingPanel();else await closeRecordingPanel();});
   ipcMain.handle('shell:recording-state',async event=>{assertRecording(event);await recording?.initialized();return recording?.state()??null;});
   ipcMain.handle('shell:recording-action',(event,action:RecordingAction)=>{assertRecording(event);return actRecording(action);});
   ipcMain.handle('shell:app-icon', (event, bundleId: string) => { assertLocal(event); return applicationIcon(bundleId); });
@@ -592,7 +630,7 @@ function installIPC() {
     return { error: null };
   });
   ipcMain.handle('shell:preset-run', (event, id: string, options?: LaunchOptions) => { assertLocal(event); return runPreset(id, options?.imageId ? null : lastSelection, options); });
-  ipcMain.handle('shell:state', event => { assertLocal(event); return snapshot(); });
+  ipcMain.handle('shell:state', event => { if(!ownsRecordingPanel(event))assertLocal(event); return snapshot(); });
   ipcMain.handle('shell:task-select', (event, id: string) => { assertLocal(event); selectTask(id); });
   ipcMain.handle('shell:task-close', (event, id: string) => { assertLocal(event); return tasks.close(id); });
   ipcMain.handle('shell:palette-open', (event, scope: PaletteScope) => { assertLocal(event); if (['all', 'tasks', 'new', 'images'].includes(scope)) return openPalette(scope); });
@@ -762,11 +800,13 @@ async function boot() {
     subscribeInput:handlers=>capture.subscribeInput(handlers),
     exportOutput:async(output,action)=>{
       if(action==='pin'){await screenshots.pins.putAnimated(output);return null;}
-      nativeDialogs++;try{return await saveRecordingOutput(output,action,state.settings.screenshot,win);}finally{nativeDialogs--;}
+      nativeDialogs++;try{return await saveRecordingOutput(output,action,state.settings.screenshot,recordingWindow??win);}finally{nativeDialogs--;}
     },
     onChange:session=>{
       if(win&&!win.isDestroyed())win.webContents.send('shell:recording-changed',session);
       screenshots.publishRecording(session);
+      if(recordingWindow&&!recordingWindow.isDestroyed()){recordingWindow.webContents.send('shell:recording-changed',session);layoutRecordingPanel(session);}
+      if(session&&!quitting&&!recordingWindow?.isVisible())void showRecordingPanel();
       const trayState=session?`${session.status}:${session.frameCount>0}`:'idle';
       if(trayState!==recordingTrayState){recordingTrayState=trayState;if(tray&&!quitting)updateTray();}
     }

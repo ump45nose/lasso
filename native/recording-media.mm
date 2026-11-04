@@ -7,10 +7,12 @@
 #include <cstring>
 #include <node_api.h>
 #include <vector>
+#include <mutex>
 
 // Sample delivery and interval boundaries share this queue. Device setup and
 // AVAssetExportSession waiting run on N-API workers, never on that queue.
 static dispatch_queue_t mediaQueue;
+static std::mutex deviceMutex;
 static double hostNow() {
   return CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock())) * 1000;
 }
@@ -52,6 +54,10 @@ static void wavHeader(FILE *f, uint32_t bytes, uint32_t rate, uint16_t channels)
 @property NSString *sessionId, *directory, *deviceError;
 @property SCStream *stream;
 @property AVCaptureSession *capture;
+@property AVCaptureDeviceInput *videoInput;
+@property AVCaptureVideoDataOutput *videoOutput;
+@property BOOL closing, cameraStarting;
+@property NSString *cameraError;
 @property NSMutableArray<NSMutableDictionary *> *intervals, *audio;
 @property NSMutableArray<NSDictionary *> *cameras;
 @property NSMutableDictionary<NSString *, NSMutableDictionary *> *currentAudio;
@@ -130,6 +136,8 @@ static RecordingSession *session;
     didOutputSampleBuffer:(CMSampleBufferRef)sample
            fromConnection:(AVCaptureConnection *)connection {
   @try {
+    if (self.closing || !self.capture) return;
+    if ([output isKindOfClass:AVCaptureVideoDataOutput.class] && output != self.videoOutput) return;
     CMClockRef clock = self.capture.synchronizationClock;
     check(clock != nil, @"采集设备时钟不可用");
     double host = CMTimeGetSeconds(CMSyncConvertTime(CMSampleBufferGetPresentationTimeStamp(sample), clock,
@@ -161,7 +169,10 @@ static RecordingSession *session;
     while (self.cameras.count > 1 && [self.cameras[0][@"host"] doubleValue] < host - 2000)
       [self.cameras removeObjectAtIndex:0];
   } @catch (NSException *e) {
-    self.deviceError = e.reason;
+    if (self.cameraStarting && [output isKindOfClass:AVCaptureVideoDataOutput.class])
+      self.cameraError = e.reason;
+    else self.deviceError = e.reason;
+    dispatch_semaphore_signal(self.readiness);
   }
 }
 - (void)stream:(SCStream *)stream didOutputSampleBuffer:(CMSampleBufferRef)sample ofType:(SCStreamOutputType)type {
@@ -251,20 +262,131 @@ static RecordingSession *session;
 }
 @end
 
-static void permission(AVMediaType type) {
+static void permission(AVMediaType type, RecordingSession *s = nil) {
   AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:type];
   if (status == AVAuthorizationStatusNotDetermined) {
-    dispatch_semaphore_t done = dispatch_semaphore_create(0);
-    __block BOOL granted = NO;
+    dispatch_semaphore_t done = s ? s.readiness : dispatch_semaphore_create(0);
+    __block BOOL granted = NO, completed = NO;
     [AVCaptureDevice requestAccessForMediaType:type
                              completionHandler:^(BOOL value) {
-                               granted = value;
+                               dispatch_sync(mediaQueue, ^{ granted = value; completed = YES; });
                                dispatch_semaphore_signal(done);
                              }];
-    dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+    while (true) {
+      __block BOOL finished, closing;
+      dispatch_sync(mediaQueue, ^{ finished = completed; closing = s.closing; });
+      check(!closing, @"录制媒体会话已失效");
+      if (finished) break;
+      dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+    }
     check(granted, @"录屏设备权限未获允许");
   } else
     check(status == AVAuthorizationStatusAuthorized, @"请在系统设置允许麦克风或摄像头权限");
+}
+// These helpers run under deviceMutex on a worker. Only delivery state uses mediaQueue.
+static void ensureCapture(RecordingSession *s) {
+  if (s.capture) return;
+  s.capture = [AVCaptureSession new];
+  __weak RecordingSession *weakSession = s;
+  s.runtimeObserver = [[NSNotificationCenter defaultCenter]
+      addObserverForName:AVCaptureSessionRuntimeErrorNotification object:s.capture queue:nil
+      usingBlock:^(NSNotification *notification) {
+        dispatch_async(mediaQueue, ^{
+          RecordingSession *strong = weakSession;
+          if (!strong || strong.closing) return;
+          NSString *error = [notification.userInfo[AVCaptureSessionErrorKey] localizedDescription] ?: @"录制设备已断开";
+          if (strong.cameraStarting) strong.cameraError = error;
+          else strong.deviceError = error;
+          dispatch_semaphore_signal(strong.readiness);
+        });
+      }];
+}
+static void addVideo(RecordingSession *s) {
+  ensureCapture(s);
+  AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
+  check(device != nil, @"未找到摄像头");
+  NSError *error = nil;
+  AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
+  AVCaptureVideoDataOutput *output = [AVCaptureVideoDataOutput new];
+  output.videoSettings = @{(id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA)};
+  output.alwaysDiscardsLateVideoFrames = YES;
+  [s.capture beginConfiguration];
+  @try {
+    check(input && [s.capture canAddInput:input], error.localizedDescription ?: @"无法连接摄像头");
+    [s.capture addInput:input];
+    s.videoInput = input;
+    check([s.capture canAddOutput:output], @"无法连接摄像头输出");
+    dispatch_sync(mediaQueue, ^{ s.videoOutput = output; });
+    [output setSampleBufferDelegate:s queue:mediaQueue];
+    [s.capture addOutput:output];
+  } @finally { [s.capture commitConfiguration]; }
+}
+static void removeVideo(RecordingSession *s) {
+  AVCaptureVideoDataOutput *output = s.videoOutput;
+  [output setSampleBufferDelegate:nil queue:nullptr];
+  dispatch_sync(mediaQueue, ^{
+    s.videoOutput = nil;
+    s.cameraEnabled = NO;
+    s.cameraReady = NO;
+    [s.cameras removeAllObjects];
+  });
+  [s.capture beginConfiguration];
+  if (output && [s.capture.outputs containsObject:output]) [s.capture removeOutput:output];
+  if (s.videoInput) [s.capture removeInput:s.videoInput];
+  s.videoInput = nil;
+  [s.capture commitConfiguration];
+  if (!s.capture.inputs.count) [s.capture stopRunning];
+  dispatch_sync(mediaQueue, ^{ s.cameraStarting = NO; s.cameraError = nil; });
+}
+static void waitReady(RecordingSession *s, BOOL system, BOOL microphone, BOOL camera) {
+  double deadline = hostNow() + 8000;
+  while (true) {
+    __block BOOL ready, closing;
+    __block NSString *error;
+    dispatch_sync(mediaQueue, ^{
+      ready = (!system || s.systemReady) && (!microphone || s.microphoneReady) && (!camera || s.cameraReady);
+      closing = s.closing;
+      error = s.deviceError ?: s.cameraError;
+    });
+    check(!closing, @"录制媒体会话已失效");
+    check(!error, error);
+    if (ready) return;
+    double remaining = deadline - hostNow();
+    check(remaining > 0, @"录制设备未能提供样本");
+    dispatch_semaphore_wait(s.readiness, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(remaining * NSEC_PER_MSEC)));
+  }
+}
+static void setCamera(NSDictionary *options) {
+  __block RecordingSession *s;
+  __block BOOL valid, enabled;
+  dispatch_sync(mediaQueue, ^{
+    s = session;
+    valid = s && [s.sessionId isEqual:options[@"sessionId"]] && !s.closing;
+    enabled = s.cameraEnabled;
+  });
+  check(valid, @"录制媒体会话已失效");
+  if (enabled == [options[@"enabled"] boolValue]) return;
+  if (![options[@"enabled"] boolValue]) { removeVideo(s); return; }
+  @try {
+    permission(AVMediaTypeVideo, s);
+    dispatch_sync(mediaQueue, ^{ valid = !s.closing; s.cameraStarting = valid; });
+    check(valid, @"录制媒体会话已失效");
+    addVideo(s);
+    dispatch_sync(mediaQueue, ^{ valid = !s.closing; });
+    check(valid, @"录制媒体会话已失效");
+    [s.capture startRunning];
+    check(s.capture.running, @"设备未能启动");
+    waitReady(s, NO, NO, YES);
+    dispatch_sync(mediaQueue, ^{
+      valid = !s.closing;
+      s.cameraEnabled = valid;
+      s.cameraStarting = NO;
+    });
+    check(valid, @"录制媒体会话已失效");
+  } @catch (NSException *e) {
+    removeVideo(s);
+    @throw e;
+  }
 }
 static void releaseDevices(RecordingSession *s) {
   if (s.runtimeObserver) {
@@ -279,9 +401,10 @@ static void releaseDevices(RecordingSession *s) {
     dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
     s.stream = nil;
   }
+  removeVideo(s);
   [s.capture stopRunning];
-  s.capture = nil;
   dispatch_sync(mediaQueue, ^{
+    s.capture = nil;
     [s.cameras removeAllObjects];
   });
 }
@@ -337,64 +460,25 @@ static void prepare(NSDictionary *options) {
       check(error == nil, error.localizedDescription);
     }
     if ([options[@"microphone"] boolValue] || s.cameraEnabled) {
-      s.capture = [AVCaptureSession new];
-      __weak RecordingSession *weakSession = s;
-      s.runtimeObserver = [[NSNotificationCenter defaultCenter]
-          addObserverForName:AVCaptureSessionRuntimeErrorNotification
-                      object:s.capture
-                       queue:nil
-                  usingBlock:^(NSNotification *notification) {
-                    dispatch_async(mediaQueue, ^{
-                      RecordingSession *strong = weakSession;
-                      if (strong)
-                        strong.deviceError =
-                            [notification.userInfo[AVCaptureSessionErrorKey] localizedDescription] ?: @"录制设备已断开";
-                    });
-                  }];
-      [s.capture beginConfiguration];
-      for (AVMediaType type in @[ AVMediaTypeAudio, AVMediaTypeVideo ]) {
-        BOOL video = [type isEqual:AVMediaTypeVideo];
-        if (video ? !s.cameraEnabled : ![options[@"microphone"] boolValue]) continue;
-        AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:type];
-        check(device != nil, video ? @"未找到摄像头" : @"未找到麦克风");
+      ensureCapture(s);
+      if ([options[@"microphone"] boolValue]) {
+        AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeAudio];
+        check(device != nil, @"未找到麦克风");
         NSError *error = nil;
         AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
         check(input && [s.capture canAddInput:input], error.localizedDescription ?: @"无法连接录制设备");
         [s.capture addInput:input];
-        if (video) {
-          AVCaptureVideoDataOutput *out = [AVCaptureVideoDataOutput new];
-          out.videoSettings = @{(id)kCVPixelBufferPixelFormatTypeKey : @(kCVPixelFormatType_32BGRA)};
-          out.alwaysDiscardsLateVideoFrames = YES;
-          [out setSampleBufferDelegate:s queue:mediaQueue];
-          check([s.capture canAddOutput:out], @"无法连接摄像头输出");
-          [s.capture addOutput:out];
-        } else {
-          AVCaptureAudioDataOutput *out = [AVCaptureAudioDataOutput new];
-          [out setSampleBufferDelegate:s queue:mediaQueue];
-          check([s.capture canAddOutput:out], @"无法连接麦克风输出");
-          [s.capture addOutput:out];
-        }
+        AVCaptureAudioDataOutput *out = [AVCaptureAudioDataOutput new];
+        [out setSampleBufferDelegate:s queue:mediaQueue];
+        check([s.capture canAddOutput:out], @"无法连接麦克风输出");
+        [s.capture addOutput:out];
       }
-      [s.capture commitConfiguration];
+      if (s.cameraEnabled) addVideo(s);
       [s.capture startRunning];
       check(s.capture.running, @"设备未能启动");
     }
     // Preparation includes the first sample, so countdown cannot race device startup.
-    double deadline = hostNow() + 8000;
-    while (true) {
-      __block BOOL ready;
-      __block NSString *error;
-      dispatch_sync(mediaQueue, ^{
-        ready = (![options[@"systemAudio"] boolValue] || s.systemReady) &&
-                (![options[@"microphone"] boolValue] || s.microphoneReady) && (!s.cameraEnabled || s.cameraReady);
-        error = s.deviceError;
-      });
-      check(!error, error);
-      if (ready) break;
-      double remaining = deadline - hostNow();
-      check(remaining > 0, @"录制设备未能提供样本");
-      dispatch_semaphore_wait(s.readiness, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(remaining * NSEC_PER_MSEC)));
-    }
+    waitReady(s, [options[@"systemAudio"] boolValue], [options[@"microphone"] boolValue], s.cameraEnabled);
     dispatch_sync(mediaQueue, ^{
       session = s;
     });
@@ -521,7 +605,11 @@ struct Job {
 static void run(napi_env, void *opaque) {
   @autoreleasepool {
     Job *j = (Job *)opaque;
+    std::unique_lock<std::mutex> deviceLock(deviceMutex, std::defer_lock);
+    if ([j->operation isEqual:@"prepare"] || [j->operation isEqual:@"setCamera"] ||
+        [j->operation isEqual:@"stop"] || [j->operation isEqual:@"cancel"]) deviceLock.lock();
     @try {
+      if ([j->operation isEqual:@"setCamera"]) { setCamera(j->options); return; }
       if ([j->operation isEqual:@"prepare"]) {
         prepare(j->options);
         return;
@@ -537,7 +625,7 @@ static void run(napi_env, void *opaque) {
           s = session;
           check(s && [s.sessionId isEqual:j->sessionId], @"录制媒体会话已失效");
           if (![j->operation isEqual:@"cancel"] && ![j->operation isEqual:@"stop"])
-            check(!s.deviceError, s.deviceError);
+            check(!s.closing && !s.deviceError, s.deviceError ?: @"录制媒体会话已失效");
           double host = hostNow();
           if ([j->operation isEqual:@"begin"]) {
             check(!s.begun, @"录制已经开始");
@@ -571,6 +659,8 @@ static void run(napi_env, void *opaque) {
               double timestamp = [j->options[@"hostTimeMs"] doubleValue];
               for (NSDictionary *c in s.cameras)
                 if ([c[@"host"] doubleValue] <= timestamp) camera = c;
+              // A screen frame captured before hot-enable has no camera frame yet.
+              if (!camera && s.cameras.count && timestamp < [s.cameras.firstObject[@"host"] doubleValue]) return;
               check(camera != nil, @"摄像头尚未提供同步画面");
               size_t cw = [camera[@"width"] unsignedLongValue], ch = [camera[@"height"] unsignedLongValue];
               size_t dw = MAX(1, MIN(width / 4, height / 3 * cw / ch)), dh = MAX(1, dw * ch / cw),
@@ -661,10 +751,19 @@ static napi_value invoke(napi_env env, napi_callback_info info) {
     }
     j->options = options;
     j->sessionId = options[@"sessionId"];
-  } else if ([j->operation isEqual:@"prepare"] || [j->operation isEqual:@"muxMp4"])
+  } else if ([j->operation isEqual:@"prepare"] || [j->operation isEqual:@"muxMp4"] || [j->operation isEqual:@"setCamera"])
     j->options = readJSON(env, arg);
   else
     j->sessionId = stringValue(env, arg);
+  if ([j->operation isEqual:@"stop"] || [j->operation isEqual:@"cancel"]) {
+    dispatch_sync(mediaQueue, ^{
+      if ([session.sessionId isEqual:j->sessionId]) {
+        session.closing = YES;
+        [session closeInterval:hostNow()];
+        dispatch_semaphore_signal(session.readiness);
+      }
+    });
+  }
   napi_value promise;
   napi_create_promise(env, &j->deferred, &promise);
   napi_create_async_work(env, nullptr, jsString(env, j->operation), run, complete, j, &j->work);
@@ -677,6 +776,7 @@ static napi_value now(napi_env env, napi_callback_info) {
   return value;
 }
 static void cleanup(void *) {
+  std::lock_guard<std::mutex> deviceLock(deviceMutex);
   RecordingSession *s = session;
   if (s) {
     releaseDevices(s);
@@ -693,7 +793,7 @@ static void cleanup(void *) {
 static napi_value init(napi_env env, napi_value exports) {
   mediaQueue = dispatch_queue_create("local.lasso.recording-media", DISPATCH_QUEUE_SERIAL);
   for (const char *method :
-       {"prepare", "begin", "pause", "resume", "composeCamera", "snapshot", "stop", "cancel", "muxMp4"}) {
+       {"prepare", "setCamera", "begin", "pause", "resume", "composeCamera", "snapshot", "stop", "cancel", "muxMp4"}) {
     napi_value function;
     napi_create_function(env, method, NAPI_AUTO_LENGTH, invoke, (void *)method, &function);
     napi_set_named_property(env, exports, method, function);

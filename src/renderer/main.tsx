@@ -9,6 +9,7 @@ import './styles/app.css';
 // A helper surface never imports the settings, chat, media or annotation modules.
 const loaders = {
   'quick-image': () => import('./media/QuickImage').then(m => ({ default: m.QuickImage })),
+  recording: () => import('./RecordingPanel').then(m => ({ default: m.RecordingPanel })),
   screenshot: () => import('./capture/Screenshot').then(m => ({ default: m.Screenshot })),
   'action-bar': () => import('./ActionBar').then(m => ({ default: m.ActionBar })),
   pin: () => import('./capture/Pinned').then(m => ({ default: m.Pinned })),

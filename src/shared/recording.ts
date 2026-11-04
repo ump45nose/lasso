@@ -23,12 +23,13 @@ export interface RecordingMediaManifest {
 export interface RecordingSessionState {
   id: string; status: 'countdown' | 'recording' | 'paused' | 'review' | 'recoverable'; mode: RecordingMode;
   bounds: CaptureRect; countdownLeft: number; durationMs: number; frameCount: number; settings: RecordingSettings;
-  trimStartMs: number; trimEndMs: number; previewFrames: string[]; recentKeys: KeystrokeCue[]; recentClicks: MouseClickCue[]; message: string;
+  trimStartMs: number; trimEndMs: number; previewFrames: string[]; previewTimestampsMs?: number[]; recentKeys: KeystrokeCue[]; recentClicks: MouseClickCue[]; message: string;
 }
 export type RecordingExportAction = 'save' | 'quick-save' | 'copy-file' | 'pin';
 export type RecordingAction =
   | { type: 'start'; mode: RecordingMode; bounds?: CaptureRect }
   | { type: 'pause' | 'resume' | 'stop' | 'cancel' }
+  | { type: 'camera'; enabled: boolean }
   | { type: 'trim'; startMs: number; endMs: number }
   | { type: 'export'; format: RecordingFormat; action: RecordingExportAction }
   | { type: 'recover' | 'discard-recovery'; sessionId?: string };

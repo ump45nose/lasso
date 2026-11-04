@@ -45,3 +45,43 @@
   .l-workspace-limits label { font-size: 12px; }
   .l-history-preview { width: 78px; height: 62px; }
 }
+.l-record-panel { min-height: 100vh; background: var(--bg); display: flex; flex-direction: column; }
+.l-record-head { display: flex; align-items: center; gap: 8px; padding: 12px 18px; border-bottom: 0.5px solid var(--line); -webkit-app-region: drag; }
+.l-record-head h1 { flex: 1; min-width: 0; margin: 0; font-family: var(--font-display); font-size: 18px; font-weight: 400; }
+.l-record-head button { -webkit-app-region: no-drag; }
+.l-record-start { display: flex; align-items: center; flex-direction: column; gap: 16px; padding: 30px 22px; }
+.l-record-start h2 { margin: 0; font-family: var(--font-display); font-size: 27px; font-weight: 400; }
+.l-record-start p { margin: 0; color: var(--ink-3); }
+.l-record-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.l-record-control { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; background: var(--ink); color: var(--on-ink); }
+.l-record-control strong { font-size: 17px; font-weight: 400; }
+.l-record-readout { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.l-record-readout > .mono { font-size: 12.5px; white-space: nowrap; }
+.l-record-control .l-record-actions { gap: 12px; }
+.l-record-control .l-btn { flex-shrink: 0; border-color: var(--ink-3); background: transparent; color: var(--on-ink); }
+.l-record-control .l-btn:hover { background: var(--clay); color: var(--on-ink); border-color: var(--clay); }
+.l-record-badge { display: inline-flex; align-items: center; gap: 6px; color: var(--clay); }
+.l-record-cues { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 14px 18px; font-size: 12.5px; color: var(--ink-3); }
+.l-record-cues > span { display: flex; gap: 6px; align-items: center; min-width: 0; max-width: 100%; }
+.l-record-cues kbd { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: var(--clay-wash); color: var(--clay-ink); border: 0.5px solid var(--clay-line); border-radius: 5px; padding: 2px 6px; font-family: var(--font-mono); }
+.l-record-cues .clicking { color: var(--clay-ink); }
+.l-record-cues .clicking svg { border-radius: 50%; box-shadow: 0 0 0 5px var(--clay-halo); }
+.l-record-camera[aria-pressed=true] { background: var(--clay-wash); color: var(--clay-ink); border-color: var(--clay-line); }
+.l-record-review { padding: 16px 20px; display: flex; flex-direction: column; gap: 10px; }
+.l-record-preview { height: 200px; background: var(--sunken); border: 0.5px solid var(--line); border-radius: 9px; overflow: hidden; display: grid; place-items: center; position: relative; }
+.l-record-preview > img { width: 100%; height: 100%; object-fit: contain; min-height: 0; }
+.l-record-preview-caption { position: absolute; bottom: 9px; left: 10px; padding: 3px 7px; background: var(--ink); color: var(--on-ink); border-radius: 5px; font-size: 11px; }
+.l-record-playback, .l-record-output { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.l-record-playback input { flex: 1; min-width: 40px; }
+.l-record-panel input[type=range] { accent-color: var(--clay); }
+.l-record-playback output, .l-record-output > span { font-size: 11px; white-space: nowrap; color: var(--ink-3); }
+.l-record-timeline { display: flex; gap: 4px; height: 48px; }
+.l-record-timeline button { flex: 1; min-width: 0; background: var(--sunken); padding: 0; border: 2px solid transparent; border-radius: 5px; overflow: hidden; }
+.l-record-timeline button[aria-pressed=true], .l-record-timeline button:hover { border-color: var(--clay); }
+.l-record-timeline img { width: 100%; height: 100%; object-fit: cover; }
+.l-record-trim { display: flex; align-items: end; gap: 14px; }
+.l-record-trim label { flex: 1; display: flex; flex-wrap: wrap; justify-content: space-between; font-size: 12.5px; }
+.l-record-trim input { width: 100%; }
+.l-record-notice { padding: 0 20px 16px; margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.l-record-review .l-field-help { margin: 0; }
+#screenshot-recording { scroll-margin-top: 12px; }

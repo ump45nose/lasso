@@ -126,6 +126,8 @@ export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' |
 export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
+  recordingPanel(open: boolean): Promise<void>;
+  onRecordingClose(callback: () => void): () => void;
   recordingState(): Promise<RecordingSessionState | null>;
   recordingAction(action: RecordingAction): Promise<{ state: RecordingSessionState | null; path?: string | null; error: string | null }>;
   onRecording(callback: (state: RecordingSessionState | null) => void): () => void;

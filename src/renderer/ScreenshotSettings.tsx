@@ -6,6 +6,7 @@ import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings } 
 import { captureModeLabels } from '../shared/capture';
 import { validateVisionConfig, type VisionServiceConfig } from '../shared/intelligence';
 import { Segmented, collapse } from './motion';
+import type { RecordingSettings } from '../shared/recording';
 import { CaptureWorkspaceSettings } from './CaptureWorkspaceSettings';
 import './styles/screenshot-settings.css';
 const labels = { ...captureModeLabels, scroll: '滚动截图' };
@@ -76,6 +77,17 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
     <div className="l-set-body l-shot-settings">
       <CaptureWorkspaceSettings history={draft.history} changeHistory={history => patch({ history })} workspace={settings.pinWorkspace} />
       <VisionSettings />
+      <section id="screenshot-recording" className="l-set-section l-gap">
+        <div className="l-set-row-head"><h3>屏幕录制与教学演示</h3><button className="l-text-btn" onClick={() => void window.desktop.recordingPanel(true)}>打开录制面板</button></div>
+        <ul className="l-group">
+          <li className="l-shot-option"><span>帧率</span><Segmented label="录制帧率" value={String(draft.recording.fps)} onChange={fps => patch({ recording: { ...draft.recording, fps: Number(fps) as RecordingSettings['fps'] } })} options={['15', '24', '30', '60'].map(fps => [fps, fps] as const)} /></li>
+          <li className="l-shot-option"><span>画质</span><Segmented label="录制画质" value={draft.recording.quality} onChange={quality => patch({ recording: { ...draft.recording, quality } })} options={ [['low', '低'], ['medium', '中'], ['high', '高']] } /></li>
+          <li className="l-shot-option"><span>默认格式</span><Segmented label="录制默认格式" value={draft.recording.format} onChange={format => patch({ recording: { ...draft.recording, format } })} options={ [['gif', 'GIF'], ['webp', 'WEBP'], ['mp4', 'MP4']] } /></li>
+          <li className="l-shot-option"><span>倒计时</span><Segmented label="录制倒计时" value={String(draft.recording.countdown)} onChange={countdown => patch({ recording: { ...draft.recording, countdown: Number(countdown) as RecordingSettings['countdown'] } })} options={ [['0', '无'], ['3', '3 秒'], ['5', '5 秒']] } /></li>
+          {([['systemAudio', '系统声音'], ['microphone', '麦克风'], ['showKeystrokes', '显示按键提示'], ['showMouseClicks', '显示鼠标点击'], ['cameraOverlay', '摄像头画中画']] as const).map(([key, label]) => <li key={key}><span>{label}</span><Switch label={key === 'systemAudio' || key === 'microphone' ? `录制${label}` : label} value={draft.recording[key]} change={() => patch({ recording: { ...draft.recording, [key]: !draft.recording[key] } })} /></li>)}
+          <li className="l-shot-option"><span>摄像头位置</span><Segmented label="摄像头位置" value={draft.recording.cameraPosition} onChange={cameraPosition => patch({ recording: { ...draft.recording, cameraPosition } })} options={ [['bottom-right', '右下'], ['bottom-left', '左下'], ['top-right', '右上'], ['top-left', '左上']] } /></li>
+        </ul><p className="l-field-help">保存后用于下一次录制。MP4 可包含系统声音和麦克风；GIF、WEBP 与动态贴图无声音。</p>
+      </section>
       <div className="l-set-row-head"><h3>截图完成后</h3><button className="l-text-btn" onClick={shortcuts}>配置快捷键</button></div>
       <ul className="l-group">{screenshotKinds.map(kind => <li key={kind} className="l-shot-policy"><span>{labels[kind]}</span><div className="l-shot-actions">{([['show', '显示'], ['copy', '复制'], ['save', '保存']] as const).map(([key, label]) => <label key={key}><span>{label}</span><Switch label={`${labels[kind]}后${label}`} value={draft.actions[kind][key]} change={() => action(kind, key)} /></label>)}</div></li>)}</ul>
       <p className="l-field-help">复制和保存输出截图完成时的图片。后续标注通过编辑器手动输出。</p>
