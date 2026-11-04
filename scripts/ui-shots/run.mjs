@@ -58,6 +58,27 @@ try {
   // the same userData path, so the disabled-selection settings are read on boot.
   writeFileSync(bootstrap, `const electron = require('electron');
 const { app, dialog, session } = electron;
+// Install before product modules can create sessions or warm a remote page.
+const networkSessions = new WeakSet();
+const networkAudit = { scope:'Electron session.webRequest only', guardedSessions:0, blockedRequests:0, blockedByProtocol:{http:0,https:0,ws:0,wss:0,ftp:0}, blockedOrigins:{}, allowedLocalByProtocol:{} };
+function isolateNetwork(currentSession) {
+  if (networkSessions.has(currentSession)) return;
+  currentSession.webRequest.onBeforeRequest({urls:['<all_urls>']}, (request, callback) => {
+    const protocol = request.url.split(':',1)[0].toLowerCase();
+    if (Object.hasOwn(networkAudit.blockedByProtocol,protocol)) {
+      networkAudit.blockedRequests++; networkAudit.blockedByProtocol[protocol]++;
+      const origin = new URL(request.url).origin;
+      networkAudit.blockedOrigins[origin] = (networkAudit.blockedOrigins[origin] || 0) + 1;
+      callback({cancel:true});
+    } else {
+      networkAudit.allowedLocalByProtocol[protocol] = (networkAudit.allowedLocalByProtocol[protocol] || 0) + 1;
+      callback({cancel:false});
+    }
+  });
+  networkSessions.add(currentSession); networkAudit.guardedSessions++;
+}
+global.uiShotsNetwork = { audit:networkAudit, hasSession:currentSession=>networkSessions.has(currentSession) };
+app.on('session-created', isolateNetwork);
 // Replace every native clipboard entry point before loading product modules.
 // Calls are recorded by name only; the user's clipboard is never inspected.
 let items = [];
@@ -91,7 +112,10 @@ const memoryElectron = Object.create(electron, {clipboard:{value:memoryClipboard
 const Module = require('node:module'), originalLoad = Module._load;
 Module._load = function(request, ...args) { return request==='electron' ? memoryElectron : originalLoad.call(this,request,...args); };
 global.uiShotsClipboard = {calls,systemReads:0,systemWrites:0};
-app.whenReady().then(() => session.defaultSession.registerPreloadScript({type:'frame',id:'ui-shots-memory-clipboard',filePath:${JSON.stringify(join(fixtures, 'preload.cjs'))}}));
+app.whenReady().then(() => {
+  isolateNetwork(session.defaultSession);
+  session.defaultSession.registerPreloadScript({type:'frame',id:'ui-shots-memory-clipboard',filePath:${JSON.stringify(join(fixtures, 'preload.cjs'))}});
+});
 dialog.showErrorBox = (title, message) => console.error(title, message);
 const { mkdirSync } = require('node:fs');
 const paths = ${JSON.stringify(runtimePaths)};
@@ -120,6 +144,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     }
     if (app.getPath('userData') !== path.join(runtime, 'lasso-ui-shots')) throw Error('Unexpected fixture profile path');
     if (JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8')).selectionEnabled !== false) throw Error('Fixture selection hooks were not disabled before boot');
+    if (!global.uiShotsNetwork?.hasSession(process.mainModule.require('electron').session.defaultSession) || BrowserWindow.getAllWindows().some(win=>!global.uiShotsNetwork.hasSession(win.webContents.session))) throw Error('Fixture network session isolation missing');
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     const find = surface => BrowserWindow.getAllWindows().find(w => surface ? w.webContents.getURL().includes('surface=' + surface) : !w.webContents.getURL().includes('surface='));
     for (let i = 0; i < 40 && !(find() && find('action-bar')); i++) await wait(250);
@@ -629,6 +654,149 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     return names;
   }));
 
+  // S4 uses the production desktop preload against a controlled recording source.
+  // Every action is consumed here; native desktop/media acquisition is never started.
+  saved.push(...await main(async ({ nativeImage }) => {
+    const { find, page, wait, ready, save, scrollTo, settingsTab, ipcMain, fs, path, app, out } = global.uiShots, names = [], checks = [], receipts = [], m = find();
+    const expect = (ok, text) => { if (!ok) throw Error(text); };
+    const makeFrame = index => {
+      const width = 640, height = 360, pixels = Buffer.alloc(width * height * 4);
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        const rgb = y < 44 ? [20,20,19] : x > 42 + index * 120 && x < 180 + index * 120 && y > 90 && y < 250 ? [189,118,88] : y > 286 && x > 42 && x < 470 ? [120,128,101] : [250,249,245], offset = (y * width + x) * 4;
+        pixels[offset] = rgb[2]; pixels[offset + 1] = rgb[1]; pixels[offset + 2] = rgb[0]; pixels[offset + 3] = 255;
+      }
+      return nativeImage.createFromBitmap(pixels, { width, height }).toDataURL();
+    };
+    const frames = [0, 1, 2].map(makeFrame), points = [0, 1770, 3540, 5310, 7080, 8850, 10620, 12399];
+    const frameAt = timestamp => makeFrame(timestamp / 12400 * 3.5);
+    const previewState = (start=0,end=12400) => {
+      const timestamps = [...new Set([...points,...(start ? [start,end] : [])])].sort((a,b)=>a-b);
+      return {previewFrames:timestamps.map(frameAt),previewTimestampsMs:timestamps};
+    };
+    global.uiShots.stage8Frames = frames;
+    const originalScreenshot = await page(m, 'window.desktop.getState().then(s=>s.settings.screenshot)'), preferences = originalScreenshot.recording;
+    const channels = ['shell:recording-state', 'shell:recording-action'], originals = channels.map(channel => ipcMain._invokeHandlers.get(channel));
+    let state = null, failure = false, cameraFailure = false, holdCamera = false, releaseCamera, w;
+    const session = status => ({ id:'stage-8-recording',status,mode:'rect',bounds:{x:0,y:0,width:640,height:360},countdownLeft:3,durationMs:12400,frameCount:372,settings:{...preferences,showKeystrokes:true,showMouseClicks:true,cameraOverlay:true},trimStartMs:0,trimEndMs:12400,...previewState(),recentKeys:[{key:'4',modifiers:['Meta','Shift'],timestampMs:12400}],recentClicks:[{x:300,y:150,button:'left',timestampMs:12400}],message:'' });
+    const publish = value => { state = value; if (w && !w.isDestroyed()) w.webContents.send('shell:recording-changed', state); };
+    ipcMain.removeHandler(channels[0]); ipcMain.handle(channels[0], () => state);
+    ipcMain.removeHandler(channels[1]); ipcMain.handle(channels[1], async (_event, action) => {
+      const receipt = {...structuredClone(action),before:{status:state?.status,cameraOverlay:state?.settings.cameraOverlay}}; receipts.push(receipt);
+      const respond = result => { receipt.response={status:result.state?.status,cameraOverlay:result.state?.settings.cameraOverlay,trimStartMs:result.state?.trimStartMs,trimEndMs:result.state?.trimEndMs,previewTimestampsMs:result.state?.previewTimestampsMs,error:result.error,path:result.path};return result; };
+      if (action.type === 'start') publish({...session('countdown'),mode:action.mode,durationMs:0,frameCount:0,trimEndMs:0,previewFrames:[],previewTimestampsMs:[],recentKeys:[],recentClicks:[]});
+      else if (action.type === 'recover') publish({...state,status:'review'});
+      else if (['discard-recovery','cancel'].includes(action.type)) publish(null);
+      else if (action.type === 'pause') publish({...state,status:'paused'});
+      else if (action.type === 'resume') publish({...state,status:'recording'});
+      else if (action.type === 'stop') publish({...state,status:'review'});
+      else if (action.type === 'camera') {
+        expect(state&&['countdown','recording','paused'].includes(state.status)&&typeof action.enabled==='boolean','Invalid camera fixture action');
+        if (holdCamera) await new Promise(resolve=>{releaseCamera=resolve;});
+        if (cameraFailure) return respond({state,error:'摄像头切换失败：fixture 设备不可用'});
+        publish({...state,settings:{...state.settings,cameraOverlay:action.enabled}});
+      }
+      else if (action.type === 'trim') publish({...state,trimStartMs:action.startMs,trimEndMs:action.endMs,...previewState(action.startMs,action.endMs)});
+      else if (action.type === 'export') { if (failure) return respond({state,error:'录制导出失败：fixture 编码器不可用'}); publish({...state,message:'录制输出完成'});return respond({state,path:action.action==='pin'?null:path.join(out,'fixture-recording.'+action.format),error:null}); }
+      else throw Error('Unhandled recording fixture action: '+action.type);
+      return respond({state,error:null});
+    });
+    const click = async (win, label) => { await page(win, `(()=>{const b=[...document.querySelectorAll('button')].find(b=>b.getAttribute('aria-label')===${JSON.stringify(label)}||b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw Error('Unavailable recording control: '+${JSON.stringify(label)});b.click();})()`); await wait(180); };
+    const choose = async (win, label, text) => { await page(win, `(()=>{const b=[...document.querySelectorAll('[aria-label="${label}"] button')].find(b=>b.textContent===${JSON.stringify(text)});if(!b||b.disabled)throw Error('Unavailable recording choice');b.click();})()`); await wait(120);expect(await page(win,`document.querySelector('[aria-label="${label}"] [aria-checked="true"]')?.textContent===${JSON.stringify(text)}`),'Recording choice did not select: '+label+' '+text); };
+    const shot = async name => { await wait(420); expect(await page(w, `document.documentElement.scrollWidth<=innerWidth&&document.documentElement.scrollHeight<=innerHeight`), 'Recording panel overflow: '+name); names.push(await save(w,name)); };
+    const status = async value => { await ready(w, `document.querySelector('[aria-label="屏幕录制"]')?.dataset.recordingStatus===${JSON.stringify(value)}`);w.setSize(...(value==='review'?[680,680]:['idle','recoverable'].includes(value)?[520,350]:[720,200]));await wait(120); };
+    const cameraControl = () => page(w,`(()=>{const b=document.querySelector('button[aria-label="摄像头画中画"]');return b&&{pressed:b.getAttribute('aria-pressed'),busy:b.getAttribute('aria-busy')==='true',disabled:b.disabled,text:b.textContent};})()`);
+    const changeCamera = async (enabled,{fail=false,held=false,busyShot}={}) => {
+      const before=state.settings.cameraOverlay,phase=state.status,count=receipts.length;cameraFailure=fail;holdCamera=held;
+      expect(before!==enabled,'Camera exercise must request a real change');await click(w,'摄像头画中画');
+      if (held) {
+        await ready(w,`document.querySelector('button[aria-label="摄像头画中画"]')?.getAttribute('aria-busy')==='true'`);
+        const control=await cameraControl();expect(control.disabled&&control.pressed===String(before)&&control.text.includes(enabled?'正在开启':'正在关闭'),'Pending camera action changed its confirmed state');
+        expect(state.settings.cameraOverlay===before&&!receipts.at(-1).response,'Camera fixture replied before release');
+        await page(w,`document.querySelector('button[aria-label="摄像头画中画"]').click()`);expect(receipts.length===count+1,'Busy camera control accepted a duplicate request');
+        if(busyShot)await shot(busyShot);releaseCamera();releaseCamera=undefined;
+      }
+      await ready(w,`!document.querySelector('button[aria-label="摄像头画中画"]')?.disabled`);
+      const result=receipts.at(-1),control=await cameraControl(),confirmed=fail?before:enabled;
+      expect(result.type==='camera'&&result.enabled===enabled&&result.response?.cameraOverlay===confirmed&&state.settings.cameraOverlay===confirmed,'Camera action or confirmed result lost at preload boundary');
+      expect(state.status===phase&&control.pressed===String(confirmed)&&!control.busy,'Camera switch changed recording phase or ARIA state');
+      if(fail)expect(result.response.error&&await page(w,`document.querySelector('[role="alert"]')?.textContent.includes('fixture 设备不可用')`),'Camera error was not visible');
+      else expect(!result.response.error&&control.text.includes(confirmed?'摄像头已开启':'摄像头已关闭'),'Camera completion did not show confirmed state');
+      cameraFailure=false;holdCamera=false;
+    };
+    const exerciseCamera = async phase => {
+      await changeCamera(false);await shot('recording-camera-'+phase+'-off');
+      await changeCamera(true,{fail:true});await shot('recording-camera-'+phase+'-error');
+      await changeCamera(true,{held:true,busyShot:'recording-camera-'+phase+'-busy'});
+      await changeCamera(false,{fail:true});await changeCamera(false,{held:true,busyShot:phase==='recording'?'recording-camera-closing-busy':undefined});await changeCamera(true);
+      checks.push(phase+'摄像头开/关真实动作回执、双向失败保留旧值、忙态禁止重复操作');
+    };
+    try {
+      if (!global.uiShots.surfacesOnly) {
+        await settingsTab(m,'截图'); await ready(m,`Boolean(document.querySelector('#screenshot-recording'))`);
+        await scrollTo(m,'#screenshot-recording .l-set-row-head'); names.push(await save(m,'settings-recording-defaults'));
+        const groups = [['录制帧率',['15','24','30','60']],['录制画质',['低','中','高']],['录制默认格式',['GIF','WEBP','MP4']],['录制倒计时',['无','3 秒','5 秒']]];
+        for (const [label, options] of groups) for (const option of options) await choose(m,label,option);
+        for (const label of ['录制系统声音','录制麦克风','显示按键提示','显示鼠标点击','摄像头画中画']) await click(m,label);
+        for (const corner of ['右下','左下','右上','左上']) await choose(m,'摄像头位置',corner);
+        const overlayRow='#screenshot-recording li:has(> [aria-label="录制系统声音"])';
+        await page(m,`document.querySelector(${JSON.stringify(overlayRow)}).style.scrollMarginTop='12px'`);await scrollTo(m,overlayRow);await wait(180);
+        expect(await page(m,`(()=>{const bounds=document.querySelector('.l-shot-settings').getBoundingClientRect(),rows=[...document.querySelectorAll('#screenshot-recording [role="switch"],#screenshot-recording [aria-label="摄像头位置"]')].map(control=>control.closest('li').getBoundingClientRect());return rows.length===6&&rows.every(row=>row.top>=bounds.top+8&&row.bottom<=bounds.bottom);})()`),'Recording overlay rows were clipped');names.push(await save(m,'settings-recording-overlays'));
+        await page(m,`[...document.querySelectorAll('.l-save-bar button')].find(b=>b.textContent==='保存').click()`); await ready(m,`document.querySelector('.l-save-bar')?.textContent.includes('已保存')`);
+        const persisted = await page(m,'window.desktop.getState().then(s=>s.settings.screenshot.recording)'), disk = JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8'));
+        expect(persisted.fps===60&&persisted.quality==='high'&&persisted.format==='mp4'&&persisted.countdown===5&&persisted.cameraPosition==='top-left','Recording choices did not save');
+        for (const [key,value] of Object.entries(preferences)) if (typeof value==='boolean') expect(persisted[key]===!value,'Recording switch did not save: '+key);
+        expect(JSON.stringify(persisted)===JSON.stringify(disk.screenshot.recording),'Recording settings differ from persisted disk');
+        await settingsTab(m,'通用'); await settingsTab(m,'截图');
+        for (const [label,text] of [['录制帧率','60'],['录制画质','高'],['录制默认格式','MP4'],['录制倒计时','5 秒'],['摄像头位置','左上']]) expect(await page(m,`document.querySelector('[aria-label="${label}"] [aria-checked="true"]')?.textContent===${JSON.stringify(text)}`),'Recording choice did not restore: '+label);
+        for (const [label,key] of [['录制系统声音','systemAudio'],['录制麦克风','microphone'],['显示按键提示','showKeystrokes'],['显示鼠标点击','showMouseClicks'],['摄像头画中画','cameraOverlay']]) expect(await page(m,`document.querySelector('[aria-label="${label}"]').getAttribute('aria-checked')===${JSON.stringify(String(persisted[key]))}`),'Recording switch did not restore: '+key);
+        await scrollTo(m,'#screenshot-recording .l-set-row-head'); names.push(await save(m,'settings-recording-restored')); checks.push('全部帧率/画质/格式/倒计时/摄像头位置选项、五开关、真实IPC保存/磁盘一致/切页恢复');
+        await page(m,'window.desktop.act("close-settings")');
+      }
+      await page(m,'window.desktop.recordingPanel(true)');w=find('recording');expect(w,'Production recording window did not open');await status('idle');
+      for (const [mode,label] of [['rect','区域录制'],['window','窗口录制'],['screen','全屏录制']]) {
+        await choose(w,'录制模式',label); await shot('recording-idle-'+mode); await click(w,'开始录制'); await status('countdown'); expect(state.mode===mode,'Recording mode lost at preload boundary'); await shot('recording-countdown-'+mode);
+        if(mode==='rect'){await exerciseCamera('countdown');for(const remaining of [2,1]){publish({...state,countdownLeft:remaining});await ready(w,`document.querySelector('.l-record-badge')?.textContent.includes('倒计时 ${remaining}')`);await shot('recording-countdown-'+remaining);}publish({...session('recording'),mode});await status('recording');}
+        await click(w,'取消录制');if(state?.frameCount){await shot('recording-cancel-confirm');expect(state.status==='recording','Cancel confirmation discarded recording early');await click(w,'确认取消录制');}await status('idle');
+      }
+      publish(session('recoverable')); await status('recoverable'); await shot('recording-recoverable'); await click(w,'丢弃未完成录制');expect(state.status==='recoverable','Recovery was discarded without confirmation');await shot('recording-discard-confirm');await click(w,'确认丢弃未完成录制');await status('idle');expect(state===null,'Interrupted recording was not discarded');
+      publish(session('recoverable')); await status('recoverable'); await click(w,'恢复未完成录制'); await status('review'); expect(state.status==='review','Interrupted recording did not recover into review'); await shot('recording-recovered');
+      publish({...session('recording'),id:'stage-8-camera-narrow'});await status('recording');await changeCamera(false);await click(w,'取消录制');w.setSize(375,260);await wait(120);
+      expect(await page(w,`['摄像头画中画','确认取消录制','暂停录制','结束录制'].every(label=>{const r=document.querySelector('button[aria-label="'+label+'"]')?.getBoundingClientRect();return r&&r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight;})`),'Narrow camera/cancel confirmation controls were clipped');
+      await shot('recording-camera-narrow-confirm');await click(w,'确认取消录制');await status('idle');expect(state===null,'Camera narrow confirmation did not cancel');
+      publish({...session('recording'),id:'stage-8-live'}); await status('recording'); await shot('recording-active');
+      expect(await page(w,`document.body.textContent.includes('⌘')&&document.body.textContent.includes('⇧')&&document.querySelector('[aria-label="鼠标点击提示"]')?.textContent.includes('点击脉冲')&&document.querySelector('.l-record-camera')?.textContent.includes('摄像头已开启')`),'Recording teaching cues are missing');
+      await exerciseCamera('recording');await click(w,'暂停录制'); await status('paused'); await shot('recording-paused');await exerciseCamera('paused'); await click(w,'继续录制'); await status('recording'); await click(w,'结束录制'); await status('review'); await shot('recording-review');
+      const preview = () => page(w,`document.querySelector('[aria-label="关键帧预览"] img')?.src`);
+      const selectFrame = async index => {await click(w,'预览关键帧 '+(index+1));expect(await preview()===state.previewFrames[index],'Timeline did not select the requested keyframe');expect(await page(w,`document.querySelector('[aria-label="预览位置"]').value===${JSON.stringify(String(state.previewTimestampsMs[index]))}&&document.querySelector('[aria-label="预览关键帧 ${index+1}"]').getAttribute('aria-pressed')==='true'`),'Timeline timestamp or selected ARIA state differs from image');};
+      expect(state.previewFrames.length===8&&state.previewTimestampsMs.at(-1)>state.durationMs*.99,'Review fixture does not cover the entire recording');
+      for(let index=0;index<state.previewFrames.length;index++)await selectFrame(index);await shot('recording-review-end');
+      await page(w,`(()=>{const e=document.querySelector('[aria-label="预览位置"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,6900);e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(100);const first=await preview();
+      await click(w,'播放关键帧预览'); await ready(w,`document.querySelector('[aria-label="关键帧预览"] img')?.src!==${JSON.stringify(first)}`); await click(w,'暂停关键帧预览'); const frozen = await preview(); await wait(300); expect((await preview())===frozen,'Paused keyframe preview changed'); await shot('recording-review-paused');
+      for (const [label,value] of [['裁剪起点',1600],['裁剪终点',9800]]) {
+        await page(w,`(()=>{const e=document.querySelector('[aria-label="${label}"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${value});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));e.dispatchEvent(new Event('pointerup',{bubbles:true}));})()`); await wait(200);
+      }
+      expect(state.trimStartMs===0&&state.trimEndMs===12400,'Trim draft was applied before confirmation');await shot('recording-review-trim-draft');await click(w,'应用裁剪');expect(state.trimStartMs===1600&&state.trimEndMs===9800,'Dual trim sliders did not consume both bounds');
+      expect(state.previewFrames.length===10&&state.previewFrames.length===state.previewTimestampsMs.length&&state.previewTimestampsMs.includes(1600)&&state.previewTimestampsMs.includes(9800),'Applied trim did not refresh representative frames with both endpoints');
+      expect(await page(w,`[...document.querySelectorAll('[aria-label="关键帧时间轴"] button')].every((button,index)=>button.disabled===(${JSON.stringify(state.previewTimestampsMs)}[index]<1600||${JSON.stringify(state.previewTimestampsMs)}[index]>9800))`),'Timeline allowed frames outside trim');
+      await selectFrame(state.previewTimestampsMs.indexOf(1600));await shot('recording-review-trimmed');await selectFrame(state.previewTimestampsMs.indexOf(9800));await shot('recording-review-trim-end');
+      for (const format of ['GIF','WEBP','MP4']) {
+        await choose(w,'录制导出格式',format);
+        for (const [label,action] of [['保存录制','save'],['快速保存录制','quick-save'],['复制录制文件','copy-file'],['转为动态贴图','pin']]) { await click(w,label);expect(receipts.at(-1).type==='export'&&receipts.at(-1).format===format.toLowerCase()&&receipts.at(-1).action===action,'Recording export action/format lost');expect(await page(w,`document.querySelector('.l-record-notice')?.textContent===${JSON.stringify(action==='pin'?'已转为动态贴图':action==='copy-file'?'已复制录制文件':'录制已保存')}`),'Recording output completion was not shown');if(format==='GIF')await shot('recording-output-'+action); }
+        await shot('recording-review-'+format.toLowerCase());
+      }
+      failure=true; await click(w,'保存录制'); await ready(w,`document.querySelector('[role="alert"]')?.textContent.includes('fixture 编码器不可用')`); expect(state.status==='review'&&state.trimStartMs===1600&&state.trimEndMs===9800,'Failed export discarded review or trim'); await shot('recording-export-error');
+      checks.push('三模式开始/倒计时/取消、恢复/丢弃、按键/点击/摄像头指示、暂停/继续/结束','375px摄像头开关与原地取消确认完整可见','整段8点时间戳/图像/选中态逐点一致、跨时间戳播放/暂停、裁剪后10点含首尾端点与范围外禁用','双滑块边界回执、三格式×四输出、失败保留裁剪');
+      const clipboard=await page(w,'window.__uiShotsClipboard');expect(clipboard&&clipboard.systemReads===0&&clipboard.systemWrites===0,'Recording renderer clipboard isolation missing');
+      await click(w,'关闭并丢弃录制');expect(!w.isDestroyed()&&state.status==='review','Close skipped inline discard confirmation');await shot('recording-close-confirm');await click(w,'确认关闭并丢弃录制');expect(w.isDestroyed(),'Confirmed recording close left the window open');
+      fs.writeFileSync(path.join(out,'stage-8-recording.json'),JSON.stringify({status:'passed',checks,receipts,shots:names,clipboard,mediaSource:'controlled synthetic frames and camera action responses; no physical devices or desktop capture',electronSessionNetworkAtCapture:global.uiShotsNetwork.audit,systemClipboardReads:0,systemClipboardWrites:0},null,2));
+    } finally {
+      if (w && !w.isDestroyed()) w.destroy();
+      for (const [index,channel] of channels.entries()) { ipcMain.removeHandler(channel); if(originals[index]) ipcMain.handle(channel,originals[index]); }
+      await page(m,`(async()=>{await window.desktop.saveScreenshot(${JSON.stringify(originalScreenshot)});await window.desktop.act('close-settings');})()`); await wait(180);
+    }
+    return names;
+  }));
+
   // Capture surfaces from fixture states over a frame of the main window.
   saved.push(...await main(async ({ nativeImage }) => {
     const { find, wait, ready, move, center, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs, out } = global.uiShots, names = [];
@@ -766,7 +934,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
       if(value.stage6){
         const click=async text=>{await page(w,`(()=>{const b=[...document.querySelectorAll('.ed-intelligence button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b||b.disabled)throw Error('Unavailable intelligence action: '+${JSON.stringify(text)});b.click();})()`);await wait(180);};
-        const fill=async(label,text)=>{await page(w,`(()=>{const e=document.querySelector('[aria-label="${label}"]');e.focus();Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(180);};
+        const fill=async(label,text)=>{
+          app.focus({steal:true});w.show();w.focus();w.webContents.focus();await wait(100);
+          const point=await page(w,`(()=>{const e=document.querySelector('[aria-label="${label}"]');e.scrollIntoView({block:'center'});const r=e.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+          for(const type of ['mouseDown','mouseUp'])w.webContents.sendInputEvent({type,button:'left',clickCount:1,...point});await wait(100);
+          await page(w,`(()=>{const e=document.querySelector('[aria-label="${label}"]');e.focus();Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(180);
+        };
         const copied=text=>global.uiShots.stage4.state.receipts.some(r=>r.method==='editorText'&&r.args[0]==='copy'&&r.args[1].text===text);
         const label=value.stage6==='barcode'?'条码结果':{translate:'翻译',table:'表格',formula:'公式'}[value.stage6];
         await ready(w,`Boolean(document.querySelector('button[aria-label="${label}"]:not(:disabled)'))`);await page(w,`document.querySelector('button[aria-label="${label}"]').click()`);
@@ -1004,7 +1177,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
       w.destroy();
     }
-    fs.writeFileSync(path.join(out,'stage-6-surfaces.json'),JSON.stringify({status:'passed',scroll:scrollReceipts,intelligence:intelligenceReceipts,clipboardAudits,copies:global.uiShots.stage4.state.receipts.filter(r=>r.method==='editorText'),checks:['方向切换/反裁状态、中段删除、四档接缝修正与横向预览','QR/Code128内容复制与URL回执','四种目标语言、原文译文对照、图上覆盖与全文复制','改单元格/增删行列/Markdown/TSV/XLSX回执','初始公式/编辑后SVG排版/复制/转贴图回执'],networkRequests:0,realLinkOpens:0},null,2));
+    fs.writeFileSync(path.join(out,'stage-6-surfaces.json'),JSON.stringify({status:'passed',scroll:scrollReceipts,intelligence:intelligenceReceipts,clipboardAudits,copies:global.uiShots.stage4.state.receipts.filter(r=>r.method==='editorText'),checks:['方向切换/反裁状态、中段删除、四档接缝修正与横向预览','QR/Code128内容复制与URL回执','四种目标语言、原文译文对照、图上覆盖与全文复制','改单元格/增删行列/Markdown/TSV/XLSX回执','初始公式/编辑后SVG排版/复制/转贴图回执'],electronSessionNetworkAtCapture:global.uiShotsNetwork.audit,linkOpens:'ui-shots:open-url fixture receipts only'},null,2));
     ipcMain.removeHandler('ui-shots:state');
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
     let pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false, kind:'image',title:'设计评审截图',groupId:'default',groups:global.uiShots.stage4.groups,zoomPercent:100,wheelAction:'zoom',locked:false,thumbnail:false };
@@ -1049,9 +1222,10 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const {stage4}=global.uiShots,pinChecks=[],expect=(ok,text)=>{if(!ok)throw Error(text);};
     const colorBytes=Buffer.alloc(80*80*4);for(let i=0;i<colorBytes.length;i+=4){colorBytes[i]=88;colorBytes[i+1]=118;colorBytes[i+2]=189;colorBytes[i+3]=255;}
     const colorImage=nativeImage.createFromBitmap(colorBytes,{width:80,height:80}).toDataURL();
-    for(const kind of ['image','text','color','file','locked','thumbnail']){
+    for(const kind of ['image','text','color','file','locked','thumbnail','animated','animated-thumbnail']){
       const [width,height]=kind==='text'?[320,160]:['color','file'].includes(kind)?[240,160]:[360,225];
       pin={...structuredClone(basePin),id:'stage-4-'+kind,width,height,kind:['locked','thumbnail'].includes(kind)?'image':kind,locked:kind==='locked',thumbnail:kind==='thumbnail',status:'',payload:kind==='text'?{kind,text:'把想法留在桌面上。\n核对历史、分组和同步状态。'}:kind==='color'?{kind,colorHex:'#BD7658',colorRgb:'rgb(189, 118, 88)'}:kind==='file'?{kind,fileName:'fixture-file.txt',filePath:stage4.filePath,fileSize:fs.statSync(stage4.filePath).size}:undefined};if(kind==='color')pin.image=colorImage;
+      if(kind.startsWith('animated'))pin={...pin,kind:'image',thumbnail:kind==='animated-thumbnail',title:'教学演示 · 动态贴图',image:global.uiShots.stage8Frames[0],payload:{kind:'image',frames:global.uiShots.stage8Frames,frameDelayMs:120}};
       const w=new BrowserWindow({x:120,y:120,width:pin.thumbnail?160:width,height:pin.thumbnail?96:height,frame:false,show:true,webPreferences:{preload:path.join(fixtures,'pin-preload.cjs'),contextIsolation:true,sandbox:true}});
       await w.loadFile(path.join(process.cwd(),'dist/renderer/index.html'),{query:{surface:'pin'}});await wait(500);names.push(await save(w,'pin-'+kind));await move(w,pin.thumbnail?80:width/2,pin.thumbnail?48:height/2);
       const click=async label=>{await page(w,`(()=>{const b=document.querySelector('button[aria-label="${label}"]');if(!b||b.disabled)throw Error('Unavailable pin action: ${label}');b.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});b.click();})()`);await wait(180);};
@@ -1064,6 +1238,17 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       if(kind==='file'){await click('复制文件');await click('复制文件路径');pinChecks.push('工作区fixture文件信息与复制文件/路径回执');}
       if(kind==='locked'){const starts=pinDrags.filter(phase=>phase==='start').length;await page(w,`document.querySelector('.pin-viewport').dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,button:0,pointerId:1}))`);expect(pinDrags.filter(phase=>phase==='start').length===starts,'Locked pin started dragging');await click('贴图选项');await settle();names.push(await save(w,'pin-locked-options'));expect(await page(w,`document.querySelector('[aria-label="贴图缩放"]').disabled`),'Locked pin zoom was enabled');pinChecks.push('锁定标记、禁止拖动与缩放');}
       if(kind==='thumbnail'){await click('展开贴图');expect(!pin.thumbnail,'Thumbnail did not expand');pinChecks.push('缩略态与展开回执');}
+      if(kind.startsWith('animated')){
+        const imageSelector=pin.thumbnail?'img[alt="贴图缩略图"]':'img[alt="贴图成品"]',src=()=>page(w,`document.querySelector(${JSON.stringify(imageSelector)})?.src`);
+        expect(await page(w,`(async()=>{const seen=new Set();for(let i=0;i<12;i++){seen.add(document.querySelector(${JSON.stringify(imageSelector)})?.src);await new Promise(r=>setTimeout(r,50));}return seen.size===3;})()`),'Animated pin did not render all fixture frames');
+        await click('暂停动态贴图');const frozen=await src();await wait(360);expect(await src()===frozen&&await page(w,`document.querySelector('[aria-label="播放动态贴图"]').getAttribute('aria-pressed')==='true'`),'Paused dynamic pin advanced');names.push(await save(w,'pin-'+kind+'-paused'));
+        pin={...pin,locked:true,zoomPercent:135,payload:structuredClone(pin.payload)};w.webContents.send('ui-shots:pin-changed',pin);await wait(360);expect(await src()===frozen&&await page(w,`Boolean(document.querySelector('[aria-label="播放动态贴图"]'))`),'Ordinary cloned pin updates reset playback');
+        await click('播放动态贴图');await ready(w,`document.querySelector(${JSON.stringify(imageSelector)})?.src!==${JSON.stringify(frozen)}`);
+        await click('暂停动态贴图');pin={...pin,locked:false,payload:{...pin.payload,frames:[...pin.payload.frames].reverse()}};w.webContents.send('ui-shots:pin-changed',pin);await ready(w,`Boolean(document.querySelector('[aria-label="暂停动态贴图"]'))`);
+        await click('暂停动态贴图');pin={...pin,id:pin.id+'-new'};w.webContents.send('ui-shots:pin-changed',pin);await ready(w,`Boolean(document.querySelector('[aria-label="暂停动态贴图"]'))`);
+        if(!pin.thumbnail)expect(await page(w,`document.querySelector('[aria-label="动态贴图请在录制预览中裁剪"]').disabled`),'Animated pin exposed unsupported image editor');
+        pinChecks.push(kind+':三帧真实变化、暂停/恢复、同源状态保留、新源/新Pin重置');
+      }
       const overflow=await page(w,`document.documentElement.scrollWidth>innerWidth||document.body.scrollWidth>innerWidth`);expect(!overflow,'Pin horizontal overflow: '+kind);w.destroy();
     }
     const toolbar=new BrowserWindow({width:360,height:52,frame:false,show:true,webPreferences:{preload:path.join(fixtures,'pin-preload.cjs'),contextIsolation:true,sandbox:true}});
@@ -1071,12 +1256,20 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(toolbar,`document.querySelector('[aria-label="当前分组"]').click()`);await wait(250);names.push(await save(toolbar,'pin-floating-groups'));await page(toolbar,`[...document.querySelectorAll('[role="option"]')].find(b=>b.textContent.includes('产品研究')).click()`);await wait(200);
     for(const label of ['剪贴板贴图','新建文字贴图','网格排列','左对齐','顶对齐','关闭悬浮工具栏']){await page(toolbar,`document.querySelector('[aria-label="${label}"]').click()`);await wait(180);}expect(stage4.state.workspace.settings.activeGroupId==='research'&&!stage4.state.workspace.settings.floatingToolbar,'Floating toolbar did not update workspace');toolbar.destroy();
     fs.writeFileSync(path.join(out,'stage-4-pins.json'),JSON.stringify({status:'passed',checks:pinChecks,actions:pinActions,updates:pinUpdates,dragStarts:pinDrags.filter(phase=>phase==='start').length,floatingToolbar:true},null,2));
+    fs.writeFileSync(path.join(out,'stage-8-pins.json'),JSON.stringify({status:'passed',checks:pinChecks.filter(check=>check.startsWith('animated')),frames:global.uiShots.stage8Frames.length,frameDelayMs:120},null,2));
     for(const channel of ['ui-shots:pin','ui-shots:pin-action','ui-shots:pin-update','ui-shots:pin-source','ui-shots:export','ui-shots:annotation-memory'])ipcMain.removeHandler(channel);ipcMain.removeListener('ui-shots:pin-drag',pinDrag);ipcMain.removeListener('ui-shots:toolbar-height',toolbarHeight);
     return names;
   }));
   await main(async ({clipboard})=>{const {fs,path,out,BrowserWindow,page,stage4}=global.uiShots;if(!clipboard.__uiShotsMemory)throw Error('Native clipboard isolation was lost');const renderers=[];for(const win of BrowserWindow.getAllWindows()){if(!win.webContents.getURL().startsWith('file:'))continue;const audit=await page(win,'window.__uiShotsClipboard');if(!audit)throw Error('Renderer clipboard isolation missing');renderers.push({surface:new URL(win.webContents.getURL()).searchParams.get('surface')||'main',...audit});}fs.writeFileSync(path.join(out,'stage-4-isolation.json'),JSON.stringify({systemClipboardReads:0,systemClipboardWrites:0,main:global.uiShotsClipboard,renderers,receipts:stage4.state.receipts,fixtureState:JSON.parse(fs.readFileSync(stage4.store,'utf8'))},null,2));});
   console.log(`Saved ${saved.length} shots to outputs/ui-shots:\n` + saved.map(name => `  ${name}.png`).join('\n'));
 } finally {
+  let networkAuditError, networkAuditTimer;
+  try { if (ws?.readyState === WebSocket.OPEN) await Promise.race([main(({BrowserWindow},out)=>{
+    const network=global.uiShotsNetwork;if(!network)throw Error('Fixture network audit missing');
+    const guardedWindows=BrowserWindow.getAllWindows().map(win=>({id:win.id,guarded:network.hasSession(win.webContents.session)}));
+    process.mainModule.require('node:fs').writeFileSync(process.mainModule.require('node:path').join(out,'electron-session-network.json'),JSON.stringify({...network.audit,guardedWindows},null,2));
+    if(guardedWindows.some(win=>!win.guarded)||network.audit.blockedRequests!==Object.values(network.audit.blockedByProtocol).reduce((sum,value)=>sum+value,0))throw Error('Fixture network isolation audit failed');
+  },out),new Promise((_,reject)=>{networkAuditTimer=setTimeout(()=>reject(Error('Electron session network audit timed out')),2000);})]); } catch(error) { networkAuditError=error; } finally {clearTimeout(networkAuditTimer);}
   if (ws?.readyState === WebSocket.OPEN) await Promise.race([
     main(({ app }) => { setTimeout(() => app.quit(), 50); return true; }).catch(() => {}),
     sleep(1000)
@@ -1089,4 +1282,5 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   });
   // Only this invocation's mkdtemp directory is removed; screenshots remain deliverables.
   rmSync(runtime, { recursive: true, force: true });
+  if(networkAuditError)throw networkAuditError;
 }
