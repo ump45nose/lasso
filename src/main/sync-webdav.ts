@@ -15,7 +15,7 @@ interface ConfigAccess { readSettings(): Settings; writeSettings(settings: Setti
 const configDefaults = (): WebDavConfig => ({ enabled: false, url: '', remotePath: 'Lasso/config.json', username: '', autoSync: false });
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
-const portableKeys = ['memory', 'screenshot', 'shortcut', 'captureShortcuts', 'actionShortcuts', 'editorShortcuts', 'ignoredApps', 'lastTarget', 'selectionEnabled', 'clipboardFallback', 'appPrompts', 'fonts'];
+const portableKeys = ['memory', 'vision', 'screenshot', 'shortcut', 'captureShortcuts', 'actionShortcuts', 'editorShortcuts', 'ignoredApps', 'lastTarget', 'selectionEnabled', 'clipboardFallback', 'appPrompts', 'fonts'];
 const presetKeys = ['id', 'name', 'template', 'target', 'mode', 'needsSelection', 'enabled', 'model', 'effort', 'temporaryChat', 'kind', 'image'];
 const pick = (value: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]]));
 const fields = (value: unknown, keys: string[]): unknown => record(value) ? pick(value, keys) : value;
@@ -24,7 +24,7 @@ const mapFields = (value: unknown, keys: string[]): unknown => record(value) ? O
 /** Each object has its own allowlist: unknown legacy account fields cannot enter a bundle. */
 function portableSettings(value: Record<string, unknown>) {
   const settings = pick(value, portableKeys), styleKeys = Object.keys(screenshotDefaults().annotationMemory.defaultStyle);
-  for (const [key, keys] of Object.entries({ memory: ['enabled', 'idleMinutes'], fonts: ['display', 'text', 'ui', 'mono'], captureShortcuts: ['rect', 'area', 'window', 'screen', 'front'], actionShortcuts: globalActionIds, editorShortcuts: editorActionIds })) if (key in settings) settings[key] = fields(settings[key], keys);
+  for (const [key, keys] of Object.entries({ vision: ['baseURL', 'model', 'targetLanguage', 'useMediaCredential'], memory: ['enabled', 'idleMinutes'], fonts: ['display', 'text', 'ui', 'mono'], captureShortcuts: ['rect', 'area', 'window', 'screen', 'front'], actionShortcuts: globalActionIds, editorShortcuts: editorActionIds })) if (key in settings) settings[key] = fields(settings[key], keys);
   if ('appPrompts' in settings) settings.appPrompts = rows(settings.appPrompts, ['bundleId', 'name', 'prompt', 'enabled']);
   if ('ignoredApps' in settings) settings.ignoredApps = rows(settings.ignoredApps, ['bundleId', 'name', 'enabled', 'scopes']);
   if (record(settings.screenshot)) {
@@ -44,7 +44,7 @@ function portablePresets(value: unknown[]) {
 function portable(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(portable).filter(item => item !== undefined);
   if (!record(value)) return value;
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !/password|credential|secret|token|api.?key|authorization|cookie|private.?key|^(__proto__|constructor|prototype)$|^(local|importedFonts|directory|quickSaveDirectory)$/i.test(key)).flatMap(([key, child]) => { const clean = portable(child); return clean === undefined ? [] : [[key, clean]]; }));
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key==='useMediaCredential'||!/password|credential|secret|token|api.?key|authorization|cookie|private.?key|^(__proto__|constructor|prototype)$|^(local|importedFonts|directory|quickSaveDirectory)$/i.test(key)).flatMap(([key, child]) => { const clean = portable(child); return clean === undefined ? [] : [[key, clean]]; }));
 }
 function mergePreferences(current: Record<string, unknown>, incoming: Record<string, unknown>): Record<string, unknown> {
   const next = { ...current };

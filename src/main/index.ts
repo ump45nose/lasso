@@ -1,12 +1,14 @@
 import type { CustomCaptureRequest,RegionPreset } from '../shared/capture-regions';
 import { validateScreenshotSettings, type ScreenshotSettings } from '../shared/screenshot-settings';
-import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences, safeStorage } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle, WebContents } from 'electron';
 import { basename, isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { CaptureManager } from './capture';
+import { IntelligenceService } from './capture/intelligence';
+import { normalizeVisionConfig, type VisionServiceInput } from '../shared/intelligence';
 import { prewarmNativeCapture } from './capture/native';
 import { readLocalImage } from './capture/local-images';
 import { Images, type ImageInput } from './images';
@@ -55,6 +57,7 @@ let images: Images;
 let screenshots: CaptureManager;
 let webdav: WebDavSyncService;
 let media: MediaWindow;
+let intelligence: IntelligenceService;
 let fileServices: { start(callback: (path: string) => void): void; stop(): void } | undefined;
 const pendingMediaFiles: string[] = [];
 let openingMediaFile = false;
@@ -284,7 +287,7 @@ function applyImportedSettings(next: Settings) {
   validateScreenshotSettings(next.screenshot,screenshots.supportedLanguages());
   const previous=state.settings,conflicts=configureActionShortcuts(next);
   if(conflicts.length){configureActionShortcuts(previous);throw Error(conflicts.join('；'));}
-  try{persistSettings(next);}catch(error){configureActionShortcuts(previous);throw error;}
+  try{intelligence.configure(next.vision);persistSettings(next);}catch(error){intelligence.configure(previous.vision);configureActionShortcuts(previous);throw error;}
   actionBar.hide();clearSelection();capture.configure(next);screenshots.memoryChanged();tasks.memoryChanged();
   void screenshots.preferencesChanged().catch(error=>{state.notice=(error as Error).message;publish();});
   tasks.warmPreferred();updateTray();layout();publish();
@@ -432,6 +435,8 @@ function removeImage(taskId?: string) {
 function installIPC() {
   ipcMain.handle('shell:app-icon', (event, bundleId: string) => { assertLocal(event); return applicationIcon(bundleId); });
   ipcMain.handle('shell:media-config', event => { assertLocal(event); return media.service.connection(); });
+  ipcMain.handle('shell:vision-config', event => { assertLocal(event); return intelligence.connection(); });
+  ipcMain.handle('shell:vision-config-save', (event,input:VisionServiceInput) => { assertLocal(event); const config=intelligence.configure(input);persistSettings({...state.settings,vision:normalizeVisionConfig(config)});publish();return config; });
   ipcMain.handle('shell:media-config-save', (event, input) => { assertLocal(event); return media.service.configure(input); });
   ipcMain.handle('shell:media-models', event => { assertLocal(event); return media.service.models(); });
   ipcMain.handle('shell:attach-image', async (event, prompt?: string) => {
@@ -715,7 +720,7 @@ async function boot() {
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
-  }, () => { const visible=win.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{persistSettings({...state.settings,screenshot:preferences});publish();});
+  }, () => { const visible=win.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, async image => { openImage(images.add(image)); }, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{persistSettings({...state.settings,screenshot:preferences});publish();},()=>intelligence);
   const mediaDirectory = join(app.getPath('userData'), 'generated-media');
   mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
   state.presets = migrateImagePresets(presetsPath, mediaDirectory);
@@ -723,6 +728,13 @@ async function boot() {
     const size = image.getSize();
     await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
   }, () => state.settings, () => openPalette('images'));
+  intelligence=new IntelligenceService(join(app.getPath('userData'),'vision-service'),{
+    secrets:{available:()=>safeStorage.isEncryptionAvailable(),encrypt:value=>safeStorage.encryptString(value),decrypt:value=>safeStorage.decryptString(value)},
+    mediaConnection:()=>media.service.connection(),
+    mediaCredential:()=>media.service.credential(),
+    pinFormula:(latex,svg,current)=>screenshots.pins.pinFormula(latex,svg,current)
+  });
+  intelligence.configure(state.settings.vision);
   webdav=new WebDavSyncService(app.getPath('userData'),{readSettings:()=>state.settings,writeSettings:applyImportedSettings,readPresets:()=>state.presets,writePresets:persistPresets});
   webdav.scheduleAutoSync();
   fileServices = require(join(__dirname, 'native/file-services.node'));

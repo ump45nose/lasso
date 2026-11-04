@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('pinWorkspace', {
 contextBridge.exposeInMainWorld('screenshot', {
   ready: () => {}, loadError: () => {}, onSuspend: () => () => {}, invalidateOCR: () => {},
   recognize: async request => ({ id:request.id, revision:request.revision, lines:[] }),
+  analyze: async () => ({ result:null,error:'当前预览未配置图像服务' }),
+  exportTable: async () => ({ path:null,error:null }), pinFormula: async () => ({ error:null }),
   action: action => ipcRenderer.invoke('ui-shots:pin-action', action),
   saveAnnotationMemory: memory => ipcRenderer.invoke('ui-shots:annotation-memory', memory),
   export: (frame, action, format, contentMode) => ipcRenderer.invoke('ui-shots:export', frame, action, format, contentMode),

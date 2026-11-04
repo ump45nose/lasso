@@ -27,6 +27,8 @@ import { setWindowPresence } from '../window-presence';
 import { applicationBundleIds, frontmostApplicationId, ignoresApplication } from '../selection';
 import { IdleSleep } from '../idle-sleep';
 import { memoryDefaults, type MemorySettings } from '../../shared/memory';
+import { exportTableXlsx, type IntelligenceService } from './intelligence';
+type AnalyzeRequest = Parameters<import('../../shared/capture').ScreenshotAPI['analyze']>[0];
 type WindowRect = CaptureRect & { pid: number; id: number };
 const bindDisplay=(display:Electron.Display):CaptureDisplayBinding=>({id:display.id,bounds:{...display.bounds},scaleFactor:display.scaleFactor,rotation:display.rotation});
 type AX = { windows(): WindowRect[]; query(pid:number,x:number,y:number):Promise<{rects:CaptureRect[];error:number}>; requestScreen(): Promise<boolean> };
@@ -119,7 +121,7 @@ export class CaptureManager {
   }
   private vision: VisionOCR | null=null;
   private ocr=new OCRService(()=>this.vision??=require(join(__dirname,'native/capture-vision.node')), (id,revision)=>this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);
-  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private receiveMedia: ((image:NativeImage)=>Promise<void>) | undefined, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance?:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'>,private memory:()=>MemorySettings=memoryDefaults,private savePreferences?:(settings:ScreenshotSettings)=>void) {
+  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private receiveMedia: ((image:NativeImage)=>Promise<void>) | undefined, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance?:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'>,private memory:()=>MemorySettings=memoryDefaults,private savePreferences?:(settings:ScreenshotSettings)=>void,private intelligence?:()=>IntelligenceService) {
     rmSync(this.sleepDirectory,{recursive:true,force:true});
     this.idle=new IdleSleep(memory,async()=>{if(!this.sleepJob){this.sleepJob=this.suspendEditor();try{await this.sleepJob;}finally{this.sleepJob=null;}}});
     this.regionsStore=new RegionStore(join(app.getPath('userData'),'capture-regions.json'),()=>this.settings().rememberRegionAcrossLaunches);
@@ -129,7 +131,7 @@ export class CaptureManager {
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
     this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
-    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,languages:()=>this.settings().languages,preferences:()=>this.settings(),editorShortcuts:()=>this.appearance?.().editorShortcuts,saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,saveWorkspaceSettings:pinWorkspace=>this.savePreferences?.({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
+    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,languages:()=>this.settings().languages,preferences:()=>this.settings(),editorShortcuts:()=>this.appearance?.().editorShortcuts,saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligenceService(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences?.({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
     const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>Boolean(this.cachedWindow&&e.sender===this.cachedWindow.webContents&&e.senderFrame===this.cachedWindow.webContents.mainFrame);
     const assert=(e:IpcMainEvent|IpcMainInvokeEvent)=>{if(!owns(e))throw new Error('截图操作只允许截图窗口调用');};
     ipcMain.handle('screenshot:checkpoint',(e,editId:string,checkpoint:EditorCheckpoint|null)=>{assert(e);if(this.state?.editId===editId)this.checkpointReply?.(checkpoint);});
@@ -159,6 +161,9 @@ export class CaptureManager {
     ipcMain.handle('screenshot:scroll-action',async(e,a:ScrollCaptureAction)=>{assert(e);try{await this.scrollAction(a);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.on('screenshot:load-error',(e,id:string)=>{if(!owns(e)||this.state?.editId!==id)return;if(this.native.snapshot().visible)this.native.update({session:this.state.id,message:'编辑器未能准备好，请重试或取消'});else{this.win?.show();app.focus({steal:true});this.win?.focus();}});
     ipcMain.handle('screenshot:recognize',(e,frame:OCRRequest)=>{assert(e);return this.recognize(frame);});
+    ipcMain.handle('screenshot:analyze',async(e,request:AnalyzeRequest)=>{assert(e);try{this.frameImage({id:request?.id,revision:request?.revision,crop:request?.crop,png:request?.png});const result=await this.intelligenceService().analyze(request);if(this.state?.editId!==request.id||this.editRevision!==request.revision)throw Error('图片已变化，请重试');this.assertVersion(request.id,request.revision);return {result,error:null};}catch(error){return {result:null,error:(error as Error).message};}});
+    ipcMain.handle('screenshot:export-table',(e,rows:string[][])=>{assert(e);this.assertResult();return exportTableXlsx(rows,this.settings().directory);});
+    ipcMain.handle('screenshot:pin-formula',async(e,latex:string)=>{assert(e);try{this.assertResult();const id=this.state!.editId,revision=this.editRevision;await this.intelligenceService().pinFormula(latex,()=>owns(e)&&this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.on('screenshot:invalidate-ocr',(e,request:{id:string;revision:number})=>{if(!owns(e)||!request||this.state?.phase!=='result'||request.id!==this.state.editId||!Number.isSafeInteger(request.revision)||request.revision<this.editRevision)return;this.editRevision=request.revision;this.ocr.invalidate(request.id,request.revision);});
     ipcMain.handle('screenshot:export',async(e,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode)=>{assert(e);try{await this.exportFrame(frame,action,format,contentMode);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('screenshot:copy-text',async(e,request:{id:string;revision:number;text:string})=>{assert(e);this.acceptVersion(request?.id,request?.revision);if(typeof request.text!=='string'||!request.text.trim()||request.text.length>100000)throw Error('没有可复制的文字');this.after();await clipboard.writeText(request.text);});
@@ -493,7 +498,7 @@ export class CaptureManager {
         }finally{this.native.release(f.id);}
       },()=>{
         if(!committed||this.scroll!==session||this.state!==s||s.phase!=='scrolling')return;
-        const m=session.metadata;s.scroll={status:session.status==='running'?'running':'paused',width:m.width||pixels.width,height:m.height,segments:m.segments,seams:m.seams,message:session.message};this.publish();
+        const m=session.metadata;s.scroll={status:session.status==='running'?'running':'paused',width:m.width||pixels.width,height:m.height,segments:m.segments,seams:m.seams,direction:m.direction,segmentSizes:m.segmentSizes,reversedTrimmed:m.reversedTrimmed,message:session.message};this.publish();
       },()=>{if(committed&&this.scroll===session)void this.finishScroll(session.message).catch(error=>this.scrollError(error));},this.preferences.scrollMaxHeight);
       candidate=session;await session.start();
       // start resolves after tick even when tick caught a capture/worker failure.
@@ -503,7 +508,8 @@ export class CaptureManager {
       if(epoch!==this.epoch||this.state!==s||!unchanged())throw Error('截图会话或显示器已变化');
       this.native.hide();win.hide();this.stopDetection();this.ocr.reset();this.image=null;this.imageTask=null;this.imageLoader=null;
       this.scroll=session;committed=true;this.scrollRequested=false;
-      Object.assign(s,{captureKind:'scroll',editableRegion:undefined,annotations:undefined,pixelScale:{x:frame.width/this.bounds.width,y:frame.height/this.bounds.height},phase:'scrolling',placement:undefined,candidates:[],windows:[],selection:null,scroll:{status:'paused',width:session.metadata.width,height:session.metadata.height,segments:session.metadata.segments,seams:session.metadata.seams,message:session.message}});
+      const m=session.metadata;
+      Object.assign(s,{captureKind:'scroll',editableRegion:undefined,annotations:undefined,pixelScale:{x:frame.width/this.bounds.width,y:frame.height/this.bounds.height},phase:'scrolling',placement:undefined,candidates:[],windows:[],selection:null,scroll:{status:'paused',width:m.width,height:m.height,segments:m.segments,seams:m.seams,direction:m.direction,segmentSizes:m.segmentSizes,reversedTrimmed:m.reversedTrimmed,message:session.message}});
       setWindowPresence(win,false);win.setMinimumSize(0,0);win.setResizable(false);win.setMovable(false);win.setAlwaysOnTop(true,'screen-saver');win.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true});win.setFocusable(false);win.setBounds(controls);win.setBackgroundColor('#141413');this.publish();win.showInactive();
       for(const id of new Set([s.imageFrame,s.backdropFrame]))if(id)this.dropSource(id);s.imageFrame=undefined;s.backdropFrame=undefined;s.imageCrop=undefined;
       this.native.release(frame.id);this.ownedFrames.delete(frame.id);this.screenFrame=null;
@@ -522,7 +528,7 @@ export class CaptureManager {
     const s=this.state!;
     if(s.imageFrame)this.dropSource(s.imageFrame);
     const imageFrame=this.keepFrame(this.importFrame(image));
-    Object.assign(s,{phase:'review',imageFrame,backdropFrame:undefined,scroll:{status:'review',width:reply.width,height:reply.height,segments:reply.segments,seams:reply.seams,message}});
+    Object.assign(s,{phase:'review',imageFrame,backdropFrame:undefined,scroll:{status:'review',width:reply.width,height:reply.height,segments:reply.segments,seams:reply.seams,direction:reply.direction,segmentSizes:reply.segmentSizes,reversedTrimmed:reply.reversedTrimmed,message}});
     this.publish(true);
   }
   private async finishScroll(message='已结束采集。检查接缝后进入编辑；可撤回末段。'){
@@ -539,16 +545,20 @@ export class CaptureManager {
     finally{if(this.scroll===session)this.scrollFinishing=false;}
   }
   private async scrollAction(action:ScrollCaptureAction){
-    if(action==='cancel'){this.cancel(true);return;}
+    const type=typeof action==='string'?action:action?.type;
+    if(type==='cancel'){this.cancel(true);return;}
     const session=this.scroll,s=this.state;if(!session||!s?.scroll)throw Error('滚动截图已结束');
     if(this.scrollFinishing||this.scrollEditing)throw Error('正在处理滚动结果');
-    if(action==='pause'&&s.phase==='scrolling'){await session.pause();return;}
-    if(action==='resume'&&s.phase==='scrolling'){session.resume();return;}
-    if(action==='finish'&&s.phase==='scrolling'){await this.finishScroll();return;}
-    if(action==='undo'&&s.phase==='review'){
-      this.scrollFinishing=true;try{const reply=await session.undo();if(this.scroll===session)this.setScrollPreview(reply,'已撤回末段，请重新检查接缝。');}finally{if(this.scroll===session)this.scrollFinishing=false;}return;
+    if(type==='pause'&&s.phase==='scrolling'){await session.pause();return;}
+    if(type==='resume'&&s.phase==='scrolling'){session.resume();return;}
+    if(type==='finish'&&s.phase==='scrolling'){await this.finishScroll();return;}
+    if(typeof action==='object'&&action.type==='direction'&&s.phase==='scrolling'){await session.setDirection(action.direction);return;}
+    if((type==='undo'||typeof action==='object'&&(action?.type==='remove-segment'||action?.type==='adjust-seam'))&&s.phase==='review'){
+      this.scrollFinishing=true;
+      try{const reply=typeof action==='object'&&action.type==='remove-segment'?await session.removeSegment(action.index):typeof action==='object'&&action.type==='adjust-seam'?await session.adjustSeam(action.index,action.delta):await session.undo();if(this.scroll===session&&this.state===s)this.setScrollPreview(reply,'已更新拼接结果，请重新检查接缝。');}
+      finally{if(this.scroll===session)this.scrollFinishing=false;}return;
     }
-    if(action==='edit'&&s.phase==='review'&&this.image){
+    if(type==='edit'&&s.phase==='review'&&this.image){
       this.scrollEditing=true;
       try{
         const size=this.image.getSize();session.dispose();this.scroll=null;this.editRevision=0;this.ocr.reset();
@@ -693,6 +703,8 @@ export class CaptureManager {
     if(!this.state?.selection||this.state.phase!=='result'||id!==this.state.editId)throw Error('截图编辑会话已结束');
     if(!Number.isSafeInteger(revision)||revision<0||revision<this.editRevision)throw Error('图片已变化，请重试');
   }
+  private assertResult(){if(this.state?.phase!=='result'||!this.state.selection)throw Error('截图编辑会话已结束');}
+  private intelligenceService(){if(!this.intelligence)throw Error('智能识别尚未接入');return this.intelligence();}
   private acceptVersion(id:string,revision:number){this.assertVersion(id,revision);this.editRevision=revision;}
   private assertCrop(frame:CaptureFrame){
     this.assertVersion(frame?.id,frame?.revision);
@@ -789,5 +801,5 @@ export class CaptureManager {
   private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}
   private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.detectionStarting=false;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
   cancel(restore=false){this.release(restore);}
-  dispose(){this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:regions','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:recognize','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:invalidate-ocr','screenshot:ready'])ipcMain.removeAllListeners(name);}
+  dispose(){this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:regions','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:recognize','screenshot:analyze','screenshot:export-table','screenshot:pin-formula','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:invalidate-ocr','screenshot:ready'])ipcMain.removeAllListeners(name);}
 }

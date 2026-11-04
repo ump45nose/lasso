@@ -7,6 +7,7 @@ import { defaultFonts, type Settings } from '../shared/contracts';
 import { memoryDefaults, validMemorySettings } from '../shared/memory';
 import { captureModes } from '../shared/capture';
 import { defaultEditorShortcuts } from '../shared/shortcuts';
+import { normalizeVisionConfig, visionDefaults } from '../shared/intelligence';
 
 /** New action entries win; absent entries migrate from their legacy aliases. */
 function syncActionShortcuts(settings: Settings): Settings {
@@ -20,7 +21,7 @@ function syncActionShortcuts(settings: Settings): Settings {
 }
 export function defaultSettings(): Settings {
   const executable = (name: string) => ['/opt/homebrew/bin/', '/usr/local/bin/'].map(p => p + name).find(existsSync) || '';
-  return syncActionShortcuts({ memory: memoryDefaults(), screenshot: screenshotDefaults(join(app.getPath('pictures'), 'Lasso')), shortcut: '', captureShortcuts: { rect: '', area: '', window: '', screen: '', front: '' }, actionShortcuts: {}, editorShortcuts: defaultEditorShortcuts(), ignoredApps: [], lastTarget: 'chatgpt', selectionEnabled: true, clipboardFallback: false, appPrompts: [], local: {
+  return syncActionShortcuts({ memory: memoryDefaults(), vision:visionDefaults(), screenshot: screenshotDefaults(join(app.getPath('pictures'), 'Lasso')), shortcut: '', captureShortcuts: { rect: '', area: '', window: '', screen: '', front: '' }, actionShortcuts: {}, editorShortcuts: defaultEditorShortcuts(), ignoredApps: [], lastTarget: 'chatgpt', selectionEnabled: true, clipboardFallback: false, appPrompts: [], local: {
     codex: { executable: executable('codex'), cwd: homedir() }, pi: { executable: executable('pi'), cwd: homedir() }
   }, fonts: { ...defaultFonts }, importedFonts: [] });
 }
@@ -31,6 +32,7 @@ export function migrateSettings(value: Partial<Settings> & { screenshotShortcut?
   settings.memory = validMemorySettings(settings.memory!) ? settings.memory : defaults.memory;
   return syncActionShortcuts({
     ...defaults, ...settings,
+    vision: normalizeVisionConfig(settings.vision??defaults.vision),
     screenshot: migrateScreenshotSettings(settings.screenshot, defaults.screenshot.directory),
     captureShortcuts: { ...defaults.captureShortcuts, ...(typeof screenshotShortcut === 'string' ? { area: screenshotShortcut } : {}), ...settings.captureShortcuts },
     // Do not copy the defaults' alias entries before migrating a legacy file.

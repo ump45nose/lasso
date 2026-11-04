@@ -10,7 +10,7 @@ function useScrollAction() {
   const [busy, setBusy] = useState(false), [error, setError] = useState('');
   const pending = useRef(false);
   async function act(action: ScrollCaptureAction) {
-    if (pending.current && action !== 'cancel') return;
+    if (pending.current && (typeof action === 'string' ? action : action.type) !== 'cancel') return;
     pending.current = true; setBusy(true); setError('');
     try { const result = await window.screenshot.scrollAction(action); setError(result.error || ''); }
     catch (e) { setError((e as Error).message); }

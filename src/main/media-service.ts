@@ -68,6 +68,9 @@ export class MediaService {
 
   connection(): MediaConfig { return { baseURL: this.config.baseURL, hasCredential: Boolean(this.config.credential) }; }
 
+  /** Main-process consumers only; renderer bridges expose connection() instead. */
+  credential(): string | undefined { return this.decryptCredential(this.config); }
+
   configure(input: MediaConfigInput): MediaConfig {
     if (this.active) throw Error('生成期间不能更改图片服务配置');
     this.validateConfig(input);
@@ -238,9 +241,13 @@ export class MediaService {
   private imagePath(id: string) { return join(this.directory, 'images', id + '.png'); }
   private endpoint(path: string, config: SavedConfig) { return config.baseURL.replace(/\/+$/, '') + (config.baseURL.replace(/\/+$/, '').endsWith('/v1') ? '/' : '/v1/') + path; }
   private headers(config: SavedConfig): Record<string, string> {
-    if (!config.credential) return {};
+    const credential = this.decryptCredential(config);
+    return credential === undefined ? {} : { Authorization: 'Bearer ' + credential };
+  }
+  private decryptCredential(config: SavedConfig): string | undefined {
+    if (!config.credential) return undefined;
     if (!this.adapters.secrets.available()) throw Error('系统安全存储不可用，无法读取图片服务凭据');
-    try { return { Authorization: 'Bearer ' + this.adapters.secrets.decrypt(Buffer.from(config.credential, 'base64')) }; }
+    try { return this.adapters.secrets.decrypt(Buffer.from(config.credential, 'base64')); }
     catch { throw Error('无法解密图片服务凭据，请在设置中重新保存'); }
   }
   private validateConfig(input: MediaConfigInput) {
