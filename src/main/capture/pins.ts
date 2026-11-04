@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { constants, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { copyFile as copyDiskFile, mkdir, stat, writeFile } from 'node:fs/promises';
@@ -13,7 +13,8 @@ import { FloatingPinBar } from './floating-bar';
 import { OCRService, type VisionOCR } from './ocr';
 import { assertPng, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, encodeScreenshot, formatScreenshotName, runAfterSaveAction, saveAutomaticScreenshot } from './output';
 import { fitToWorkArea } from '../position';
-import { exportTableXlsx, type IntelligenceService } from './intelligence';
+import { exportTableXlsx, renderFormula, type IntelligenceService } from './intelligence';
+import { webURL } from '../../shared/intelligence';
 type AnalyzeRequest = Parameters<import('../../shared/capture').ScreenshotAPI['analyze']>[0];
 
 type SavedPin = {id:string;document:SerializedPinnedDocument;payload:PinContentPayload;title:string;groupId:string;locked:boolean;thumbnail:boolean;topmost:boolean;visible:boolean;opacity:number;zoomPercent:number;bounds:Rectangle;normalBounds?:Rectangle;updatedAt:number};
@@ -107,6 +108,9 @@ export class PinManager {
       return pin.ocr.recognize({id:frame.id,revision:frame.revision,png:Buffer.from(frame.png),mode:frame.mode,enhance:frame.enhance,force:frame.force,languages:this.options.languages()});
     });
     ipcMain.handle('pin:editor-analyze',async(e,request:AnalyzeRequest)=>{const pin=this.owner(e);try{this.editorFrame(pin,request);const result=await this.intelligenceService().analyze(request);this.assertEditor(pin,request.id,request.revision);if(this.pins.get(pin.state.id)!==pin||pin.editorRevision!==request.revision)throw Error('图片已变化，请重试');return {result,error:null};}catch(error){return {result:null,error:(error as Error).message};}});
+    ipcMain.handle('pin:editor-vision-language',e=>{const pin=this.owner(e);this.assertEditor(pin,pin.state.editId!,pin.editorRevision);return this.intelligenceService().connection().targetLanguage;});
+    ipcMain.handle('pin:editor-preview-formula',(e,r:{id:string;revision:number;latex:string})=>{const pin=this.owner(e);try{this.assertEditor(pin,r?.id,r?.revision);return {svg:renderFormula(r.latex),error:null};}catch(error){return {svg:null,error:(error as Error).message};}});
+    ipcMain.handle('pin:editor-open-url',async(e,r:{id:string;revision:number;url:string})=>{const pin=this.owner(e);try{this.assertEditor(pin,r?.id,r?.revision);const url=typeof r.url==='string'&&webURL(r.url);if(!url)throw Error('只能打开 HTTP 或 HTTPS 链接');await shell.openExternal(url);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('pin:editor-export-table',(e,rows:string[][])=>{const pin=this.owner(e);this.assertEditor(pin,pin.state.editId!,pin.editorRevision);return exportTableXlsx(rows,this.options.preferences().directory);});
     ipcMain.handle('pin:editor-pin-formula',async(e,latex:string)=>{const pin=this.owner(e);try{this.assertEditor(pin,pin.state.editId!,pin.editorRevision);const id=pin.state.editId,revision=pin.editorRevision;await this.intelligenceService().pinFormula(latex,()=>this.pinFrom(e)===pin&&pin.state.editing===true&&pin.state.editId===id&&pin.editorRevision===revision);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('pin:editor-copy-text',async(e,request:{id:string;revision:number;text:string})=>{const pin=this.owner(e);this.assertEditor(pin,request?.id,request?.revision);if(typeof request.text!=='string'||!request.text.trim()||request.text.length>100000)throw Error('没有可复制的文字');pin.editorRevision=request.revision;this.options.suppress();await clipboard.writeText(request.text);});
@@ -508,5 +512,5 @@ export class PinManager {
     {label:'隐藏全部贴图',enabled:this.size>0,click:()=>{for(const pin of this.pins.values()){pin.visible=false;pin.win.hide();}this.changed();}},
     ...[...this.pins.values()].map(pin=>({label:pin.win.getTitle()+(pin.state.passthrough?' · 穿透':!pin.win.isVisible()?' · 已隐藏':''),click:()=>this.restore(pin)}))
   ];}
-  dispose(){if(this.disposed)return;if(this.persistTimer)clearTimeout(this.persistTimer);this.persist();this.disposed=true;this.floating.dispose();screen.removeListener('display-removed',this.fit);screen.removeListener('display-metrics-changed',this.fit);for(const channel of ['pin:editor-invalidate','pin:drag-start','pin:drag-move','pin:drag-end'])ipcMain.removeAllListeners(channel);for(const pin of [...this.pins.values()]){pin.ocr.reset();pin.win.destroy();}for(const channel of ['pin:state','pin:action','pin:text','pin:source','pin:editor-export','pin:editor-recognize','pin:editor-analyze','pin:editor-export-table','pin:editor-pin-formula','pin:editor-copy-text','pin:editor-send','pin:editor-action','pin:set-opacity','pin:set-zoom','pin:set-group','pin:set-title','pin:update-text'])ipcMain.removeHandler(channel);}
+  dispose(){if(this.disposed)return;if(this.persistTimer)clearTimeout(this.persistTimer);this.persist();this.disposed=true;this.floating.dispose();screen.removeListener('display-removed',this.fit);screen.removeListener('display-metrics-changed',this.fit);for(const channel of ['pin:editor-invalidate','pin:drag-start','pin:drag-move','pin:drag-end'])ipcMain.removeAllListeners(channel);for(const pin of [...this.pins.values()]){pin.ocr.reset();pin.win.destroy();}for(const channel of ['pin:state','pin:action','pin:text','pin:source','pin:editor-export','pin:editor-recognize','pin:editor-analyze','pin:editor-vision-language','pin:editor-preview-formula','pin:editor-open-url','pin:editor-export-table','pin:editor-pin-formula','pin:editor-copy-text','pin:editor-send','pin:editor-action','pin:set-opacity','pin:set-zoom','pin:set-group','pin:set-title','pin:update-text'])ipcMain.removeHandler(channel);}
 }

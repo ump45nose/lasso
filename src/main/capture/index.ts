@@ -27,7 +27,8 @@ import { setWindowPresence } from '../window-presence';
 import { applicationBundleIds, frontmostApplicationId, ignoresApplication } from '../selection';
 import { IdleSleep } from '../idle-sleep';
 import { memoryDefaults, type MemorySettings } from '../../shared/memory';
-import { exportTableXlsx, type IntelligenceService } from './intelligence';
+import { exportTableXlsx, renderFormula, type IntelligenceService } from './intelligence';
+import { webURL } from '../../shared/intelligence';
 type AnalyzeRequest = Parameters<import('../../shared/capture').ScreenshotAPI['analyze']>[0];
 type WindowRect = CaptureRect & { pid: number; id: number };
 const bindDisplay=(display:Electron.Display):CaptureDisplayBinding=>({id:display.id,bounds:{...display.bounds},scaleFactor:display.scaleFactor,rotation:display.rotation});
@@ -162,6 +163,9 @@ export class CaptureManager {
     ipcMain.on('screenshot:load-error',(e,id:string)=>{if(!owns(e)||this.state?.editId!==id)return;if(this.native.snapshot().visible)this.native.update({session:this.state.id,message:'编辑器未能准备好，请重试或取消'});else{this.win?.show();app.focus({steal:true});this.win?.focus();}});
     ipcMain.handle('screenshot:recognize',(e,frame:OCRRequest)=>{assert(e);return this.recognize(frame);});
     ipcMain.handle('screenshot:analyze',async(e,request:AnalyzeRequest)=>{assert(e);try{this.frameImage({id:request?.id,revision:request?.revision,crop:request?.crop,png:request?.png});const result=await this.intelligenceService().analyze(request);if(this.state?.editId!==request.id||this.editRevision!==request.revision)throw Error('图片已变化，请重试');this.assertVersion(request.id,request.revision);return {result,error:null};}catch(error){return {result:null,error:(error as Error).message};}});
+    ipcMain.handle('screenshot:vision-language',e=>{assert(e);this.assertResult();return this.intelligenceService().connection().targetLanguage;});
+    ipcMain.handle('screenshot:preview-formula',(e,r:{id:string;revision:number;latex:string})=>{assert(e);try{this.assertVersion(r?.id,r?.revision);return {svg:renderFormula(r.latex),error:null};}catch(error){return {svg:null,error:(error as Error).message};}});
+    ipcMain.handle('screenshot:open-url',async(e,r:{id:string;revision:number;url:string})=>{assert(e);try{this.assertVersion(r?.id,r?.revision);const url=typeof r.url==='string'&&webURL(r.url);if(!url)throw Error('只能打开 HTTP 或 HTTPS 链接');await shell.openExternal(url);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.handle('screenshot:export-table',(e,rows:string[][])=>{assert(e);this.assertResult();return exportTableXlsx(rows,this.settings().directory);});
     ipcMain.handle('screenshot:pin-formula',async(e,latex:string)=>{assert(e);try{this.assertResult();const id=this.state!.editId,revision=this.editRevision;await this.intelligenceService().pinFormula(latex,()=>owns(e)&&this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);return {error:null};}catch(error){return {error:(error as Error).message};}});
     ipcMain.on('screenshot:invalidate-ocr',(e,request:{id:string;revision:number})=>{if(!owns(e)||!request||this.state?.phase!=='result'||request.id!==this.state.editId||!Number.isSafeInteger(request.revision)||request.revision<this.editRevision)return;this.editRevision=request.revision;this.ocr.invalidate(request.id,request.revision);});
@@ -464,13 +468,13 @@ export class CaptureManager {
   }
   /** Keep the entire control window outside the capture, so the selected region has no overlay to intercept input. */
   private scrollControlBounds(r:CaptureRect):CaptureRect {
-    const b=this.bounds,h=118,w=Math.min(700,b.width),gap=8;
+    const b=this.bounds,h=144,w=Math.min(700,b.width),gap=8;
     const x=Math.round(Math.max(0,Math.min(b.width-w,r.x+(r.width-w)/2)));
     if(r.y>=h+gap)return {x:b.x+x,y:b.y+Math.round(r.y-h-gap),width:w,height:h};
     if(b.height-r.y-r.height>=h+gap)return {x:b.x+x,y:b.y+Math.ceil(r.y+r.height+gap),width:w,height:h};
     if(r.x>=w+gap)return {x:b.x+Math.floor(r.x-w-gap),y:b.y+Math.max(0,Math.min(b.height-h,Math.round(r.y))),width:w,height:h};
     if(b.width-r.x-r.width>=w+gap)return {x:b.x+Math.ceil(r.x+r.width+gap),y:b.y+Math.max(0,Math.min(b.height-h,Math.round(r.y))),width:w,height:h};
-    throw Error('请缩小选区，在上方或下方留出 126 像素放置控制条；控制条不会进入截图。');
+    throw Error('请缩小选区，在上方或下方留出 152 像素放置控制条；控制条不会进入截图。');
   }
   private async startScroll(r:CaptureRect){
     const s=this.state,frame=this.screenFrame;
@@ -801,5 +805,5 @@ export class CaptureManager {
   private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}
   private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.detectionStarting=false;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
   cancel(restore=false){this.release(restore);}
-  dispose(){this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:regions','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:recognize','screenshot:analyze','screenshot:export-table','screenshot:pin-formula','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:invalidate-ocr','screenshot:ready'])ipcMain.removeAllListeners(name);}
+  dispose(){this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:regions','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:recognize','screenshot:analyze','screenshot:vision-language','screenshot:preview-formula','screenshot:open-url','screenshot:export-table','screenshot:pin-formula','screenshot:export','screenshot:copy-text','screenshot:send-text','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:invalidate-ocr','screenshot:ready'])ipcMain.removeAllListeners(name);}
 }

@@ -2,8 +2,10 @@ import { RegionControls } from './RegionControls';
 import { regionPoints,resizeRegion,moveRegion } from '../../shared/region-geometry';
 import { Fragment, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, ImagePlus, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Slash, Square, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
-import type { CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
+import { Barcode, ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, ImagePlus, Languages, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Sigma, Slash, Square, Table2, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
+import type { BarcodeItem, CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
+import type { TranslationBlock } from '../../shared/intelligence';
+import { IntelligencePanel, type IntelligenceView } from './IntelligencePanel';
 import { screenshotDefaults, screenshotOutputFormats, type AnnotationStyleMemory, type ScreenshotExportContentMode, type ScreenshotOutputFormat } from '../../shared/screenshot-settings';
 import { defaultEditorShortcuts, type EditorShortcutMap } from '../../shared/shortcuts';
 import { pixelRect } from '../../shared/capture';
@@ -67,6 +69,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<ScreenshotOutputFormat>(state.saveFormat??'png');
   const [contentMode,setContentMode]=useState<ScreenshotExportContentMode|undefined>(),[selectedBackground,setSelectedBackground]=useState<boolean|null>(null);
   const [ocrMode,setOCRMode]=useState<OCRMode>('text'),[enhance,setEnhance]=useState(false);
+  const [barcodes,setBarcodes]=useState<BarcodeItem[]>([]),[intelligence,setIntelligence]=useState<IntelligenceView|null>(null),[translations,setTranslations]=useState<TranslationBlock[]>([]);
   // Screen captures are edited in place, at their placement over the frozen screen; clipboard and pin images get a desk window with zoom.
   const region=state.editableRegion;
   const place=state.placement,inline=Boolean(place);
@@ -74,16 +77,16 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   const lastCopy=useRef(0),keyGesture=useRef(false),syncedRegion=useRef('');
   const [formatOpen,setFormatOpen]=useState(false),[ocrOpen,setOCROpen]=useState(false),[dockSize,setDockSize]=useState({width:0,height:0}),dockRef=useRef<HTMLDivElement>(null);
   const [controlsHost,setControlsHost]=useState<HTMLDivElement|null>(null),[regionPanelOpen,setRegionPanelOpen]=useState(false);
-  const ocrCache=useRef<{content:string;mode:OCRMode;enhance:boolean;lines:OCRLine[]}|null>(null),forceOCR=useRef(false);
+  const ocrCache=useRef<{content:string;mode:OCRMode;enhance:boolean;lines:OCRLine[];barcodes:BarcodeItem[]}|null>(null),forceOCR=useRef(false);
   const version=useRef(state.checkpoint?.revision ?? 0),mutating=useRef(false),exporting=useRef(false),selection=useRef(''),alive=useRef(true);
   const resize=useRef<{x:number;y:number;handle:string;original:CaptureRect;current:CaptureRect}|null>(null);
   const picker=useRef<PickerHandle>(null);
   const clearSelection=()=>{selection.current='';setSelectedText('');const s=window.getSelection();if(s?.anchorNode&&textRef.current?.contains(s.anchorNode))s.removeAllRanges();};
-  const clearText=()=>{clearSelection();setLines([]);};
+  const clearText=()=>{clearSelection();setLines([]);setBarcodes([]);setIntelligence(null);setTranslations([]);};
   const notifyOCR=()=>window.screenshot.invalidateOCR({id:state.editId,revision:version.current});
   const invalidate=()=>{if(!alive.current)return;mutating.current=true;version.current++;notifyOCR();clearText();setOCRStatus('编辑完成后识别文字');};
   const changed=()=>{if(!alive.current)return;mutating.current=keyGesture.current;version.current++;notifyOCR();clearText();const editor=engine.current;if(editor){setCrop({...editor.crop});setTool(editor.tool);if(region&&!keyGesture.current&&syncedRegion.current!==JSON.stringify(editor.crop)){syncedRegion.current=JSON.stringify(editor.crop);void window.screenshot.updateRegion({id:state.editId,revision:version.current,crop:{...editor.crop}}).catch(e=>{syncedRegion.current='';setError(e.message);});}}setRevision(version.current);};
-  const showLines=(next:OCRLine[])=>{setLines(next);setOCRStatus(!next.length?'未识别到文字，可试小字增强':next.some(line=>line.confidence<.8)?'拖选图中文字；部分结果需核对':'拖选图中文字，可跨行复制');};
+  const showLines=(next:OCRLine[],codes:BarcodeItem[])=>{setLines(next);setBarcodes(codes);setOCRStatus(!next.length?(codes.length?`已识别 ${codes.length} 个条码`:'未识别到文字，可试小字增强'):next.some(line=>line.confidence<.8)?'拖选图中文字；部分结果需核对':'拖选图中文字，可跨行复制');};
   useEffect(()=>{
     alive.current=true;let editor:AnnotationEditor|null=null;let canceled=false;
     void(async()=>{
@@ -129,7 +132,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
     const current=version.current;let canceled=false;
     const content=engine.current!.contentKey,force=forceOCR.current;forceOCR.current=false;
     const cached=ocrCache.current;
-    if(!force&&cached?.content===content&&cached.mode===ocrMode&&cached.enhance===enhance){showLines(cached.lines);return;}
+    if(!force&&cached?.content===content&&cached.mode===ocrMode&&cached.enhance===enhance){showLines(cached.lines,cached.barcodes);return;}
     const timer=setTimeout(()=>{void(async()=>{
       if(mutating.current||!engine.current)return;
       try{
@@ -141,7 +144,8 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
         const privacy=editor.privacy;
         // Conservatively remove a whole OCR line if any privacy mask touches it.
         const safe=result.lines.map(line=>({...line,x:line.x+crop.x,y:line.y+crop.y,glyphs:line.glyphs.map(g=>({...g,x:g.x+crop.x,y:g.y+crop.y}))})).filter(line=>!privacy.some(r=>intersects(line,r)));
-        ocrCache.current={content,mode:ocrMode,enhance,lines:safe};showLines(safe);
+        const codes=(result.barcodes??[]).map(item=>({...item,x:item.x+crop.x,y:item.y+crop.y})).filter(item=>!privacy.some(r=>intersects(item,r)));
+        ocrCache.current={content,mode:ocrMode,enhance,lines:safe,barcodes:codes};showLines(safe,codes);
       }catch(e){if(!canceled&&current===version.current)setOCRStatus('文字识别未完成，可重试；图片编辑不受影响');}
     })();},350);
     return()=>{canceled=true;clearTimeout(timer);};
@@ -241,6 +245,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   const toolButton=(id:Tool,label:string,icon:ReactNode)=>{if(region&&id==='crop')label='选区 · 移动、调整范围';return <button key={id} className="ed-tool" data-tip={`${label}${shortcuts[id]?' '+shortcuts[id]:''}${id==='select'?' · ⌘C / ⌘V / ⌘D':['rectangle','ellipse','line','arrow'].includes(id)?' · ⇧ 约束':''}`} aria-label={label} aria-keyshortcuts={shortcuts[id]||undefined} aria-pressed={tool===id} disabled={!ready||busy} onClick={()=>choose(id)}>{tool===id&&<Glide id="ed-tool" className="ed-tool-on"/>}{icon}</button>;};
   const ocrChip=<motion.div className={'ed-chip'+(ocrOpen?' open':'')} initial={{opacity:0,y:4}} animate={{opacity:1,y:0}} transition={{...spring,delay:.04}}>
       <button className="ed-chip-main" aria-expanded={ocrOpen} aria-label="文字识别选项" disabled={!ready} onClick={()=>{setRegionPanelOpen(false);setFormatOpen(false);setOCROpen(o=>!o);}}><span className={'ed-dot '+ocrTone(ocrStatus)}/><ScanText/><span className="ed-chip-text" role="status">{ocrStatus}</span><ChevronDown className="ed-chev"/></button>
+      {barcodes.length>0&&<button className="ed-chip-main ed-barcode-chip" aria-label="条码结果" aria-expanded={intelligence==='barcode'} onClick={()=>{closeMenus();setIntelligence('barcode');}}><Barcode/><span className="mono">{barcodes[0].symbology}</span><span className="ed-chip-text">{barcodes[0].payload}</span></button>}
       <AnimatePresence initial={false}>{selectedText&&<motion.span key="text" className="ed-chip-actions" initial={{opacity:0,width:0}} animate={{opacity:1,width:'auto'}} exit={{opacity:0,width:0}} transition={spring}>
         <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void copyText()}><Copy/>复制文字</button>
         <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void sendText()}><Send/>文字预设</button></motion.span>}</AnimatePresence>
@@ -265,6 +270,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
             onCopy={e=>{if(selection.current){e.preventDefault();e.clipboardData.setData('text/plain',selection.current);}}}>
             {lines.map((line,index)=><div className="editor-text-line" key={index} style={{left:line.x,top:line.y,width:line.width,height:line.height}}>{line.glyphs.map((g,i)=><span key={i} style={{left:g.x-line.x,top:g.y-line.y,width:g.width,height:g.height,fontSize:g.height*.95,lineHeight:`${g.height}px`}}>{g.text}</span>)}</div>)}
           </div>
+          {translations.length>0&&<div className="editor-translations" aria-label="图上译文">{translations.map((block,index)=>block.box&&<span key={index} style={{left:block.box.x,top:block.box.y,width:block.box.width,minHeight:block.box.height,fontSize:Math.max(12,block.box.height*.72)}}>{block.translated}</span>)}</div>}
           {!region&&activeCrop&&crop&&<div className="editor-shade" aria-hidden="true"><i style={{left:activeCrop.x,top:activeCrop.y,width:activeCrop.width,height:activeCrop.height}}/></div>}
           {!region&&tool==='crop'&&activeCrop&&crop&&<div className="editor-crop" style={{left:activeCrop.x,top:activeCrop.y,width:activeCrop.width,height:activeCrop.height,outlineWidth:1.5/zoom}}
             onPointerDown={e=>{const handle=(e.target as HTMLElement).dataset.handle;if(!handle||!editor)return;e.preventDefault();e.stopPropagation();invalidate();resize.current={x:e.clientX,y:e.clientY,handle,original:{...crop},current:{...crop}};e.currentTarget.setPointerCapture(e.pointerId);}}
@@ -295,6 +301,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
           <button className="ed-tool" data-tip="删除所选标注" aria-label="删除所选标注" disabled={tool!=='select'||busy} onClick={()=>editor?.remove()}><Trash2/></button>
         </div>
         <div className="ed-bar" role="toolbar" aria-label="输出">
+          {([['translate','翻译',<Languages/>],['table','表格',<Table2/>],['formula','公式',<Sigma/>]] as const).map(([kind,label,icon])=><button className="ed-text" key={kind} aria-label={label} disabled={!ready||busy} onClick={()=>{closeMenus();setIntelligence(kind);}}>{icon}{label}</button>)}
           {inline&&(armed?<button className="ed-text ed-armed" disabled={busy} onClick={armed==='clear'?()=>void window.screenshot.clearRegion().catch(e=>setError(e.message)):reselect}><ScanLine/>再点一次清除标注</button>
             :<button className="ed-tool" data-tip="重新截图" aria-label="重新截图" disabled={busy} onClick={reselect}><ScanLine/></button>)}
           {region&&<button className="ed-text" disabled={busy||!ready} onClick={()=>void startScroll()}><GalleryVerticalEnd/>{scrollArmed?'再点一次清除标注并开始':'长截图'}</button>}
@@ -312,6 +319,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
     </motion.div>
     {!inline&&<div className="ed-zoom"><button aria-label="缩小" onClick={()=>setZoom(z=>Math.max(.05,+(z-.1).toFixed(2)))}><Minus/></button><span className="mono">{Math.round(zoom*100)}%</span><button aria-label="放大" onClick={()=>setZoom(z=>Math.min(3,+(z+.1).toFixed(2)))}><Plus/></button></div>}
     {tool==='picker'&&<ColorLoupe ref={picker} read={(x,y)=>engine.current?.sample(x,y)??null} busy={busy} copy={async text=>{await window.screenshot.copyText({id:state.editId,revision:version.current,text});}} fail={setError}/>}
+    <AnimatePresence>{intelligence&&<IntelligencePanel key={revision} id={state.editId} revision={revision} kind={intelligence} barcodes={barcodes} lines={lines} frame={()=>frame(true,true)} change={setIntelligence} close={()=>{setIntelligence(null);setTranslations([]);}} overlay={setTranslations}/>}</AnimatePresence>
     <AnimatePresence>{(error||state.outputError||state.outputStatus)&&<motion.div className={'ed-toast'+(!error&&!state.outputError?' ed-toast-success':'')} role={error||state.outputError?'alert':'status'} initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,transition:{duration:.12}}} transition={spring}>{[error,state.outputStatus,state.outputError].filter(Boolean).join('；')}{error&&!ready&&<button className="ed-text" onClick={()=>void window.screenshot.action('retry')}>重新加载图片</button>}{error&&<button aria-label="关闭提示" onClick={()=>setError('')}><X/></button>}</motion.div>}</AnimatePresence>
   </section>;
 }

@@ -1,6 +1,9 @@
 import type { CaptureRect, OCRLine } from './capture';
 
 export type IntelligenceKind = 'translate' | 'table' | 'formula';
+export function webURL(value: string): string | null {
+  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : null; } catch { return null; }
+}
 export interface VisionServiceConfig { baseURL: string; model: string; targetLanguage: string; hasCredential: boolean; useMediaCredential: boolean }
 export interface VisionServiceInput { baseURL: string; model: string; targetLanguage: string; credential?: string; useMediaCredential?: boolean }
 export interface TranslationBlock { original: string; translated: string; box?: CaptureRect }

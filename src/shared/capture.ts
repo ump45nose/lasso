@@ -84,6 +84,9 @@ export interface ScreenshotAPI {
   action(action: 'cancel' | 'reselect' | 'screen' | 'retry'): Promise<{ error: string | null }>;
   recognize(request: OCRRequest): Promise<OCRResult>;
   analyze(request: { id: string; revision: number; kind: IntelligenceKind; targetLanguage?: string; png: Uint8Array; crop: CaptureRect; lines?: OCRLine[] }): Promise<{ result: IntelligenceResult | null; error: string | null }>;
+  visionLanguage(): Promise<string>;
+  previewFormula(request: { id: string; revision: number; latex: string }): Promise<{ svg: string | null; error: string | null }>;
+  openURL(request: { id: string; revision: number; url: string }): Promise<{ error: string | null }>;
   exportTable(rows: string[][]): Promise<{ path: string | null; error: string | null }>;
   pinFormula(latex: string): Promise<{ error: string | null }>;
   invalidateOCR(request: {id: string; revision: number}): void;
