@@ -2,7 +2,7 @@ import type { RecordingMode, RecordingSessionState } from '../../shared/recordin
 import { RegionStore } from './region-store';
 import { regionPixels,regionPoints,validPixelRegion } from '../../shared/region-geometry';
 import { validateRegionPreset,type RegionPreset,type CustomCaptureRequest } from '../../shared/capture-regions';
-import { assertPng, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, encodeScreenshot, flattenBackground, formatScreenshotName, runAfterSaveAction, saveAutomaticScreenshot } from './output';
+import { assertPng, decorateScreenshot, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, encodeScreenshot, flattenBackground, formatScreenshotName, runAfterSaveAction, saveAutomaticScreenshot } from './output';
 import { screenshotOutputFormats, validateAnnotationMemory, type AnnotationStyleMemory, type ScreenshotSettings, type ScreenshotOutputFormat, type ScreenshotExportContentMode } from '../../shared/screenshot-settings';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
@@ -128,7 +128,7 @@ export class CaptureManager {
   }
   private vision: VisionOCR | null=null;
   private ocr=new OCRService(()=>this.vision??=require(join(__dirname,'native/capture-vision.node')), (id,revision)=>this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);
-  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private receiveMedia: ((image:NativeImage)=>Promise<void>) | undefined, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance?:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'>,private memory:()=>MemorySettings=memoryDefaults,private savePreferences?:(settings:ScreenshotSettings)=>void,private intelligence?:()=>IntelligenceService) {
+  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private receiveMedia: ((image:NativeImage)=>Promise<void>) | undefined, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance?:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'|'toolbarTools'|'mouseActions'>,private memory:()=>MemorySettings=memoryDefaults,private savePreferences?:(settings:ScreenshotSettings)=>void,private intelligence?:()=>IntelligenceService) {
     rmSync(this.sleepDirectory,{recursive:true,force:true});
     this.idle=new IdleSleep(memory,async()=>{if(!this.sleepJob){this.sleepJob=this.suspendEditor();try{await this.sleepJob;}finally{this.sleepJob=null;}}});
     this.regionsStore=new RegionStore(join(app.getPath('userData'),'capture-regions.json'),()=>this.settings().rememberRegionAcrossLaunches);
@@ -138,7 +138,7 @@ export class CaptureManager {
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
     this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
-    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,languages:()=>this.settings().languages,preferences:()=>this.settings(),editorShortcuts:()=>this.appearance?.().editorShortcuts,saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligenceService(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences?.({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
+    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,languages:()=>this.settings().languages,preferences:()=>this.settings(),editorShortcuts:()=>this.appearance?.().editorShortcuts,generalSettings:()=>this.appearance?.(),saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligenceService(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences?.({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
     const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>Boolean(this.cachedWindow&&e.sender===this.cachedWindow.webContents&&e.senderFrame===this.cachedWindow.webContents.mainFrame);
     const assert=(e:IpcMainEvent|IpcMainInvokeEvent)=>{if(!owns(e))throw new Error('截图操作只允许截图窗口调用');};
     ipcMain.handle('screenshot:checkpoint',(e,editId:string,checkpoint:EditorCheckpoint|null)=>{assert(e);if(this.state?.editId===editId)this.checkpointReply?.(checkpoint);});
@@ -224,13 +224,14 @@ export class CaptureManager {
     try{
       if(systemPreferences.getMediaAccessStatus('screen')!=='granted'){const granted=await this.ax.requestScreen();current();if(!granted)throw Error('请在系统设置允许 Lasso 录制屏幕');}
       restore=this.before();
+      this.configureNativeAppearance();
       const display=bounds?screen.getDisplayMatching(bounds):screen.getDisplayNearestPoint(screen.getCursorScreenPoint()),binding=bindDisplay(display);
       let chosen=bounds,windowId:number|undefined;
       const windows=mode==='window'?this.candidateWindows():[];
       if(mode==='screen')chosen={...display.bounds};
       else if(mode==='window'&&bounds){const window=windows.find(w=>contains(w,bounds.x+bounds.width/2,bounds.y+bounds.height/2));if(!window)throw Error('选中的窗口已关闭');chosen=window;windowId=window.id;}
       if(!chosen){
-        const frame=await this.native.capture({displayId:display.id,bounds:display.bounds,exclude:excludedCaptureWindows(this.native)}),session=randomUUID();
+        const frame=await this.native.capture({displayId:display.id,bounds:display.bounds,includeCursor:this.settings().includeCursor,exclude:excludedCaptureWindows(this.native)}),session=randomUUID();
         try{
           current();
           const selection=await new Promise<{bounds:CaptureRect;windowId?:number}>((resolve,reject)=>{
@@ -252,7 +253,7 @@ export class CaptureManager {
   async captureRecordingFrame(mode:RecordingMode,bounds:CaptureRect):Promise<{image:NativeImage;hostTimeMs:number}>{
     const source=this.recordingSource;if(!source||!screen.getAllDisplays().some(display=>sameCaptureDisplay(source.display,bindDisplay(display))))throw Error('录制显示器已变化，请停止后重新录制');
     if(mode==='window'&&!this.ax.windows().some(window=>window.id===source.windowId))throw Error('录制窗口已关闭');
-    const frame=await this.native.capture({displayId:source.display.id,bounds,windowId:source.windowId,shadow:false,exclude:excludedCaptureWindows(this.native)});
+    const frame=await this.native.capture({displayId:source.display.id,bounds,windowId:source.windowId,shadow:false,includeCursor:this.settings().includeCursor,exclude:excludedCaptureWindows(this.native)});
     try{const pixels=await this.native.pixels(frame.id,{format:'bgra'});return {image:nativeImage.createFromBitmap(Buffer.from(pixels.data),{width:pixels.width,height:pixels.height,scaleFactor:1}),hostTimeMs:frame.hostTimeMs};}
     finally{this.native.release(frame.id);}
   }
@@ -325,7 +326,7 @@ export class CaptureManager {
   }
   closeFocused(){if(this.native.snapshot().focused){this.cancel();return true;}if(this.pins.closeFocused())return true;if(this.win&&BrowserWindow.getFocusedWindow()===this.win){this.win.close();return true;}return false;}
   supportedLanguages(): string[] { return (this.vision??=require(join(__dirname,'native/capture-vision.node')) as VisionOCR).supportedLanguages(); }
-  private configureNativeAppearance(){const settings=this.appearance?.();if(!settings)return;const key=JSON.stringify({fonts:settings.fonts,importedFonts:settings.importedFonts});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings);}}
+  private configureNativeAppearance(){const settings=this.appearance?.(),{includeCursor,showCrosshair,loupeMagnification,loupeColorFormat}=this.settings(),screenshot={includeCursor,showCrosshair,loupeMagnification,loupeColorFormat};const key=JSON.stringify({fonts:settings?.fonts,importedFonts:settings?.importedFonts,...screenshot});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings,screenshot);}}
   private assertCaptureDisplay(){if(!this.captureDisplay||!screen.getAllDisplays().some(display=>sameCaptureDisplay(this.captureDisplay!,bindDisplay(display))))throw new CaptureReselectRequiredError();}
   async start(mode:CaptureMode='area',request?:{area?:SuccessfulCaptureArea;signal:AbortSignal;custom?:CustomCaptureRequest}) {
     if(this.recordingPreparing||this.recordingSource)throw Error('请先停止当前录制');
@@ -371,7 +372,7 @@ export class CaptureManager {
       this.state={id,editId:randomUUID(),width:this.bounds.width,height:this.bounds.height,pixelWidth:0,pixelHeight:0,candidates:[],windows:[],mode:mode==='rect'?'rect':mode==='window'?'window':'area',captureKind:request?.area?.kind??mode,saveFormat:this.preferences.format,phase:'selecting',selection:null,status:'',origin:'screen'};
       if(front){this.windows=[front];this.state.windows=[{...front,x:front.x-this.bounds.x,y:front.y-this.bounds.y}];await this.captureWindow(front.id,this.preferences.shadow);return Boolean(this.state?.imageFrame);}
       const exclude=excludedCaptureWindows(this.native);this.timing.queued=performance.now()-this.startedAt;
-      const frame=await this.native.capture({displayId:display.id,bounds:this.bounds,exclude});
+      const frame=await this.native.capture({displayId:display.id,bounds:this.bounds,includeCursor:this.settings().includeCursor,exclude});
       if(this.disposed||epoch!==this.epoch){this.native.release(frame.id);return false;}
       this.ownedFrames.add(frame.id);this.assertCaptureDisplay();this.screenFrame=frame;
       this.timing.captured=performance.now()-this.startedAt;this.timing.capture=frame.captureMs;this.timing.nativeQueue=frame.queueMs;this.timing.nativeCompletion=frame.completionMs;this.timing.nativeWork=frame.workMs;
@@ -415,7 +416,7 @@ export class CaptureManager {
   private detectScale={x:1,y:1};
   /** State notifications carry metadata; immutable pixels are read once by frame reference. */
   private editorState(){
-    if(this.state)Object.assign(this.state,{annotationMemory:this.settings().annotationMemory,editorShortcuts:this.appearance?.().editorShortcuts});
+    if(this.state)Object.assign(this.state,{annotationMemory:this.settings().annotationMemory,editorShortcuts:this.appearance?.().editorShortcuts,screenshotSettings:this.settings(),toolbarTools:this.appearance?.().toolbarTools,mouseActions:this.appearance?.().mouseActions});
     return this.state;
   }
   private publish(_includeImage=false){if(this.state&&this.win&&!this.win.isDestroyed())this.win.webContents.send('screenshot:changed',this.editorState());}
@@ -439,7 +440,7 @@ export class CaptureManager {
   private keepFrame(frame:NativeFrame,rect?:CaptureRect){this.ownedFrames.add(frame.id);const id=randomUUID();this.pixelSources.set(id,{frame,rect});return id;}
   private importFrame(image:NativeImage,bounds?:CaptureRect){const size=image.getSize(),frame=this.native.createFrame({...size,data:image.toBitmap(),...(bounds?{logicalX:bounds.x,logicalY:bounds.y,logicalWidth:bounds.width,logicalHeight:bounds.height}:{})});this.ownedFrames.add(frame.id);return frame;}
   syncRegionPreferences(){this.regionsStore.save();}
-  async preferencesChanged(){this.syncRegionPreferences();await this.history.prune();await this.pins.saveWorkspace(this.settings().pinWorkspace);}
+  async preferencesChanged(){this.configureNativeAppearance();this.syncRegionPreferences();await this.history.prune();await this.pins.saveWorkspace(this.settings().pinWorkspace);}
   async actCaptureHistory(id:string,action:'edit'|'pin'|'copy'|'delete'){
     if(typeof id!=='string'||!['edit','pin','copy','delete'].includes(action))throw Error('无效的历史操作');
     if(action==='delete'){await this.history.delete(id);return;}
@@ -543,7 +544,7 @@ export class CaptureManager {
       const unchanged=()=>screen.getAllDisplays().some(d=>sameCaptureDisplay(binding,bindDisplay(d)));
       const session=new ScrollSession(async()=>{
         if(!unchanged())throw Error('屏幕配置已变化');
-        const f=await this.native.capture({displayId,bounds:{x:this.bounds.x+rect.x,y:this.bounds.y+rect.y,width:rect.width,height:rect.height},exclude:excludedCaptureWindows(this.native)});
+        const f=await this.native.capture({displayId,bounds:{x:this.bounds.x+rect.x,y:this.bounds.y+rect.y,width:rect.width,height:rect.height},includeCursor:this.settings().includeCursor,exclude:excludedCaptureWindows(this.native)});
         try{
           if(epoch!==this.epoch||this.state!==s)throw Error('滚动截图会话已取消');
           if(!unchanged())throw Error('屏幕配置已变化');
@@ -628,7 +629,7 @@ export class CaptureManager {
     this.grabbing=true;this.selectedAt=performance.now();const epoch=this.epoch;
     let retained:NativeFrame|null=null;
     const handoff=async()=>{
-      const frame=retained??await this.native.capture({displayId:this.displayId!,bounds:this.bounds,windowId:id,shadow:shadow||this.preferences.shadow,exclude:[]});
+      const frame=retained??await this.native.capture({displayId:this.displayId!,bounds:this.bounds,windowId:id,shadow:shadow||this.preferences.shadow,includeCursor:this.settings().includeCursor,exclude:[]});
       if(epoch!==this.epoch||this.state!==s){if(!retained)this.native.release(frame.id);return;}
       retained=frame;this.ownedFrames.add(frame.id);this.timing.capture=frame.captureMs;this.timing.nativeQueue=frame.queueMs;this.timing.nativeCompletion=frame.completionMs;this.timing.nativeWork=frame.workMs;
       const win=await this.prepareWindow();if(!this.claimWindow(win,s,epoch))return;
@@ -700,7 +701,7 @@ export class CaptureManager {
     let saved:string|undefined;
     const save=async()=>saved??=await saveAutomaticScreenshot(encodeScreenshot(output,encoding,preferences.format,pixelScale),preferences.directory,preferences.format,preferences.fileNameTemplate,{app:this.sourceApp,...output.getSize()});
     if(actions.save){try{const path=await save();success.push('已保存到 '+path);}catch(error){errors.push('保存失败：'+(error as Error).message);}}
-    if(actions.copy){try{if(preferences.copyMode==='image')await copyImage(output);else{const path=await save();if(preferences.copyMode==='file')await copyFile(path);else await copyPath(path);}success.push('已复制');}catch(error){errors.push('复制失败：'+(error as Error).message);}}
+    if(actions.copy){try{if(preferences.copyMode==='image')await copyImage(decorateScreenshot(output,preferences));else{const path=await save();if(preferences.copyMode==='file')await copyFile(path);else await copyPath(path);}success.push('已复制');}catch(error){errors.push('复制失败：'+(error as Error).message);}}
     if(actions.save&&saved){try{await runAfterSaveAction(saved,preferences.afterSaveAction);}catch(error){errors.push('保存后操作失败：'+(error as Error).message);}}
     if(this.state!==s||s.editId!==editId||s.phase!=='result'){if(errors.length)this.notice([...success,...errors].join('；'));return;}
     s.outputStatus=success.join('；');s.outputError=errors.join('；');
@@ -789,7 +790,9 @@ export class CaptureManager {
     if(context&&this.screenFrame){
       const snapshot=validateAnnotations(frame.annotations,{getSize:()=>context.sourceSize},frame.crop);
       const data=await this.native.pixels(this.screenFrame.id,{format:'bgra',rect:frame.crop});
-      return {source:nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height}),image,annotations:normalizeRegionAnnotations(snapshot,frame.crop),pixelScale:{x:context.sourceSize.width/context.display.bounds.width,y:context.sourceSize.height/context.display.bounds.height}};
+      const annotations=normalizeRegionAnnotations(snapshot,frame.crop);
+      if(snapshot.cropPolygons)annotations.cropPolygons=snapshot.cropPolygons.map(polygon=>polygon.map(point=>({x:point.x-frame.crop.x,y:point.y-frame.crop.y})));
+      return {source:nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height}),image,annotations,pixelScale:{x:context.sourceSize.width/context.display.bounds.width,y:context.sourceSize.height/context.display.bounds.height}};
     }
     const source=await this.originalImage();
     return {source,image,annotations:validateAnnotations(frame.annotations,source,frame.crop),pixelScale:s.pixelScale};
@@ -798,7 +801,7 @@ export class CaptureManager {
     if(this.exporting)throw Error('正在输出图片');
     const preferences=this.preferences,requestedMode=contentMode??preferences.exportContentMode,mode=action==='pin'?'result':requestedMode;
     if(!['copy','save','quick-save','copy-file','copy-path','image','pin','media'].includes(action)||!screenshotOutputFormats.includes(format)||!['original','result','display'].includes(requestedMode))throw Error('不支持的输出操作');
-    if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!frame.annotations){const r=this.assertCrop(frame),png=assertPng(frame.png,r.width,r.height);this.acceptVersion(frame.id,frame.revision);this.exporting=true;try{await copyPng(png);if(this.state?.editId===frame.id)this.cancel();}finally{this.exporting=false;}return;}
+    if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!frame.annotations&&!frame.outputSize&&!preferences.cornerRadius&&!preferences.borderWidth){const r=this.assertCrop(frame),png=assertPng(frame.png,r.width,r.height);this.acceptVersion(frame.id,frame.revision);this.exporting=true;try{await copyPng(png);if(this.state?.editId===frame.id)this.cancel();}finally{this.exporting=false;}return;}
     const crop=this.assertCrop(frame),id=frame.id;this.acceptVersion(id,frame.revision);this.exporting=true;
     let pinnedId:string|undefined;
     try{
@@ -811,7 +814,7 @@ export class CaptureManager {
       }else image=this.contentImage(result?.image??decodeFrameImage(frame),mode,this.state?.pixelScale);
       const encoding={...preferences,resizeTo1x:mode==='display'?false:preferences.resizeTo1x};
       const copy=action==='copy'?preferences.copyMode:action==='copy-file'?'file':action==='copy-path'?'path':null;
-      if(copy==='image')await copyImage(image);
+      if(copy==='image')await copyImage(decorateScreenshot(image,preferences));
       else if(copy||action==='quick-save'){
         const path=await saveAutomaticScreenshot(encodeScreenshot(image,encoding,format,this.state?.pixelScale),preferences.quickSaveDirectory,format,preferences.fileNameTemplate,{app:this.sourceApp,...image.getSize()});
         if(copy==='file')await copyFile(path);else if(copy==='path')await copyPath(path);else await runAfterSaveAction(path,preferences.afterSaveAction);

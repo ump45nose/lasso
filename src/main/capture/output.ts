@@ -31,8 +31,13 @@ export function rgbaToPremulBgra(rgba: Buffer): Buffer {
 }
 
 /** One flattened image, either raw pixels from the editor or a PNG. */
-export function decodeFrameImage(frame: Pick<CaptureFrame, 'crop' | 'png' | 'pixels'>): NativeImage {
-  const r = frame.crop;
+export function decodeFrameImage(frame: Pick<CaptureFrame, 'crop' | 'png' | 'pixels' | 'outputSize' | 'annotations'>): NativeImage {
+  const crop=frame.crop, outputSize=frame.outputSize, effects=frame.annotations?.effects, polygons=frame.annotations?.cropPolygons;
+  if(effects&&(!Number.isInteger(effects.turns)||effects.turns<0||effects.turns>3||[effects.flipX,effects.flipY,effects.grayscale].some(v=>typeof v!=='boolean')||!Number.isFinite(effects.brightness)||effects.brightness<0||effects.brightness>200))throw Error('图像变换参数无效');
+  if(polygons&&(!Array.isArray(polygons)||polygons.length>100||polygons.some(p=>!Array.isArray(p)||p.length<3||p.length>20000||p.some(v=>!v||!Number.isFinite(v.x)||!Number.isFinite(v.y)))))throw Error('选区路径无效');
+  if(!crop)throw Error('无效的裁剪范围');
+  if(outputSize&&(![outputSize.width,outputSize.height].every(Number.isSafeInteger)||outputSize.width<1||outputSize.height<1||outputSize.width*outputSize.height>40_000_000||!((outputSize.width===crop.width&&outputSize.height===crop.height)||(outputSize.width===crop.height&&outputSize.height===crop.width))))throw Error('无效的输出尺寸');
+  const r = outputSize ? {...crop,...outputSize} : crop;
   if (!r || ![r.x, r.y, r.width, r.height].every(Number.isSafeInteger) || r.x < 0 || r.y < 0 || r.width < 1 || r.height < 1 || r.width * r.height > 40_000_000) throw Error('无效的裁剪范围');
   if (frame.pixels) {
     const data = Buffer.from(frame.pixels);
@@ -160,14 +165,38 @@ function encodePdf(image: NativeImage): Buffer {
   return Buffer.concat(chunks);
 }
 
+/** Decoration is applied once at the output boundary, after resizing. */
+export function decorateScreenshot(image: NativeImage, settings: ScreenshotSettings): NativeImage {
+  if(!settings.cornerRadius&&!settings.borderWidth)return image;
+  const {width,height}=image.getSize(),data=image.toBitmap();
+  const radius=Math.min(settings.cornerRadius,width/2,height/2),border=Math.min(settings.borderWidth,width/2,height/2);
+  const edge=Math.ceil(Math.max(radius,border));
+  const color=[5,3,1].map(offset=>parseInt(settings.borderColor.slice(offset,offset+2),16));
+  const inside=(x:number,y:number,inset:number,r:number)=>{
+    if(x<inset||y<inset||x>width-inset||y>height-inset)return false;
+    const cx=Math.max(inset+r,Math.min(width-inset-r,x)),cy=Math.max(inset+r,Math.min(height-inset-r,y));
+    return (x-cx)**2+(y-cy)**2<=r*r;
+  };
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+    if(x>=edge&&x<width-edge&&y>=edge&&y<height-edge)continue;
+    let outer=0,stroke=0;
+    for(const dy of [0.25,0.75])for(const dx of [0.25,0.75])if(inside(x+dx,y+dy,0,radius)){outer++;if(border&&!inside(x+dx,y+dy,border,Math.max(0,radius-border)))stroke++;}
+    const i=(y*width+x)*4,coverage=outer/4,ink=stroke/4;
+    for(let c=0;c<3;c++)data[i+c]=Math.round(data[i+c]*(coverage-ink)+color[c]*ink);
+    data[i+3]=Math.round(data[i+3]*(coverage-ink)+255*ink);
+  }
+  return nativeImage.createFromBitmap(data,{width,height,scaleFactor:1});
+}
+
 export function encodeScreenshot(image: NativeImage, settings: ScreenshotSettings, format: ScreenshotOutputFormat = settings.format, scale?: { x: number; y: number }): Buffer {
   if (image.isEmpty()) throw Error('图片内容为空');
   let output = image;
-  if (format === 'jpeg' || format === 'bmp') output = flattenBackground(output, settings.background === 'solid' ? settings.backgroundColor : '#ffffff');
   if (settings.resizeTo1x && scale && (scale.x > 1 || scale.y > 1)) {
     const size = output.getSize();
     output = output.resize({ width: Math.max(1, Math.round(size.width / scale.x)), height: Math.max(1, Math.round(size.height / scale.y)), quality: 'best' });
   }
+  output=decorateScreenshot(output,settings);
+  if(format==='jpeg'||format==='bmp'||settings.background==='solid')output=flattenBackground(output,settings.background==='solid'?settings.backgroundColor:'#ffffff');
   switch (format) {
     case 'png': return output.toPNG();
     case 'jpeg': return output.toJPEG(settings.jpegQuality);

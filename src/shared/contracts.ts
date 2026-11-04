@@ -30,7 +30,16 @@ export type AgentEvent = { taskId: string; revision: number; patch: Partial<Omit
 export type FontRole = 'display' | 'text' | 'ui' | 'mono';
 export interface ImportedFont { family: string; file: string }
 export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
+export interface ScriptAction { id: string; name: string; enabled: boolean; code: string }
+export type GeneralSettings = Pick<Settings, 'launchAtLogin' | 'themeMode' | 'toolbarTools' | 'mouseActions' | 'scriptActions' | 'autoCheckUpdates'>;
 export interface Settings {
+  launchAtLogin: boolean;
+  themeMode: 'paper' | 'system';
+  /** Empty displays every tool. */
+  toolbarTools: string[];
+  mouseActions: { doubleClick: 'copy' | 'save' | 'pin' | 'none'; rightClick: 'reselect' | 'cancel'; middleClick: 'pin' | 'quick-save' | 'none' };
+  scriptActions: ScriptAction[];
+  autoCheckUpdates: boolean;
   vision: Omit<VisionServiceConfig, 'hasCredential'>;
   memory: MemorySettings;
   screenshot: ScreenshotSettings;
@@ -126,6 +135,8 @@ export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' |
 export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
+  saveGeneral(options: GeneralSettings): Promise<{ error: string | null }>;
+  runScriptAction(id: string, input?: { text?: string }): Promise<{ output: string; error: string | null }>;
   recordingPanel(open: boolean): Promise<void>;
   onRecordingClose(callback: () => void): () => void;
   recordingState(): Promise<RecordingSessionState | null>;

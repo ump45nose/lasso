@@ -8,14 +8,14 @@ import { screenshotDefaults, screenshotKinds, validateScreenshotSettings } from 
 import { canonicalShortcut, editorActionIds, globalActionIds, isValidShortcut, validateEditorShortcuts } from '../shared/shortcuts';
 import { validMemorySettings } from '../shared/memory';
 import { validatePresets } from './presets';
-import { migrateSettings } from './settings';
+import { migrateSettings, validateGeneralSettings } from './settings';
 import { validateFonts } from './fonts';
 
 interface ConfigAccess { readSettings(): Settings; writeSettings(settings: Settings): void; readPresets(): Preset[]; writePresets(presets: Preset[]): void }
 const configDefaults = (): WebDavConfig => ({ enabled: false, url: '', remotePath: 'Lasso/config.json', username: '', autoSync: false });
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
-const portableKeys = ['memory', 'vision', 'screenshot', 'shortcut', 'captureShortcuts', 'actionShortcuts', 'editorShortcuts', 'ignoredApps', 'lastTarget', 'selectionEnabled', 'clipboardFallback', 'appPrompts', 'fonts'];
+const portableKeys = ['themeMode','toolbarTools','mouseActions','scriptActions','autoCheckUpdates','memory', 'vision', 'screenshot', 'shortcut', 'captureShortcuts', 'actionShortcuts', 'editorShortcuts', 'ignoredApps', 'lastTarget', 'selectionEnabled', 'clipboardFallback', 'appPrompts', 'fonts'];
 const presetKeys = ['id', 'name', 'template', 'target', 'mode', 'needsSelection', 'enabled', 'model', 'effort', 'temporaryChat', 'kind', 'image'];
 const pick = (value: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]]));
 const fields = (value: unknown, keys: string[]): unknown => record(value) ? pick(value, keys) : value;
@@ -25,6 +25,8 @@ const mapFields = (value: unknown, keys: string[]): unknown => record(value) ? O
 function portableSettings(value: Record<string, unknown>) {
   const settings = pick(value, portableKeys), styleKeys = Object.keys(screenshotDefaults().annotationMemory.defaultStyle);
   for (const [key, keys] of Object.entries({ vision: ['baseURL', 'model', 'targetLanguage', 'useMediaCredential'], memory: ['enabled', 'idleMinutes'], fonts: ['display', 'text', 'ui', 'mono'], captureShortcuts: ['rect', 'area', 'window', 'screen', 'front'], actionShortcuts: globalActionIds, editorShortcuts: editorActionIds })) if (key in settings) settings[key] = fields(settings[key], keys);
+  if ('scriptActions' in settings) settings.scriptActions=rows(settings.scriptActions,['id','name','enabled','code']);
+  if ('mouseActions' in settings) settings.mouseActions=fields(settings.mouseActions,['doubleClick','rightClick','middleClick']);
   if ('appPrompts' in settings) settings.appPrompts = rows(settings.appPrompts, ['bundleId', 'name', 'prompt', 'enabled']);
   if ('ignoredApps' in settings) settings.ignoredApps = rows(settings.ignoredApps, ['bundleId', 'name', 'enabled', 'scopes']);
   if (record(settings.screenshot)) {
@@ -133,6 +135,7 @@ export class WebDavSyncService {
     const current = this.access.readSettings(), incoming = mergePreferences(current as unknown as Record<string, unknown>, clean.settings) as unknown as Settings;
     if (!validMemorySettings(incoming.memory) || !['chatgpt', 'gemini', 'codex', 'pi'].includes(incoming.lastTarget)) throw Error('配置包中的应用偏好无效');
     const settings = migrateSettings({ ...incoming, local: current.local, importedFonts: current.importedFonts, screenshot: { ...incoming.screenshot, directory: current.screenshot.directory, quickSaveDirectory: current.screenshot.quickSaveDirectory } }, current);
+    validateGeneralSettings(settings);
     validateScreenshotSettings(settings.screenshot, settings.screenshot.languages); validateFonts(settings.fonts);
     if (!validMemorySettings(settings.memory) || [settings.selectionEnabled, settings.clipboardFallback].some(item => typeof item !== 'boolean') || !Array.isArray(settings.appPrompts) || !Array.isArray(settings.ignoredApps)) throw Error('配置包中的应用偏好无效');
     const promptIds = new Set<string>(), ignoredIds = new Set<string>();

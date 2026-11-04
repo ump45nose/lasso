@@ -1,3 +1,5 @@
+import type { Settings } from './contracts';
+import type { ScreenshotSettings } from './screenshot-settings';
 import type { RecordingAction, RecordingSessionState } from './recording';
 import type { CaptureDisplayBinding } from './capture-efficiency';
 import type { RegionPreset, RegionConfiguration } from './capture-regions';
@@ -11,7 +13,7 @@ export interface OCRGlyph extends CaptureRect { text: string }
 export interface OCRLine extends CaptureRect { text: string; glyphs: OCRGlyph[]; confidence: number }
 export interface BarcodeItem extends CaptureRect { symbology: string; payload: string }
 export interface OCRResult { id: string; revision: number; lines: OCRLine[]; barcodes?: BarcodeItem[] }
-export interface AnnotationSnapshot { objects: Record<string, unknown>[]; crop: CaptureRect; nextNumber: number; privacy: CaptureRect[] }
+export interface AnnotationSnapshot { effects?: { turns:number; flipX:boolean; flipY:boolean; grayscale:boolean; brightness:number }; cropPolygons?: {x:number;y:number}[][]; objects: Record<string, unknown>[]; crop: CaptureRect; nextNumber: number; privacy: CaptureRect[] }
 export interface EditorCheckpoint {
   revision: number;
   regionRatio?: number | null;
@@ -27,7 +29,7 @@ export interface EditorCheckpoint {
   ocrMode: OCRMode;
   enhance: boolean;
 }
-export interface CaptureFrame { id: string; revision: number; crop: CaptureRect; png?: Uint8Array; pixels?: Uint8Array; annotations?: AnnotationSnapshot }
+export interface CaptureFrame { outputSize?: {width:number;height:number}; id: string; revision: number; crop: CaptureRect; png?: Uint8Array; pixels?: Uint8Array; annotations?: AnnotationSnapshot }
 export type OCRMode = 'text' | 'code';
 export interface OCRRequest extends CaptureFrame { mode: OCRMode; enhance: boolean; force?: boolean }
 export type ExportAction = 'copy' | 'save' | 'quick-save' | 'copy-file' | 'copy-path' | 'image' | 'pin' | 'media';
@@ -42,9 +44,9 @@ export interface ScrollCaptureState { status: 'running' | 'paused' | 'review'; w
 type ScrollSimpleAction = 'pause' | 'resume' | 'finish' | 'cancel' | 'undo' | 'edit';
 export type ScrollCaptureAction = ScrollSimpleAction | { type: ScrollSimpleAction } | { type: 'direction'; direction: ScrollDirection } | { type: 'remove-segment'; index: number } | { type: 'adjust-seam'; index: number; delta: number };
 export interface EditableRegion { display:CaptureDisplayBinding; sourceSize:{width:number;height:number}; initialCrop:CaptureRect; currentCrop:CaptureRect; ratio:number|null }
-export interface ScreenshotState { checkpoint?: EditorCheckpoint; editableRegion?:EditableRegion; copyIntent?:number; pointer?: { x: number; y: number }; captureKind?: ScreenshotKind; presentation?: 'inline' | 'window'; pixelScale?: { x: number; y: number }; saveFormat?: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string>; outputStatus?: string; outputError?: string; id: string; editId: string; imageCrop?: CaptureRect; imageFrame?: string; backdropFrame?: string; placement?: CaptureRect; mode?: 'rect' | 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
+export interface ScreenshotState { screenshotSettings?: ScreenshotSettings; toolbarTools?: string[]; mouseActions?: Settings['mouseActions']; checkpoint?: EditorCheckpoint; editableRegion?:EditableRegion; copyIntent?:number; pointer?: { x: number; y: number }; captureKind?: ScreenshotKind; presentation?: 'inline' | 'window'; pixelScale?: { x: number; y: number }; saveFormat?: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string>; outputStatus?: string; outputError?: string; id: string; editId: string; imageCrop?: CaptureRect; imageFrame?: string; backdropFrame?: string; placement?: CaptureRect; mode?: 'rect' | 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
 export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; barcodes?: BarcodeItem[]; status: string; topmost: boolean; opacity: number; passthrough: boolean; editing?: boolean; editId?: string; kind?: PinKind; title?: string; groupId?: string; locked?: boolean; thumbnail?: boolean; zoomPercent?: number; wheelAction?: PinWheelAction; groups?: PinGroup[]; payload?: PinContentPayload }
-export interface PinSource { editId: string; width: number; height: number; bgra: Uint8Array; annotations: AnnotationSnapshot; pixelScale?: { x: number; y: number }; saveFormat: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string> }
+export interface PinSource { screenshotSettings?: ScreenshotSettings; toolbarTools?: string[]; mouseActions?: Settings['mouseActions']; editId: string; width: number; height: number; bgra: Uint8Array; annotations: AnnotationSnapshot; pixelScale?: { x: number; y: number }; saveFormat: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string> }
 export type PinAction = 'recognize' | 'edit' | 'image' | 'copy' | 'close' | 'hide' | 'topmost' | 'opacity' | 'zoom-in' | 'zoom-out' | 'passthrough' | 'lock' | 'thumbnail' | 'reset-zoom' | 'save' | 'quick-save' | 'copy-file' | 'copy-path';
 /** Pin opacity steps; the options row cycles through them. */
 export const pinOpacities = [1, 0.85, 0.65, 0.4];

@@ -26,6 +26,16 @@ export interface AnnotationStyleMemory {
 }
 export interface ScreenshotActions { show: boolean; copy: boolean; save: boolean }
 export interface ScreenshotSettings {
+  selectionShape: 'rect' | 'freehand' | 'polygon' | 'multi-rect';
+  cornerRadius: number;
+  borderWidth: number;
+  borderColor: string;
+  includeCursor: boolean;
+  showCrosshair: boolean;
+  loupeMagnification: 4 | 8 | 12;
+  loupeColorFormat: 'hex' | 'rgb' | 'hsl';
+  watermarkText: string;
+  watermarkOpacity: number;
   recording: RecordingSettings;
   history: CaptureHistoryPolicy;
   pinWorkspace: PinWorkspaceSettings;
@@ -52,6 +62,9 @@ export interface ScreenshotSettings {
 }
 export function screenshotDefaults(directory = ''): ScreenshotSettings {
   return {
+    selectionShape: 'rect', cornerRadius: 0, borderWidth: 0, borderColor: '#bd7658',
+    includeCursor: false, showCrosshair: true, loupeMagnification: 8, loupeColorFormat: 'hex',
+    watermarkText: 'Lasso', watermarkOpacity: 0.15,
     recording: recordingDefaults(),
     history: captureHistoryDefaults(), pinWorkspace: pinWorkspaceDefaults(),
     rememberRegionAcrossLaunches: true, regionPresets: [],
@@ -113,6 +126,12 @@ export function validateScreenshotSettings(value: ScreenshotSettings, supported:
   if (!value || typeof value.directory !== 'string' || !value.directory.startsWith('/') || typeof value.quickSaveDirectory !== 'string' || !value.quickSaveDirectory.startsWith('/') || !screenshotOutputFormats.includes(value.format) || typeof value.resizeTo1x !== 'boolean' || !['transparent', 'solid'].includes(value.background) || !/^#[\da-f]{6}$/i.test(value.backgroundColor) || typeof value.shadow !== 'boolean' || typeof value.pinKeepsSize !== 'boolean' || !Number.isSafeInteger(value.scrollMaxHeight) || value.scrollMaxHeight < 1) throw Error('截图配置无效');
   if (!Number.isInteger(value.jpegQuality) || value.jpegQuality < 10 || value.jpegQuality > 100) throw Error('JPEG 质量需为 10–100 的整数');
   if (!['image', 'file', 'path'].includes(value.copyMode) || !['result', 'original', 'display'].includes(value.exportContentMode) || !['none', 'reveal', 'copy-path', 'copy-file'].includes(value.afterSaveAction)) throw Error('截图输出配置无效');
+  if (!['rect','freehand','polygon','multi-rect'].includes(value.selectionShape) ||
+    !Number.isFinite(value.cornerRadius) || value.cornerRadius < 0 || value.cornerRadius > 64 ||
+    !Number.isFinite(value.borderWidth) || value.borderWidth < 0 || value.borderWidth > 16 || !/^#[\da-f]{6}$/i.test(value.borderColor) ||
+    typeof value.includeCursor !== 'boolean' || typeof value.showCrosshair !== 'boolean' || ![4,8,12].includes(value.loupeMagnification) ||
+    !['hex','rgb','hsl'].includes(value.loupeColorFormat) || typeof value.watermarkText !== 'string' || value.watermarkText.length > 500 ||
+    !Number.isFinite(value.watermarkOpacity) || value.watermarkOpacity < 0 || value.watermarkOpacity > 1) throw Error('高级截图配置无效');
   validateScreenshotFileNameTemplate(value.fileNameTemplate);
   validateAnnotationMemory(value.annotationMemory);
   validateRecordingSettings(value.recording);

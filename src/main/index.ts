@@ -3,9 +3,10 @@ import { RecordingManager } from './capture/recording';
 import { saveRecordingOutput } from './capture/output';
 import type { CustomCaptureRequest,RegionPreset } from '../shared/capture-regions';
 import { validateScreenshotSettings, type ScreenshotSettings } from '../shared/screenshot-settings';
-import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences, safeStorage } from 'electron';
+import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences, safeStorage, nativeTheme, clipboard } from 'electron';
 import type { IpcMainInvokeEvent, Rectangle, WebContents } from 'electron';
 import { basename, isAbsolute, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, statSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
@@ -17,7 +18,7 @@ import { readLocalImage } from './capture/local-images';
 import { Images, type ImageInput } from './images';
 import { applicationIcon } from './app-icons';
 import { MediaWindow } from './media-window';
-import { readSettings, writeSettings } from './settings';
+import { readSettings, writeSettings, validateGeneralSettings, runControlledScript } from './settings';
 import { WebDavSyncService } from './sync-webdav';
 import type { PinArrangeMode, PinWorkspaceSettings, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
@@ -343,6 +344,9 @@ function configureActionShortcuts(settings: Settings): string[] {
 }
 function persistSettings(next: Settings) {
   const changed=JSON.stringify(next)!==JSON.stringify(state.settings);
+  validateGeneralSettings(next);
+  if(next.launchAtLogin!==state.settings.launchAtLogin && app.isPackaged && !process.env.LASSO_PROFILE)app.setLoginItemSettings({openAtLogin:next.launchAtLogin});
+  nativeTheme.themeSource=next.themeMode==='system'?'system':'light';
   writeSettings(settingsPath,next);state.settings=next;if(changed)webdav?.scheduleAutoSync();
 }
 function persistPresets(next: Preset[]) {
@@ -554,6 +558,23 @@ function installIPC() {
       persistSettings(next); publish();
     });
   });
+  ipcMain.handle('shell:general-settings',(event,options:import('../shared/contracts').GeneralSettings)=>{assertLocal(event);return result(()=>{
+    validateGeneralSettings(options);
+    const {launchAtLogin,themeMode,toolbarTools,mouseActions,scriptActions,autoCheckUpdates}=options;
+    persistSettings({...state.settings,launchAtLogin,themeMode,toolbarTools,mouseActions,scriptActions,autoCheckUpdates});publish();
+  });});
+  ipcMain.handle('shell:script-run',async(event,id:string,input?:{text?:string})=>{
+    assertLocal(event);
+    try {
+      const action=state.settings.scriptActions.find(action=>action.id===id&&action.enabled);
+      if(!action)throw Error('脚本不存在或未启用');
+      const text=input?.text??await clipboard.readText();
+      if(typeof text!=='string'||text.length>1000000)throw Error('脚本输入文字过长');
+      const image=state.inputImage;
+      const output=await runControlledScript(action.code,{text,width:image?.width??0,height:image?.height??0,app:lastSelection?.sourceApp??''});
+      await clipboard.writeText(output);return {output,error:null};
+    }catch(error){return {output:'',error:(error as Error).message};}
+  });
   const saveSettings = (next: Settings) => { persistSettings(next); publish(); };
   ipcMain.handle('shell:fonts', (event, fonts: Settings['fonts']) => {
     assertLocal(event);
@@ -703,6 +724,14 @@ async function boot() {
     presets: readPresets(presetsPath), capture: { status: 'paused', message: '划词未启动' }, selection: null,
     captureEfficiency:{phase:'idle',mode:null,remaining:0,hasLastArea:false,error:null}
   };
+  nativeTheme.themeSource=state.settings.themeMode==='system'?'system':'light';
+  if(app.isPackaged&&!process.env.LASSO_PROFILE)app.setLoginItemSettings({openAtLogin:state.settings.launchAtLogin});
+  if(app.isPackaged&&!process.env.LASSO_PROFILE&&state.settings.autoCheckUpdates)void fetch('https://api.github.com/repos/ump45nose/lasso/releases/latest',{signal:AbortSignal.timeout(5000)}).then(async response=>{
+    if(!response.ok)return;const release=await response.json() as {tag_name?:string};
+    const latest=release.tag_name?.replace(/^v/,'');if(!latest||!/^\d+\.\d+\.\d+$/.test(latest))return;
+    const current=app.getVersion().split('.').map(Number),candidate=latest.split('.').map(Number);
+    const first=candidate.findIndex((n,i)=>n!==current[i]);if(first>=0&&candidate[first]>current[first]){state.notice=`发现新版本 ${latest}，可从项目发布页下载`;publish();}
+  }).catch(()=>{});
   const cursor = screen.getCursorScreenPoint();
   win = new BrowserWindow({
     ...placeNear(cursor, screen.getDisplayNearestPoint(cursor).workArea),
@@ -728,9 +757,12 @@ async function boot() {
     const area = screen.getDisplayMatching(win.getBounds()).workArea;
     win.setBounds(state.expanded ? area : fitToWorkArea(win.getBounds(), area));
   });
-  // Local windows need no browser permissions except listing installed fonts for the font picker.
-  session.defaultSession.setPermissionCheckHandler((contents, permission) => permission === 'local-fonts' && contents === win.webContents);
-  session.defaultSession.setPermissionRequestHandler((contents, permission, callback) => callback(permission === 'local-fonts' && contents === win.webContents));
+  // Only the local main window may list fonts or copy an explicit script result.
+  const localMainURL=pathToFileURL(join(__dirname,'renderer/index.html')).href;
+  const localPermission=(contents:WebContents|null,permission:string,details:{isMainFrame:boolean;requestingUrl?:string})=>
+    contents===win.webContents&&(permission==='local-fonts'||(permission==='clipboard-sanitized-write'&&details.isMainFrame&&details.requestingUrl===localMainURL&&contents.mainFrame.url===localMainURL));
+  session.defaultSession.setPermissionCheckHandler((contents,permission,_origin,details)=>localPermission(contents,permission,details));
+  session.defaultSession.setPermissionRequestHandler((contents,permission,callback,details)=>callback(localPermission(contents,permission,details)));
   for (const [partition, hosts] of [['persist:chatgpt', ['chatgpt.com', 'www.chatgpt.com']], ['persist:gemini', ['gemini.google.com']]] as const) {
   const webSession = session.fromPartition(partition);
   const mediaOrigins = new Set<string>();
