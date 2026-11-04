@@ -10,6 +10,9 @@
 .l-shot-quality { flex: 1; min-width: 0; accent-color: var(--clay); }
 .l-shot-quality + output { min-width: 42px; text-align: right; font-size: 12.5px; }
 .l-shot-template-help { overflow-wrap: anywhere; }
+.l-vision-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.l-vision-actions .l-field-help { margin: 0; }
+#screenshot-vision { scroll-margin-top: 12px; }
 .l-ignored-scopes { display: flex; flex-wrap: wrap; gap: 6px; }
 .l-ignored-scopes [aria-checked="true"] { color: var(--clay-ink); background: var(--clay-wash-2); border-color: var(--clay-line); }
 .l-ignored-scopes [aria-checked="false"] svg { visibility: hidden; }

@@ -10,10 +10,13 @@ contextBridge.exposeInMainWorld('screenshot', {
   ready: () => {},
   onState: cb=>{const listener=(_e,s)=>cb(s);ipcRenderer.on('ui-shots:changed',listener);return()=>ipcRenderer.removeListener('ui-shots:changed',listener);},
   onSuspend: () => () => {},
-  action:done, scrollAction:done,
-  analyze: async () => ({ result:null,error:'当前预览未配置图像服务' }),
-  exportTable: async () => ({ path:null,error:null }), pinFormula:done,
-  recognize: async request => ({ id: request.id, revision: request.revision, lines: [{ x: 24, y: 40, width: 260, height: 26, text: '示例识别文字', confidence: 0.95, glyphs: [...'示例识别文字'].map((text, i) => ({ x: 24 + i * 43, y: 40, width: 42, height: 26, text })) }] }),
+  action:done, scrollAction:request=>ipcRenderer.invoke('ui-shots:scroll-action',request),
+  analyze: request=>ipcRenderer.invoke('ui-shots:analyze',request),
+  visionLanguage: ()=>ipcRenderer.invoke('ui-shots:vision-language'),
+  previewFormula: request=>ipcRenderer.invoke('ui-shots:formula-preview',request),
+  openURL: request=>ipcRenderer.invoke('ui-shots:open-url',request),
+  exportTable: request=>ipcRenderer.invoke('ui-shots:table-export',request), pinFormula:request=>ipcRenderer.invoke('ui-shots:formula-pin',request),
+  recognize: request=>ipcRenderer.invoke('ui-shots:recognize',request),
   invalidateOCR: () => {}, export: (frame, action, format, contentMode) => ipcRenderer.invoke('ui-shots:export', frame, action, format, contentMode),
   saveAnnotationMemory: memory => ipcRenderer.invoke('ui-shots:annotation-memory', memory), copyText: request => ipcRenderer.invoke('ui-shots:editor-text', 'copy', request), sendText: request => ipcRenderer.invoke('ui-shots:editor-text', 'send', request)
 });

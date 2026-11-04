@@ -86,7 +86,8 @@ const methods = {
 };
 const memoryClipboard = Object.fromEntries(Object.entries(methods).map(([name,method])=>[name,(...args)=>{calls.push(name);return method(...args);} ]));
 memoryClipboard.__uiShotsMemory = true;
-const memoryElectron = Object.create(electron, {clipboard:{value:memoryClipboard},ClipboardItem:{value:MemoryClipboardItem}});
+const safeStorage = { isEncryptionAvailable:()=>true, encryptString:value=>Buffer.from('ui-shots:'+value), decryptString:value=>value.toString().replace(/^ui-shots:/,'') };
+const memoryElectron = Object.create(electron, {clipboard:{value:memoryClipboard},ClipboardItem:{value:MemoryClipboardItem},safeStorage:{value:safeStorage}});
 const Module = require('node:module'), originalLoad = Module._load;
 Module._load = function(request, ...args) { return request==='electron' ? memoryElectron : originalLoad.call(this,request,...args); };
 global.uiShotsClipboard = {calls,systemReads:0,systemWrites:0};
@@ -155,7 +156,10 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     };
     if(!find()||!find('action-bar'))throw Error('UI startup failed: '+JSON.stringify(BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL()}))));
     global.uiShots = { captureOnly, surfacesOnly, fs, path, wait, ready, scrollTo, settingsTab, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
-      save: async (w, name) => { fs.writeFileSync(path.join(out, name + '.png'), (await w.webContents.capturePage()).toPNG()); return name; } };
+      save: async (w, name) => {
+        await page(w, `(async()=>{for(let frame=0;frame<120;frame++){await new Promise(requestAnimationFrame);if([...document.querySelectorAll('.l-seg')].every(group=>{const active=group.querySelector('[aria-checked="true"]'),thumbs=group.querySelectorAll('.l-seg-thumb');if(!active)return thumbs.length===0;if(thumbs.length!==1||!active.contains(thumbs[0]))return false;const style=getComputedStyle(thumbs[0]);return Number(style.opacity)===1&&new DOMMatrixReadOnly(style.transform).isIdentity&&!thumbs[0].getAnimations().some(animation=>animation.playState==='running');}))return;}throw Error('Segmented animation did not settle before capture');})()`);
+        fs.writeFileSync(path.join(out, name + '.png'), (await w.webContents.capturePage()).toPNG()); return name;
+      } };
   }, out, fixtures, runtime, captureOnly, surfacesOnly);
 
   // S2 uses the public IPC contracts against a deterministic, persisted fixture store.
@@ -402,6 +406,36 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     }
     return names;
   }));
+  // Vision settings use the real service/configuration IPC with synthetic safeStorage.
+  saved.push(...await main(async () => {
+    const {find,page,wait,ready,scrollTo,settingsTab,save,ipcMain,fs,path,app,out}=global.uiShots,names=[],receipts=[],m=find();
+    if(global.uiShots.surfacesOnly)return names;
+    const original=await page(m,'window.desktop.visionConfig()'),media=await page(m,'window.desktop.mediaConfig()'),handler=ipcMain._invokeHandlers.get('shell:vision-config-save');
+    const expect=(ok,message)=>{if(!ok)throw Error(message);};
+    ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',async(event,input)=>{const {credential,...config}=input;receipts.push({...config,credentialAction:credential===undefined?'keep':credential?'replace':'clear'});const result=await handler(event,input);expect(!('credential'in result),'Vision response leaked credential');return result;});
+    const click=async selector=>{await page(m,`document.querySelector(${JSON.stringify(selector)}).click()`);await wait(200);};
+    const fill=async(id,value)=>{await page(m,`(()=>{const e=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(120);};
+    const shot=async name=>{await scrollTo(m,'#screenshot-vision .l-set-row-head');names.push(await save(m,name));};
+    const commit=async()=>{await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务').click()`);await ready(m,`document.querySelector('#screenshot-vision [role="status"]')?.textContent.includes('已保存')`);};
+    try {
+      await page(m,`window.desktop.saveMediaConfig({baseURL:'https://images.example.invalid/v1',credential:'synthetic-media-key'})`);
+      await settingsTab(m,'截图');await ready(m,`Boolean(document.querySelector('#screenshot-vision input'))`);await shot('settings-vision-reuse');
+      await click('[aria-label="复用生图 API 凭据"]');await fill('vision-base-url','file:///invalid');await fill('vision-model','vision-fixture');await fill('vision-api-key','synthetic-vision-key');
+      await page(m,`[...document.querySelectorAll('[aria-label="默认翻译语言"] button')].find(b=>b.textContent==='日文').click()`);await shot('settings-vision-independent');
+      await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务').click()`);await ready(m,`Boolean(document.querySelector('#screenshot-vision [role="alert"]'))`);await shot('settings-vision-validation');expect(receipts.length===0,'Invalid vision configuration reached IPC');
+      await fill('vision-base-url','https://vision.example.invalid/v1/');await commit();await shot('settings-vision-saved');
+      let config=await page(m,'window.desktop.visionConfig()');expect(config.hasCredential&&!config.useMediaCredential&&config.targetLanguage==='日本語'&&config.baseURL==='https://vision.example.invalid/v1','Vision configuration did not persist');
+      expect(await page(m,`document.getElementById('vision-api-key').value===''&&document.getElementById('vision-api-key').type==='password'`),'Vision secret remained in input');
+      await fill('vision-model','vision-fixture-edited');await commit();expect(receipts.at(-1).credentialAction==='keep'&&(await page(m,'window.desktop.visionConfig()')).hasCredential,'Blank key did not preserve saved secret');
+      await settingsTab(m,'通用');await settingsTab(m,'截图');await ready(m,`document.getElementById('vision-model')?.value==='vision-fixture-edited'`);expect(await page(m,`document.querySelector('[aria-label="默认翻译语言"] [aria-checked="true"]').textContent==='日文'`),'Vision language did not restore');
+      const disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')),secretDisk=fs.readFileSync(path.join(app.getPath('userData'),'vision-service/config.json'),'utf8');
+      const {hasCredential,...persisted}=await page(m,'window.desktop.visionConfig()');expect(JSON.stringify(disk.vision)===JSON.stringify(persisted)&&!secretDisk.includes('synthetic-vision-key'),'Vision settings persistence or secret isolation failed');
+      await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='清除已存独立凭据').click()`);await wait(100);await commit();expect(!(await page(m,'window.desktop.visionConfig()')).hasCredential&&receipts.at(-1).credentialAction==='clear','Independent key did not clear');await shot('settings-vision-cleared');
+      await click('[aria-label="复用生图 API 凭据"]');await commit();expect((await page(m,'window.desktop.visionConfig()')).hasCredential,'Media credential was not reused');
+      fs.writeFileSync(path.join(out,'stage-6-settings.json'),JSON.stringify({status:'passed',receipts,persisted,checks:['复用凭据、独立凭据保存/留空保留/清除','URL校验、默认语言、切页恢复','真实IPC与磁盘一致、返回值/输入/文件脱敏'],secrets:'synthetic safeStorage; no system keychain'},null,2));
+    } finally {ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',handler);await page(m,`(async()=>{await window.desktop.saveVisionConfig({...${JSON.stringify(original)},credential:''});await window.desktop.saveMediaConfig({baseURL:${JSON.stringify(media.baseURL)},credential:''});await window.desktop.act('close-settings');})()`);}
+    return names;
+  }));
   // Stage 4 settings: actions are checked against the persisted fixture receipts.
   saved.push(...await main(async () => {
     const {find,page,wait,ready,scrollTo,settingsTab,save,fs,path,out,stage4}=global.uiShots,names=[],checks=[],m=find(),s=stage4.state;
@@ -597,7 +631,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
   // Capture surfaces from fixture states over a frame of the main window.
   saved.push(...await main(async ({ nativeImage }) => {
-    const { find, wait, move, center, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs, out } = global.uiShots, names = [];
+    const { find, wait, ready, move, center, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs, out } = global.uiShots, names = [];
     const W = 1280, H = 800, frame = (await find().webContents.capturePage()).resize({ width: W, height: H }), backdrop = frame.toDataURL();
     const sel = { x: 380, y: 170, width: 520, height: 320 }, crop = frame.crop(sel);
     const windows = [{ id: 1, x: 300, y: 120, width: 640, height: 430 }, { id: 2, x: 120, y: 60, width: 900, height: 620 }];
@@ -605,7 +639,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const base = { ...preferences, saveFormat:'png', id: 'ui-shots', editId: 'ui-shots-edit', candidates: [], status: '', selection: null };
     const longPixels=Buffer.concat([frame.toBitmap(),frame.toBitmap(),frame.toBitmap()]);
     const long=nativeImage.createFromBitmap(longPixels,{width:W,height:H*3});
-    const scrolling={status:'running',width:W,height:H*3,segments:3,seams:[H,H*2],message:'在选区内缓慢向下滚动，每次保留至少三分之一重叠'};
+    const scrolling={status:'running',width:W,height:H*3,segments:3,seams:[H,H*2],direction:'vertical',segmentSizes:[H,H,H],message:'在选区内缓慢向下滚动，每次保留至少三分之一重叠'};
     // A PNG created from the fixture frame uses the same screenshot preload and Editor as local-file editing.
     const localPath = path.join(app.getPath('temp'), 'ui-shots-local.png'); fs.writeFileSync(localPath, frame.toPNG());
     const localImage = nativeImage.createFromPath(localPath);
@@ -649,6 +683,10 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     states['editor-region-retina']={...states['editor-region'],image:retinaBackdrop,backdrop:retinaBackdrop,editableRegion:{...states['editor-region'].editableRegion,display:{...states['editor-region'].editableRegion.display,scaleFactor:2},sourceSize:{width:W*2,height:H*2},initialCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2},currentCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2}}};
     states['editor-stage-2']={...states['editor-window'],editorShortcuts:{...preferences.editorShortcuts,arrow:'Q',copy:'F16',save:'F17','quick-save':'F18',pin:'F19'},annotationMemory:{...preferences.annotationMemory,lastTool:'arrow',perTool:{arrow:{arrowType:'double',width:8},text:{textBackground:true,fontSize:40},mosaic:{mosaicSize:32},blur:{blurRadius:18}}}};
     states['editor-shared-style']={...states['editor-stage-2'],annotationMemory:{...states['editor-stage-2'].annotationMemory,rememberToolStyles:false}};
+    states['scroll-direction']={...states['scroll-running'],scroll:{...scrolling,direction:'auto',reversedTrimmed:120}};
+    states['scroll-review-horizontal']={...states['scroll-review'],image:frame.resize({width:W*3,height:H}).toDataURL(),width:W*3,height:H,pixelWidth:W*3,pixelHeight:H,scroll:{...scrolling,status:'review',direction:'horizontal',width:W*3,height:H,seams:[W,W*2],segmentSizes:[W,W,W]}};
+    states['scroll-corrections']={...states['scroll-review']};
+    for(const kind of ['barcode','translate','table','formula'])states['editor-intelligence-'+kind]={...states['editor-window'],stage6:kind,viewSize:{width:1100,height:800}};
     states['editor-region-marks']={...states['editor-region'],annotations:{crop:sel,nextNumber:1,privacy:[],objects:[
       {type:'Rect',left:430,top:220,width:100,height:60,fill:'transparent',stroke:'#e24a35',strokeWidth:4,lassoTool:'rectangle'},
       {type:'Path',path:[['M',0,0],['L',120,40]],left:600,top:260,fill:'transparent',stroke:'#e24a35',strokeWidth:4,lassoTool:'arrow'},
@@ -667,7 +705,19 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       const image=frame.resize({width:width*2,height:height*2}).toDataURL();
       states['editor-layout-'+name]={...states['editor-region'],image,backdrop:image,viewSize:{width,height},editableRegion:{display:{id:1,bounds:{x:0,y:0,width,height},scaleFactor:2,rotation:0},sourceSize:{width:width*2,height:height*2},initialCrop:crop,currentCrop:crop,ratio:null}};
     }
-    let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [];
+    let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [], intelligenceReceipts=[],scrollReceipts=[],clipboardAudits=[];
+    const verify=(ok,message)=>{if(!ok)throw Error(message);};
+    const record=(method,args)=>intelligenceReceipts.push({method,args});
+    const fixtureRequire=process.mainModule.require('node:module').createRequire(path.join(process.cwd(),'package.json'));
+    const renderFormula=latex=>{const {mathjax}=fixtureRequire('mathjax-full/js/mathjax.js'),{TeX}=fixtureRequire('mathjax-full/js/input/tex.js'),{SVG}=fixtureRequire('mathjax-full/js/output/svg.js'),{liteAdaptor}=fixtureRequire('mathjax-full/js/adaptors/liteAdaptor.js'),{RegisterHTMLHandler}=fixtureRequire('mathjax-full/js/handlers/html.js'),adaptor=liteAdaptor();fixtureRequire('mathjax-full/js/input/tex/ams/AmsConfiguration.js');RegisterHTMLHandler(adaptor);return adaptor.serializeXML(adaptor.tags(mathjax.document('',{InputJax:new TeX({packages:['base','ams']}),OutputJax:new SVG({fontCache:'none'})}).convert(latex,{display:true}),'svg')[0]);};
+    ipcMain.handle('ui-shots:vision-language',()=> '简体中文');
+    ipcMain.handle('ui-shots:recognize',(_event,request)=>{const text='示例识别文字',line={x:24,y:40,width:260,height:26,text,confidence:.95,glyphs:[...text].map((text,i)=>({x:24+i*43,y:40,width:42,height:26,text}))};return {id:request.id,revision:request.revision,lines:[line],...(state.stage6==='barcode'?{barcodes:[{x:60,y:120,width:140,height:140,symbology:'QR',payload:'https://example.invalid/lasso'},{x:240,y:120,width:260,height:80,symbology:'Code128',payload:'LASSO-2026-001'}]}:{})};});
+    ipcMain.handle('ui-shots:analyze',(_event,request)=>{verify(request.id&&Number.isInteger(request.revision)&&request.png?.length>24&&Buffer.from(request.png).subarray(1,4).toString()==='PNG'&&request.crop.width>0&&request.crop.height>0,'Intelligence request lost image/owner/crop');record('analyze',{id:request.id,revision:request.revision,kind:request.kind,targetLanguage:request.targetLanguage,pngBytes:request.png.length,crop:request.crop,lines:request.lines});const kind=request.kind;return {error:null,result:kind==='translate'?{kind,blocks:[{original:'Design with clarity',translated:'清晰表达设计',box:{x:24,y:40,width:260,height:26}},{original:'A quiet workspace',translated:'安静的工作空间',box:{x:24,y:90,width:260,height:26}}],sourceText:'Design with clarity\nA quiet workspace',translatedText:'清晰表达设计\n安静的工作空间'}:kind==='table'?{kind,table:[['项目','数量','状态'],['图像翻译','12','完成'],['表格识别','8','复核中']]}:{kind,latex:'E=mc^2',formulaSvg:renderFormula('E=mc^2')}};});
+    ipcMain.handle('ui-shots:formula-preview',(_event,request)=>{verify(request.id&&Number.isInteger(request.revision)&&request.latex,'Formula preview lost owner or source');record('previewFormula',request);return {svg:renderFormula(request.latex),error:null};});
+    ipcMain.handle('ui-shots:open-url',(_event,request)=>{record('openURL',request);verify(request.url==='https://example.invalid/lasso','Wrong barcode URL');return {error:null};});
+    ipcMain.handle('ui-shots:table-export',(_event,rows)=>{record('exportTable',rows);return {path:path.join(out,'fixture-table.xlsx'),error:null};});
+    ipcMain.handle('ui-shots:formula-pin',(_event,latex)=>{record('pinFormula',latex);return {error:null};});
+    ipcMain.handle('ui-shots:scroll-action',(event,action)=>{scrollReceipts.push(action);const type=typeof action==='string'?action:action.type,scroll={...state.scroll};if(type==='direction')scroll.direction=action.direction;if(type==='remove-segment'){scroll.segmentSizes=[...scroll.segmentSizes];scroll.segmentSizes.splice(action.index,1);scroll.segments--;scroll.seams=scroll.segmentSizes.slice(0,-1).map((_,i)=>scroll.segmentSizes.slice(0,i+1).reduce((a,b)=>a+b,0));}if(type==='adjust-seam'){scroll.segmentSizes=[...scroll.segmentSizes];scroll.segmentSizes[action.index]-=action.delta;scroll.seams=scroll.seams.map((value,index)=>index>=action.index?value-action.delta:value);}const horizontal=scroll.direction==='horizontal';if(['remove-segment','adjust-seam'].includes(type)){const length=scroll.segmentSizes.reduce((a,b)=>a+b,0);scroll[horizontal?'width':'height']=length;state={...state,image:nativeImage.createFromDataURL(state.image).resize({width:scroll.width,height:scroll.height}).toDataURL(),width:scroll.width,height:scroll.height,pixelWidth:scroll.width,pixelHeight:scroll.height};}state={...state,scroll};event.sender.send('ui-shots:changed',{...state,imageFrame:state.image?'fixture-image-'+scrollReceipts.length:undefined});return {error:null};});
     ipcMain.removeHandler('ui-shots:region');ipcMain.handle('ui-shots:region',(_e,r)=>{regionUpdates.push(r);});
     ipcMain.removeHandler('ui-shots:clear-region');ipcMain.handle('ui-shots:clear-region',e=>{const old=state;const w=BrowserWindow.fromWebContents(e.sender);w.webContents.send('ui-shots:changed',{...old,phase:'selecting'});setTimeout(()=>{state={...old,editId:'after-clear',annotations:undefined};w.webContents.send('ui-shots:changed',{...state,imageFrame:'fixture-image',backdropFrame:'fixture-backdrop'});},150);});
     ipcMain.removeHandler('ui-shots:state'); ipcMain.handle('ui-shots:state', () => state);
@@ -697,9 +747,46 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         native.hide();native.release(frame.id);continue;
       }
 
-      const w = new BrowserWindow({ x: 40, y: 40, width: value.viewSize?.width??(name.startsWith('scroll-')&&name!=='scroll-review'?700:W), height:value.viewSize?.height??(name.startsWith('scroll-')&&name!=='scroll-review'?118:H), frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
+      const controls=name.startsWith('scroll-')&&value.phase==='scrolling';
+      const w = new BrowserWindow({ x: 40, y: 40, width: value.viewSize?.width??(controls?700:W), height:value.viewSize?.height??(controls?144:H), frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
       await w.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'screenshot' } });
       await wait(900);
+      if(name==='scroll-direction'||name==='scroll-corrections'||name==='scroll-review-horizontal'){
+        const click=async label=>{await page(w,`document.querySelector('[aria-label="${label}"]').click()`);await wait(200);};
+        if(name==='scroll-direction'){
+          verify(await page(w,`document.querySelector('.scroll-trimmed')?.textContent.includes('120px')`),'Reverse trim status missing');
+          for(const [label,direction]of [['纵向','vertical'],['横向','horizontal'],['自动','auto']]){await page(w,`[...document.querySelectorAll('[aria-label="滚动方向"] button')].find(b=>b.textContent==='${label}').click()`);await wait(200);verify(scrollReceipts.at(-1)?.direction===direction&&state.scroll.direction===direction,'Scroll direction did not reach bridge');if(direction!=='auto')names.push(await save(w,'scroll-direction-'+direction));}
+        }else{
+          await click('选择分段 2');names.push(await save(w,name+'-segment'));
+          if(name==='scroll-corrections'){await click('删除所选分段');verify(state.scroll.segments===2&&state.scroll.height===H*2&&scrollReceipts.at(-1)?.index===1,'Middle segment deletion did not refresh review');names.push(await save(w,'scroll-segment-removed'));}
+          await click('选择接缝 1');const axis=state.scroll.direction==='horizontal'?'width':'height',before=state.scroll[axis];
+          for(const delta of name==='scroll-corrections'?[-5,-1,1,5]:[5]){const size=state.scroll[axis];await click('接缝微调 '+(delta>0?'+':'')+delta+'px');verify(scrollReceipts.at(-1)?.delta===delta&&state.scroll[axis]===size-delta,'Seam adjustment did not refresh image size');}
+          verify(state.scroll[axis]===before-(name==='scroll-corrections'?0:5),'Seam size sum differs');
+        }
+      }
+      if(value.stage6){
+        const click=async text=>{await page(w,`(()=>{const b=[...document.querySelectorAll('.ed-intelligence button')].find(b=>b.textContent.trim()===${JSON.stringify(text)});if(!b||b.disabled)throw Error('Unavailable intelligence action: '+${JSON.stringify(text)});b.click();})()`);await wait(180);};
+        const fill=async(label,text)=>{await page(w,`(()=>{const e=document.querySelector('[aria-label="${label}"]');e.focus();Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(text)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(180);};
+        const copied=text=>global.uiShots.stage4.state.receipts.some(r=>r.method==='editorText'&&r.args[0]==='copy'&&r.args[1].text===text);
+        const label=value.stage6==='barcode'?'条码结果':{translate:'翻译',table:'表格',formula:'公式'}[value.stage6];
+        await ready(w,`Boolean(document.querySelector('button[aria-label="${label}"]:not(:disabled)'))`);await page(w,`document.querySelector('button[aria-label="${label}"]').click()`);
+        await ready(w,`document.querySelector('[aria-label="智能处理"]')?.getAttribute('aria-busy')==='false'`);
+        await ready(w, `(()=>{const panel=document.querySelector('[aria-label="智能处理"]'),style=getComputedStyle(panel);return Number(style.opacity)===1&&new DOMMatrixReadOnly(style.transform).isIdentity&&!panel.getAnimations().some(animation=>animation.playState==='running');})()`);
+        if(value.stage6==='barcode'){
+          verify(await page(w,`document.querySelectorAll('.ed-barcode-list article').length===2&&document.querySelector('.ed-barcode-list').textContent.includes('Code128')`),'Barcode payload or symbology missing');await click('复制内容');verify(copied('https://example.invalid/lasso'),'Barcode copy lost payload');await click('打开链接');verify(intelligenceReceipts.at(-1)?.args.url==='https://example.invalid/lasso','URL was not sent through bridge');
+          await page(w,`document.querySelectorAll('.ed-barcode-list article')[1].querySelector('button').click()`);await wait(120);verify(copied('LASSO-2026-001'),'Linear barcode copy lost payload');verify(await page(w,`document.querySelectorAll('.ed-barcode-list article')[1].querySelectorAll('button').length===1`),'Non-URL barcode offered open link');
+        }else if(value.stage6==='translate'){
+          await ready(w,`document.querySelectorAll('.ed-translation-list article').length===2`);names.push(await save(w,'editor-translation-comparison'));
+          for(const [label,target]of [['英文','English'],['日文','日本語'],['韩文','한국어'],['中文','简体中文']]){await page(w,`[...document.querySelectorAll('[aria-label="翻译目标语言"] button')].find(b=>b.textContent==='${label}').click()`);await wait(250);await ready(w,`document.querySelector('[aria-label="智能处理"]').getAttribute('aria-busy')==='false'`);verify(intelligenceReceipts.filter(r=>r.method==='analyze').at(-1)?.args.targetLanguage===target,'Translation target language lost');}
+          await page(w,`document.querySelector('[aria-label="图上译文覆盖"]').click()`);await wait(180);verify(await page(w,`document.querySelector('[aria-label="图上译文"]')?.textContent.includes('清晰表达设计')`),'Translation overlay did not appear');await click('复制全部译文');verify(copied('清晰表达设计\n安静的工作空间'),'Translation copy lost content');
+        }else if(value.stage6==='table'){
+          await ready(w,`document.querySelectorAll('[aria-label="识别表格"] tr').length===3`);await fill('第 2 行第 2 列','20');names.push(await save(w,'editor-table-edited'));await click('添加行');await click('添加列');await fill('第 4 行第 4 列','临时');verify(await page(w,`document.querySelectorAll('[aria-label="识别表格"] tr').length===4&&document.querySelectorAll('[aria-label="识别表格"] tr:first-child td').length===4`),'Table row/column addition failed');names.push(await save(w,'editor-table-expanded'));await click('删除所选行');await click('删除所选列');await click('复制 Markdown');await click('复制 TSV');await click('导出 XLSX');const rows=[['项目','数量','状态'],['图像翻译','20','完成'],['表格识别','8','复核中']];verify(JSON.stringify(intelligenceReceipts.find(r=>r.method==='exportTable')?.args)===JSON.stringify(rows),'Edited table export differs');verify(copied(rows.map(row=>row.join('\t')).join('\n'))&&copied('| 项目 | 数量 | 状态 |\n| --- | --- | --- |\n| 图像翻译 | 20 | 完成 |\n| 表格识别 | 8 | 复核中 |'),'Table text export differs');
+        }else{
+          await ready(w,`document.querySelector('[alt="公式排版"]')?.naturalWidth>0`);names.push(await save(w,'editor-formula-initial'));const latex='\\frac{a+b}{2}=c';await fill('LaTeX 源码',latex);await ready(w,`document.querySelector('[alt="公式排版"]')?.naturalWidth>0&&document.querySelector('[aria-label="智能处理"] [aria-label="LaTeX 源码"]').value===${JSON.stringify(latex)}`);verify(intelligenceReceipts.some(r=>r.method==='previewFormula'&&r.args.latex===latex),'Edited formula did not request preview');await click('复制 LaTeX');await click('转为公式贴图');verify(copied(latex)&&intelligenceReceipts.some(r=>r.method==='pinFormula'&&r.args===latex),'Formula copy/pin lost edited LaTeX');
+        }
+        const audit=await page(w,'window.__uiShotsClipboard');verify(audit&&audit.systemReads===0&&audit.systemWrites===0,'Intelligence renderer clipboard isolation missing');clipboardAudits.push({name,...audit});
+        const layout=await page(w,`(()=>{const p=document.querySelector('[aria-label="智能处理"]'),r=p.getBoundingClientRect();return {x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,overflow:document.documentElement.scrollWidth>innerWidth};})()`);verify(layout.x>=0&&layout.y>=0&&layout.right<=1100&&layout.bottom<=800&&!layout.overflow,'Intelligence panel left viewport: '+JSON.stringify(layout));
+      }
       if (name === 'scroll-review') {await page(w,`document.querySelector('.scroll-seams button')?.click()`);await wait(300);}
       // The editor enables its tools once the image has loaded; then pick the arrow so the style panel shows.
       if (name === 'editor-transparent' && await page(w, `document.querySelector('canvas.lower-canvas').getContext('2d').getImageData(0,0,1,1).data[3]`) !== 0) throw Error('Transparent image was flattened in editor');
@@ -917,6 +1004,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
       w.destroy();
     }
+    fs.writeFileSync(path.join(out,'stage-6-surfaces.json'),JSON.stringify({status:'passed',scroll:scrollReceipts,intelligence:intelligenceReceipts,clipboardAudits,copies:global.uiShots.stage4.state.receipts.filter(r=>r.method==='editorText'),checks:['方向切换/反裁状态、中段删除、四档接缝修正与横向预览','QR/Code128内容复制与URL回执','四种目标语言、原文译文对照、图上覆盖与全文复制','改单元格/增删行列/Markdown/TSV/XLSX回执','初始公式/编辑后SVG排版/复制/转贴图回执'],networkRequests:0,realLinkOpens:0},null,2));
     ipcMain.removeHandler('ui-shots:state');
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
     let pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false, kind:'image',title:'设计评审截图',groupId:'default',groups:global.uiShots.stage4.groups,zoomPercent:100,wheelAction:'zoom',locked:false,thumbnail:false };

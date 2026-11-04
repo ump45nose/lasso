@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import type { ScreenshotSettings as Preferences, ScreenshotActions, ScreenshotKind } from '../shared/screenshot-settings';
 import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings } from '../shared/screenshot-settings';
 import { captureModeLabels } from '../shared/capture';
+import { validateVisionConfig, type VisionServiceConfig } from '../shared/intelligence';
 import { Segmented, collapse } from './motion';
 import { CaptureWorkspaceSettings } from './CaptureWorkspaceSettings';
 import './styles/screenshot-settings.css';
@@ -12,6 +13,34 @@ const names = new Intl.DisplayNames(['zh-CN'], { type: 'language' });
 const languageName = (code: string) => { try { return names.of(code) || code; } catch { return code; } };
 function Switch({ label, value, change }: { label: string; value: boolean; change: () => void }) {
   return <button className="l-switch" role="switch" aria-label={label} aria-checked={value} onClick={change}><span /></button>;
+}
+function VisionSettings() {
+  const [saved, setSaved] = useState<VisionServiceConfig | null>(null), [draft, setDraft] = useState<VisionServiceConfig | null>(null);
+  const [credential, setCredential] = useState(''), [clear, setClear] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
+  useEffect(() => { let active = true; void window.desktop.visionConfig().then(config => { if (active) { setSaved(config); setDraft(config); } }, reason => { if (active) setError(String(reason)); }); return () => { active = false; }; }, []);
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved) || !!credential || clear;
+  const patch = (input: Partial<VisionServiceConfig>) => { setDraft(value => value && ({ ...value, ...input })); setError(''); setMessage(''); };
+  async function save() {
+    if (!draft) return;
+    setBusy(true); setError(''); setMessage('');
+    try {
+      const { hasCredential: _hasCredential, ...config } = draft;
+      const input = { ...config, ...(!config.useMediaCredential && (clear || credential) ? { credential: clear ? '' : credential } : {}) };
+      validateVisionConfig(input); const result = await window.desktop.saveVisionConfig(input);
+      setSaved(result); setDraft(result); setCredential(''); setClear(false); setMessage('智能识别与翻译设置已保存');
+    } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
+  }
+  return <section id="screenshot-vision" className="l-set-section l-gap">
+    <div className="l-set-row-head"><h3>智能识别与翻译</h3></div>
+    {draft && <><ul className="l-group">
+      <li><div className="l-row-label"><span>复用生图 API 凭据</span><span>地址留空时也使用生图服务地址，模型在此单独指定。</span></div><Switch label="复用生图 API 凭据" value={draft.useMediaCredential} change={() => patch({ useMediaCredential: !draft.useMediaCredential })} /></li>
+      <li className="col"><div className="l-field"><label htmlFor="vision-base-url">服务地址</label><input id="vision-base-url" className="l-input mono" value={draft.baseURL} placeholder={draft.useMediaCredential ? '留空复用生图服务地址' : 'https://…/v1'} onChange={event => patch({ baseURL: event.target.value })} /></div></li>
+      <li className="col"><div className="l-field"><label htmlFor="vision-model">模型名称</label><input id="vision-model" className="l-input mono" value={draft.model} placeholder="支持图像理解的模型" onChange={event => patch({ model: event.target.value })} /></div></li>
+      <li className="l-shot-option"><span>默认翻译语言</span><Segmented label="默认翻译语言" value={draft.targetLanguage} onChange={targetLanguage => patch({ targetLanguage })} options={[['简体中文', '中文'], ['English', '英文'], ['日本語', '日文'], ['한국어', '韩文'], ...(!['简体中文', 'English', '日本語', '한국어'].includes(draft.targetLanguage) ? [[draft.targetLanguage, draft.targetLanguage] as const] : [])]} /></li>
+      {!draft.useMediaCredential && <li className="col"><div className="l-field"><label htmlFor="vision-api-key">独立 API Key</label><input id="vision-api-key" type="password" autoComplete="off" className="l-input mono" value={credential} placeholder={!saved?.useMediaCredential && saved?.hasCredential ? '已安全保存，留空保留' : '输入独立 API Key'} onChange={event => { setCredential(event.target.value); setClear(false); setMessage(''); setError(''); }} />{!saved?.useMediaCredential && saved?.hasCredential && <button className="l-text-btn" aria-pressed={clear} onClick={() => { setClear(!clear); setCredential(''); setMessage(''); }}>{clear ? '保存时清除独立凭据 · 撤销' : '清除已存独立凭据'}</button>}</div></li>}
+    </ul><div className="l-vision-actions"><span className="l-field-help">{draft.useMediaCredential !== saved?.useMediaCredential ? '保存后切换凭据来源' : saved?.hasCredential ? '凭据已安全保存' : '尚未保存可用凭据'}</span><span className="push" /><button className="l-btn small" disabled={!dirty || busy} onClick={() => { setDraft(saved); setCredential(''); setClear(false); setError(''); setMessage(''); }}>放弃更改</button><button className="l-btn small primary" disabled={!dirty || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存智能服务'}</button></div></>}
+    {error && <p className="l-field-help l-danger" role="alert">{error}</p>}{message && <p className="l-field-help l-ok" role="status"><Check size={14} />{message}</p>}
+  </section>;
 }
 export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferences; shortcuts: () => void }) {
   const [draft, setDraft] = useState(() => structuredClone(settings));
@@ -46,6 +75,7 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
   return <>
     <div className="l-set-body l-shot-settings">
       <CaptureWorkspaceSettings history={draft.history} changeHistory={history => patch({ history })} workspace={settings.pinWorkspace} />
+      <VisionSettings />
       <div className="l-set-row-head"><h3>截图完成后</h3><button className="l-text-btn" onClick={shortcuts}>配置快捷键</button></div>
       <ul className="l-group">{screenshotKinds.map(kind => <li key={kind} className="l-shot-policy"><span>{labels[kind]}</span><div className="l-shot-actions">{([['show', '显示'], ['copy', '复制'], ['save', '保存']] as const).map(([key, label]) => <label key={key}><span>{label}</span><Switch label={`${labels[kind]}后${label}`} value={draft.actions[kind][key]} change={() => action(kind, key)} /></label>)}</div></li>)}</ul>
       <p className="l-field-help">复制和保存输出截图完成时的图片。后续标注通过编辑器手动输出。</p>
