@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlignLeft, AlignStartVertical, ArrowUpRight, Check, ChevronDown, Clipboard, Copy, Ellipsis, EyeOff, File as FileIcon, Folder, GripVertical, Grid2X2, Lock, Maximize2, Minimize2, MousePointerClick, PenLine, Pin, RotateCcw, Save, ScanText, Send, TextSelect, Type, Unlock, X } from 'lucide-react';
+import { AlignLeft, AlignStartVertical, ArrowUpRight, Check, ChevronDown, Clipboard, Copy, Ellipsis, EyeOff, File as FileIcon, Folder, GripVertical, Grid2X2, Lock, Maximize2, Minimize2, MousePointerClick, Pause, PenLine, Pin, Play, RotateCcw, Save, ScanText, Send, TextSelect, Type, Unlock, X } from 'lucide-react';
 import type { PinAPI, PinAction, PinState } from '../../shared/capture';
 import type { DesktopAPI } from '../../shared/contracts';
 import type { PinGroup, PinWorkspaceState } from '../../shared/history-sync';
@@ -19,6 +19,7 @@ declare global {interface Window {pin:PinAPI;pinWorkspace:WorkspaceBridge}}
 const clamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
 const editable=(target:EventTarget|null)=>target instanceof HTMLElement&&!!target.closest('input, textarea, [contenteditable="true"]');
 const TipContext=createContext<(tip:string)=>void>(()=>{});
+type PinPlayback={source:{id:string;frames:string[];delay:number}|null;frame:number;paused:boolean};
 function Tool({label,children,onClick,active,disabled,className=''}:{label:string;children:ReactNode;onClick:()=>void;active?:boolean;disabled?:boolean;className?:string}){
   const setTip=useContext(TipContext);
   return <button type="button" className={className} aria-label={label} data-tip={label} aria-pressed={active} disabled={disabled} onPointerEnter={()=>setTip(label)} onPointerLeave={()=>setTip('')} onFocus={()=>setTip(label)} onBlur={()=>setTip('')} onMouseDown={e=>e.preventDefault()} onClick={onClick}>{children}</button>;
@@ -37,6 +38,7 @@ export function Pinned(){
   const [state,setState]=useState<PinState|null>(null),[scale,setScale]=useState(1),[text,setText]=useState(''),[moving,setMoving]=useState(false),[pickText,setPickText]=useState(false),[dragging,setDragging]=useState(false),[error,setError]=useState('');
   const [hover,setHover]=useState(false),[options,setOptions]=useState(false),[focused,setFocused]=useState(document.hasFocus()),[textEditing,setTextEditing]=useState(false),[draft,setDraft]=useState(''),[dropping,setDropping]=useState(false);
   const [tip,setTip]=useState(''),[zoomDraft,setZoomDraft]=useState('100');
+  const [playback,setPlayback]=useState<PinPlayback>({source:null,frame:0,paused:false});
   const zoomInput=useRef<HTMLInputElement>(null);
   const root=useRef<HTMLElement>(null),viewport=useRef<HTMLDivElement>(null),layer=useRef<HTMLDivElement>(null),selection=useRef(''),leaveTimer=useRef<ReturnType<typeof setTimeout>>(undefined),dropDepth=useRef(0);
   const current=useRef(state),pickRef=useRef(pickText);current.current=state;pickRef.current=pickText;
@@ -47,7 +49,25 @@ export function Pinned(){
   async function outputText(send:boolean,value=selection.current){const pin=current.current;if(value&&pin)await run(window.pin.text(value,send,pin.revision));}
   async function saveText(){if(await run(window.pin.updateText(draft)))setTextEditing(false);}
   function adjust(field:'opacity'|'zoomPercent',value:number){const pin=current.current;if(!pin)return;const next={...pin,[field]:value};current.current=next;setState(next);void run(field==='opacity'?window.pin.setOpacity(value):window.pin.setZoom(value/100));}
-  useEffect(()=>{const off=window.pin.onState(setState);void window.pin.state().then(setState).catch(reason=>setError((reason as Error).message));return off;},[]);
+  useEffect(()=>{
+    const receive=(next:PinState)=>{
+      setState(next);
+      setPlayback(previous=>{
+        const frames=(next.kind||'image')==='image'?next.payload?.frames:undefined,source=previous.source;
+        if(!frames?.length)return source?{source:null,frame:0,paused:false}:previous;
+        // IPC recreates arrays on ordinary pin updates; keep playback for the same media.
+        if(source?.id===next.id&&source.delay===next.payload?.frameDelayMs&&source.frames.length===frames.length&&source.frames.every((frame,index)=>frame===frames[index]))return previous;
+        return {source:{id:next.id,frames,delay:next.payload!.frameDelayMs!},frame:0,paused:false};
+      });
+    };
+    const off=window.pin.onState(receive);void window.pin.state().then(receive).catch(reason=>setError((reason as Error).message));return off;
+  },[]);
+  useEffect(()=>{
+    const source=playback.source;
+    if(!source||source.frames.length<2||playback.paused||state?.editing)return;
+    const timer=setInterval(()=>setPlayback(previous=>({...previous,frame:(previous.frame+1)%source.frames.length})),source.delay);
+    return()=>clearInterval(timer);
+  },[playback.source,playback.paused,state?.editing]);
   useEffect(()=>{if(!state||!viewport.current)return;const element=viewport.current;const resize=()=>setScale(Math.min(element.clientWidth/state.width,element.clientHeight/state.height));const observer=new ResizeObserver(resize);observer.observe(element);resize();return()=>observer.disconnect();},[state?.width,state?.height,state?.thumbnail,state?.editing]);
   useEffect(()=>{clearSelection();setDraft(state?.payload?.text||'');},[state?.id,state?.revision]);
   useEffect(()=>{if(document.activeElement!==zoomInput.current)setZoomDraft(String(state?.zoomPercent??100));},[state?.zoomPercent]);
@@ -74,6 +94,8 @@ export function Pinned(){
   if(!state)return null;
   if(state.editing&&state.editId)return <PinEdit editId={state.editId} pinId={state.id}/>;
   const kind=state.kind||'image',payload=state.payload,canSelectText=kind==='image'&&pickText&&!moving,showTools=hover||moving||dragging||options||textEditing;
+  const animation=playback.source,image=animation?.frames[playback.frame]??state.image;
+  const playbackControl=animation&&<Tool label={playback.paused?'播放动态贴图':'暂停动态贴图'} active={playback.paused} onClick={()=>{setPlayback(previous=>({...previous,paused:!previous.paused}));setTip(playback.paused?'暂停动态贴图':'播放动态贴图');}}>{playback.paused?<Play/>:<Pause/>}</Tool>;
   const status=error||tip||(pickText&&state.lines.length?'拖选图中文字 · 再点选字恢复拖动':state.status);
   const stopDrag=()=>{if(dragging){setDragging(false);window.pin.endDrag();}};
   const startDrag=(event:PointerEvent<HTMLElement>)=>{if(event.button!==0||state.locked||canSelectText||editable(event.target)||(event.target as HTMLElement).closest('button'))return;event.preventDefault();setDragging(true);event.currentTarget.setPointerCapture(event.pointerId);window.pin.startDrag();};
@@ -83,13 +105,13 @@ export function Pinned(){
     onDragEnter={e=>{e.preventDefault();dropDepth.current++;setDropping(true);}} onDragOver={e=>{e.preventDefault();e.dataTransfer.dropEffect='copy';}} onDragLeave={()=>{if(--dropDepth.current<=0){dropDepth.current=0;setDropping(false);}}}
     onDrop={e=>{e.preventDefault();dropDepth.current=0;setDropping(false);void run(window.pinWorkspace.dropFiles(Array.from(e.dataTransfer.files),e.dataTransfer.getData('text/plain'),state.groupId));}}>
     {state.thumbnail?<div className="pin-thumbnail" {...dragHandlers} onDoubleClick={event=>{if(!state.locked&&!(event.target as HTMLElement).closest('button'))void action('thumbnail');}}>
-      {kind==='image'&&<img src={state.image} alt="贴图缩略图" draggable={false}/>}
+      {kind==='image'&&<img src={image} alt="贴图缩略图" draggable={false}/>}
       <span className="pin-thumbnail-title">{state.locked&&<Lock/>}{state.title||'贴图'}</span>
-      <div className="pin-thumbnail-actions"><Tool label="锁定贴图" active={state.locked} onClick={()=>void action('lock')}>{state.locked?<Lock/>:<Unlock/>}</Tool><Tool label="展开贴图" disabled={state.locked} onClick={()=>void action('thumbnail')}><Maximize2/></Tool><Tool label="关闭贴图" onClick={()=>void action('close')}><X/></Tool></div>
+      <div className="pin-thumbnail-actions">{playbackControl}<Tool label="锁定贴图" active={state.locked} onClick={()=>void action('lock')}>{state.locked?<Lock/>:<Unlock/>}</Tool><Tool label="展开贴图" disabled={state.locked} onClick={()=>void action('thumbnail')}><Maximize2/></Tool><Tool label="关闭贴图" onClick={()=>void action('close')}><X/></Tool></div>
     </div>:<>
       <div className={'pin-viewport'+(canSelectText?' selecting':'')+(moving?' moving':'')+(dragging?' dragging':'')} ref={viewport} {...dragHandlers}>
         {kind==='image'?<div className="pin-stage" style={{width:state.width*scale,height:state.height*scale}}><div className="pin-pixels" style={{width:state.width,height:state.height,transform:`scale(${scale})`}}>
-          <img src={state.image} draggable={false} alt="贴图成品"/>
+          <img src={image} draggable={false} alt="贴图成品"/>
           <div className={'editor-text-layer'+(canSelectText?' enabled':'')} ref={layer} aria-label="贴图识别文字" onPointerDown={e=>{if(!e.shiftKey)clearSelection();}} onDragStart={e=>e.preventDefault()} onCopy={e=>{if(selection.current){e.preventDefault();e.clipboardData.setData('text/plain',selection.current);}}}>
             {state.lines.map((line,index)=><div key={index} className="editor-text-line" style={{left:line.x,top:line.y,width:line.width,height:line.height}}>{line.glyphs.map((g,i)=><span key={i} style={{left:g.x-line.x,top:g.y-line.y,width:g.width,height:g.height,fontSize:g.height*.95,lineHeight:`${g.height}px`}}>{g.text}</span>)}</div>)}
           </div>
@@ -101,8 +123,9 @@ export function Pinned(){
       {state.locked&&<span className="pin-lock-mark" aria-label="贴图已锁定"><Lock/></span>}
       <AnimatePresence>{showTools&&<motion.header key="bar" className="pin-bar" initial={{opacity:0,y:-6,scale:.96}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,y:-4,transition:{duration:.12}}} transition={spring}>
         <span className="pin-grip" aria-label={state.locked?'贴图已锁定':'拖动贴图'} {...dragHandlers}>{state.locked?<Lock/>:<GripVertical/>}</span>
+        {playbackControl}
         {kind==='image'&&<Tool label="选择文字" active={pickText} onClick={togglePickText}><TextSelect/></Tool>}
-        {(kind==='image'||kind==='text')&&<Tool label={kind==='text'?'编辑文字':'编辑贴图'} disabled={kind==='image'&&state.locked} onClick={()=>{if(kind==='text'){setTextEditing(on=>!on);setDraft(payload?.text||'');}else void action('edit');}}><PenLine/></Tool>}
+        {(kind==='image'||kind==='text')&&<Tool label={kind==='text'?'编辑文字':animation?'动态贴图请在录制预览中裁剪':'编辑贴图'} disabled={kind==='image'&&(state.locked||!!animation)} onClick={()=>{if(kind==='text'){setTextEditing(on=>!on);setDraft(payload?.text||'');}else void action('edit');}}><PenLine/></Tool>}
         {(kind==='image'||kind==='text')&&<Tool label={kind==='text'||text?'文字预设':'图片预设'} active={!!text} disabled={textEditing} onClick={()=>{if(kind==='text')void outputText(true,payload?.text);else if(text)void outputText(true);else void action('image');}}><Send/></Tool>}
         <Tool label="快速保存" disabled={textEditing} onClick={()=>void action('quick-save')}><Save/></Tool>
         <Tool label="复制" disabled={textEditing} onClick={()=>{if(text)void outputText(false);else void action('copy');}}><Copy/></Tool>
