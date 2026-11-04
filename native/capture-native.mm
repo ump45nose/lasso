@@ -69,6 +69,9 @@ static NSString* colorValue(unsigned r,unsigned g,unsigned b,NSString*format){
 @property(nonatomic,strong) CAShapeLayer*outline;
 @property(nonatomic,strong) CAShapeLayer*crosshair;
 @property(nonatomic,strong) CALayer*loupe;
+@property(nonatomic,strong) CAShapeLayer*loupeGrid;
+@property(nonatomic) CGFloat loupeGridStep;
+@property(nonatomic) CGFloat loupeGridOffset;
 @property(nonatomic,strong) CATextLayer*sizeLabel;
 @property(nonatomic,strong) NSButton*retry;
 @property(nonatomic) std::shared_ptr<Frame> imageFrame;
@@ -86,6 +89,7 @@ static NSString* colorValue(unsigned r,unsigned g,unsigned b,NSString*format){
 -(void)update;
 -(void)buildGuide;
 -(BOOL)showCrosshair;
+-(BOOL)showLoupeGrid;
 -(NSInteger)loupeMagnification;
 -(NSString*)loupeColorFormat;
 @end
@@ -95,6 +99,7 @@ static CaptureView* view=nil;
 -(BOOL)isFlipped{return YES;}
 -(BOOL)acceptsFirstResponder{return YES;}
 -(BOOL)showCrosshair{return !self.theme[@"showCrosshair"]||[self.theme[@"showCrosshair"] boolValue];}
+-(BOOL)showLoupeGrid{return !self.theme[@"showLoupeGrid"]||[self.theme[@"showLoupeGrid"] boolValue];}
 -(NSInteger)loupeMagnification{NSInteger n=[self.theme[@"loupeMagnification"] integerValue];return n==4||n==12?n:8;}
 -(NSString*)loupeColorFormat{NSString*s=self.theme[@"loupeColorFormat"];return [s isEqual:@"rgb"]||[s isEqual:@"hsl"]?s:@"hex";}
 -(void)updateTrackingAreas{[super updateTrackingAreas];for(NSTrackingArea*a in self.trackingAreas)[self removeTrackingArea:a];[self addTrackingArea:[[NSTrackingArea alloc]initWithRect:self.bounds options:NSTrackingMouseMoved|NSTrackingMouseEnteredAndExited|NSTrackingActiveAlways|NSTrackingInVisibleRect owner:self userInfo:nil]];}
@@ -139,7 +144,13 @@ static CaptureView* view=nil;
  CATextLayer*value=(CATextLayer*)self.loupe.sublayers[3];NSAttributedString*valueText=[[NSAttributedString alloc]initWithString:colorValue(r,g,b,self.loupeColorFormat) attributes:@{NSFontAttributeName:font(self.theme,@"monoFonts",11),NSForegroundColorAttributeName:color(self.theme[@"on-ink"])}];value.string=valueText;
  CATextLayer*position=(CATextLayer*)self.loupe.sublayers[4];NSAttributedString*positionText=[[NSAttributedString alloc]initWithString:[NSString stringWithFormat:@"X %zu · Y %zu px",px,py] attributes:@{NSFontAttributeName:font(self.theme,@"monoFonts",11),NSForegroundColorAttributeName:color(self.theme[@"oat"])}];position.string=positionText;
  CGFloat width=MAX(160,MAX(ceil(valueText.size.width)+44,ceil(positionText.size.width)+24));CGFloat left=self.point.x+24+width<=W-8?self.point.x+24:self.point.x-width-24,top=self.point.y+24+200<=H-8?self.point.y+24:self.point.y-224;self.loupe.frame=CGRectMake(MAX(8,MIN(W-width-8,left)),MAX(8,MIN(H-208,top)),width,200);
- picture.frame=CGRectMake((width-136)/2,12,136,136);CALayer*center=self.loupe.sublayers[1];center.hidden=!self.showCrosshair;center.frame=CGRectMake((width-magnification)/2,80-magnification/2.0,magnification,magnification);value.frame=CGRectMake(32,151,width-44,20);position.frame=CGRectMake(12,173,width-24,20);}
+ picture.frame=CGRectMake((width-136)/2,12,136,136);
+ // The raster and grid share the same centered source tile. Start each separator at a source-pixel
+ // boundary and cover one backing pixel, keeping it crisp at the display's actual raster density.
+ self.loupeGrid.frame=picture.bounds;self.loupeGrid.contentsScale=rasterScale;self.loupeGrid.lineWidth=1/rasterScale;self.loupeGrid.hidden=!self.showLoupeGrid;self.loupeGrid.strokeColor=color(self.theme[@"on-ink"],.35).CGColor;
+ self.loupeGridStep=magnification;self.loupeGridOffset=fmod((136-side*magnification)/2.0,magnification);if(self.loupeGridOffset<0)self.loupeGridOffset+=magnification;
+ CGMutablePathRef grid=CGPathCreateMutable();for(CGFloat edge=self.loupeGridOffset;edge<136;edge+=magnification){CGFloat p=edge+.5/rasterScale;CGPathMoveToPoint(grid,nullptr,p,0);CGPathAddLineToPoint(grid,nullptr,p,136);CGPathMoveToPoint(grid,nullptr,0,p);CGPathAddLineToPoint(grid,nullptr,136,p);}self.loupeGrid.path=grid;CGPathRelease(grid);
+ CALayer*center=self.loupe.sublayers[1];center.hidden=!self.showCrosshair;center.frame=CGRectMake((width-magnification)/2,80-magnification/2.0,magnification,magnification);value.frame=CGRectMake(32,151,width-44,20);position.frame=CGRectMake(12,173,width-24,20);}
  [CATransaction commit];
 }
 -(void)mouseMoved:(NSEvent*)e{if(self.frozen)return;self.point=[self convertPoint:e.locationInWindow fromView:nil];if(self.chosen&&(hypot(self.point.x-self.choicePoint.x,self.point.y-self.choicePoint.y)>=5||!hit(rect(self.chosen),self.point)))self.chosen=nil;[self update];if(![self.mode isEqual:@"rect"]&&![self.mode isEqual:@"window"]&&hypot(self.point.x-self.lastHover.x,self.point.y-self.lastHover.y)>=5){self.lastHover=self.point;emit(@{@"type":@"hover",@"session":self.session,@"x":@(self.point.x),@"y":@(self.point.y)});}}
@@ -166,7 +177,7 @@ static CaptureView* view=nil;
 static void ensurePanel(NSDictionary*theme){if(panel){view.theme=theme;return;}panel=[[CapturePanel alloc]initWithContentRect:NSMakeRect(0,0,760,500) styleMask:NSWindowStyleMaskBorderless|NSWindowStyleMaskNonactivatingPanel backing:NSBackingStoreBuffered defer:NO];panel.releasedWhenClosed=NO;panel.excludedFromWindowsMenu=YES;panel.level=CGWindowLevelForKey(kCGScreenSaverWindowLevelKey);panel.collectionBehavior=NSWindowCollectionBehaviorCanJoinAllSpaces|NSWindowCollectionBehaviorFullScreenAuxiliary|NSWindowCollectionBehaviorStationary|NSWindowCollectionBehaviorIgnoresCycle;panel.hidesOnDeactivate=NO;panel.opaque=YES;panel.hasShadow=NO;panel.acceptsMouseMovedEvents=YES;panel.animationBehavior=NSWindowAnimationBehaviorNone;panel.title=@"Lasso 截图选择";view=[[CaptureView alloc]initWithFrame:panel.contentView.bounds];view.theme=theme;view.wantsLayer=YES;view.layer.geometryFlipped=YES;panel.contentView=view;
  view.backdrop=[CALayer layer];view.backdrop.contentsGravity=kCAGravityResize;[view.layer addSublayer:view.backdrop];view.shade=[CAShapeLayer layer];view.shade.fillColor=color(theme[@"ink"],.52).CGColor;[view.layer addSublayer:view.shade];view.outline=[CAShapeLayer layer];view.outline.fillColor=NSColor.clearColor.CGColor;view.outline.strokeColor=color(theme[@"clay"]).CGColor;view.outline.lineWidth=1.5;[view.layer addSublayer:view.outline];
  view.crosshair=[CAShapeLayer layer];view.crosshair.strokeColor=color(theme[@"on-ink"],.6).CGColor;view.crosshair.lineWidth=1;view.crosshair.fillColor=NSColor.clearColor.CGColor;[view.layer addSublayer:view.crosshair];
- view.loupe=[CALayer layer];view.loupe.backgroundColor=color(theme[@"ink"]).CGColor;view.loupe.cornerRadius=10;view.loupe.masksToBounds=YES;[view.layer addSublayer:view.loupe];CALayer*picture=[CALayer layer];picture.frame=CGRectMake(12,12,136,136);picture.magnificationFilter=kCAFilterNearest;picture.minificationFilter=kCAFilterNearest;[view.loupe addSublayer:picture];CALayer*center=[CALayer layer];center.frame=CGRectMake(76,76,8,8);center.borderWidth=1;center.borderColor=color(theme[@"on-ink"]).CGColor;center.shadowColor=color(theme[@"ink"]).CGColor;center.shadowOpacity=1;center.shadowRadius=0;center.shadowOffset=CGSizeMake(1,1);[view.loupe addSublayer:center];CALayer*swatch=[CALayer layer];swatch.frame=CGRectMake(12,154,12,12);swatch.cornerRadius=3;[view.loupe addSublayer:swatch];[view.loupe addSublayer:label(@"",CGRectMake(32,151,116,20),color(theme[@"on-ink"]),font(theme,@"monoFonts",11))];[view.loupe addSublayer:label(@"",CGRectMake(12,173,148,20),color(theme[@"oat"]),font(theme,@"monoFonts",11))];}
+ view.loupe=[CALayer layer];view.loupe.backgroundColor=color(theme[@"ink"]).CGColor;view.loupe.cornerRadius=10;view.loupe.masksToBounds=YES;[view.layer addSublayer:view.loupe];CALayer*picture=[CALayer layer];picture.frame=CGRectMake(12,12,136,136);picture.magnificationFilter=kCAFilterNearest;picture.minificationFilter=kCAFilterNearest;picture.masksToBounds=YES;[view.loupe addSublayer:picture];view.loupeGrid=[CAShapeLayer layer];view.loupeGrid.fillColor=NSColor.clearColor.CGColor;[picture addSublayer:view.loupeGrid];CALayer*center=[CALayer layer];center.frame=CGRectMake(76,76,8,8);center.borderWidth=1;center.borderColor=color(theme[@"on-ink"]).CGColor;center.shadowColor=color(theme[@"ink"]).CGColor;center.shadowOpacity=1;center.shadowRadius=0;center.shadowOffset=CGSizeMake(1,1);[view.loupe addSublayer:center];CALayer*swatch=[CALayer layer];swatch.frame=CGRectMake(12,154,12,12);swatch.cornerRadius=3;[view.loupe addSublayer:swatch];[view.loupe addSublayer:label(@"",CGRectMake(32,151,116,20),color(theme[@"on-ink"]),font(theme,@"monoFonts",11))];[view.loupe addSublayer:label(@"",CGRectMake(12,173,148,20),color(theme[@"oat"]),font(theme,@"monoFonts",11))];}
 // Window ordering animation and Core Animation layer actions are independent.
 // Reused panels must publish the new screen geometry and image in one nonanimated transaction.
 static void withoutCaptureAnimation(void (^updates)(void)) {
@@ -238,6 +249,7 @@ static napi_value render(napi_env e,napi_callback_info){[view displayIfNeeded];s
 static napi_value snapshot(napi_env e,napi_callback_info){
  napi_value o;napi_create_object(e,&o);set(e,o,"visible",panel.isVisible);set(e,o,"focused",panel.isKeyWindow);set(e,o,"frameCount",frames.size());set(e,o,"windowId",panel.windowNumber);napi_set_named_property(e,o,"session",js(e,view.session?:@""));napi_set_named_property(e,o,"mode",js(e,view.mode?:@""));napi_set_named_property(e,o,"selection",rectJS(e,view.selected));napi_set_named_property(e,o,"bounds",rectJS(e,view.bounds));
  set(e,o,"showCrosshair",view.showCrosshair);set(e,o,"crosshairVisible",!view.crosshair.hidden&&panel.isVisible);set(e,o,"loupeMagnification",view.loupeMagnification);napi_set_named_property(e,o,"loupeColorFormat",js(e,view.loupeColorFormat));
+ set(e,o,"showLoupeGrid",view.showLoupeGrid);set(e,o,"loupeGridVisible",panel.isVisible&&view.imageFrame&&!view.loupe.hidden&&!view.loupeGrid.hidden&&view.loupeGrid.path&&!CGPathIsEmpty(view.loupeGrid.path));napi_set_named_property(e,o,"loupeGrid",rectJS(e,[view.loupeGrid convertRect:view.loupeGrid.bounds toLayer:view.layer]));set(e,o,"loupeGridStep",view.loupeGridStep);set(e,o,"loupeGridOffset",view.loupeGridOffset);set(e,o,"loupeGridLineWidth",view.loupeGrid.lineWidth);set(e,o,"loupeRasterScale",view.loupeGrid.contentsScale);
  if(view.loupe.sublayers.count>4){NSAttributedString*value=((CATextLayer*)view.loupe.sublayers[3]).string;NSAttributedString*position=((CATextLayer*)view.loupe.sublayers[4]).string;napi_set_named_property(e,o,"color",js(e,value.string?:@""));napi_set_named_property(e,o,"position",js(e,position.string?:@""));napi_set_named_property(e,o,"loupe",rectJS(e,view.loupe.frame));set(e,o,"colorTextWidth",value.size.width);for(NSString*key in @[@"loupePicture",@"loupeCenter",@"colorBounds"]){NSUInteger index=[key isEqual:@"loupePicture"]?0:[key isEqual:@"loupeCenter"]?1:3;CGRect r=CGRectOffset(view.loupe.sublayers[index].frame,view.loupe.frame.origin.x,view.loupe.frame.origin.y);napi_set_named_property(e,o,key.UTF8String,rectJS(e,r));}}
  return o;
 }

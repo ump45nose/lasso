@@ -32,6 +32,7 @@ export interface ScreenshotSettings {
   borderColor: string;
   includeCursor: boolean;
   showCrosshair: boolean;
+  showLoupeGrid: boolean;
   loupeMagnification: 4 | 8 | 12;
   loupeColorFormat: 'hex' | 'rgb' | 'hsl';
   watermarkText: string;
@@ -63,7 +64,7 @@ export interface ScreenshotSettings {
 export function screenshotDefaults(directory = ''): ScreenshotSettings {
   return {
     selectionShape: 'rect', cornerRadius: 0, borderWidth: 0, borderColor: '#bd7658',
-    includeCursor: false, showCrosshair: true, loupeMagnification: 8, loupeColorFormat: 'hex',
+    includeCursor: false, showCrosshair: true, showLoupeGrid: true, loupeMagnification: 8, loupeColorFormat: 'hex',
     watermarkText: 'Lasso', watermarkOpacity: 0.15,
     recording: recordingDefaults(),
     history: captureHistoryDefaults(), pinWorkspace: pinWorkspaceDefaults(),
@@ -129,7 +130,7 @@ export function validateScreenshotSettings(value: ScreenshotSettings, supported:
   if (!['rect','freehand','polygon','multi-rect'].includes(value.selectionShape) ||
     !Number.isFinite(value.cornerRadius) || value.cornerRadius < 0 || value.cornerRadius > 64 ||
     !Number.isFinite(value.borderWidth) || value.borderWidth < 0 || value.borderWidth > 16 || !/^#[\da-f]{6}$/i.test(value.borderColor) ||
-    typeof value.includeCursor !== 'boolean' || typeof value.showCrosshair !== 'boolean' || ![4,8,12].includes(value.loupeMagnification) ||
+    typeof value.includeCursor !== 'boolean' || typeof value.showCrosshair !== 'boolean' || typeof value.showLoupeGrid !== 'boolean' || ![4,8,12].includes(value.loupeMagnification) ||
     !['hex','rgb','hsl'].includes(value.loupeColorFormat) || typeof value.watermarkText !== 'string' || value.watermarkText.length > 500 ||
     !Number.isFinite(value.watermarkOpacity) || value.watermarkOpacity < 0 || value.watermarkOpacity > 1) throw Error('高级截图配置无效');
   validateScreenshotFileNameTemplate(value.fileNameTemplate);

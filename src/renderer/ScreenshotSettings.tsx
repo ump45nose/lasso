@@ -79,7 +79,7 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
         <div className="l-set-row-head"><h3>高级采集</h3><span>保存后用于下一次截图</span></div>
         <ul className="l-group">
           <li className="l-shot-option"><span>选区形状</span><Segmented label="选区形状" value={draft.selectionShape} onChange={selectionShape => patch({ selectionShape })} options={ [['rect', '矩形'], ['freehand', '自由套索'], ['polygon', '多边形'], ['multi-rect', '多区域']] } /></li>
-          {([['includeCursor', '截图包含鼠标指针'], ['showCrosshair', '显示十字辅助线']] as const).map(([key, label]) => <li key={key}><span>{label}</span><Switch label={label} value={draft[key]} change={() => patch({ [key]: !draft[key] })} /></li>)}
+          {([['includeCursor', '截图包含鼠标指针'], ['showCrosshair', '显示十字辅助线'], ['showLoupeGrid', '显示放大镜像素网格']] as const).map(([key, label]) => <li key={key}><span>{label}</span><Switch label={label} value={draft[key]} change={() => patch({ [key]: !draft[key] })} /></li>)}
           <li className="l-shot-option"><span>放大镜倍率</span><Segmented label="放大镜倍率" value={String(draft.loupeMagnification)} onChange={value => patch({ loupeMagnification: Number(value) as Preferences['loupeMagnification'] })} options={ [['4', '4×'], ['8', '8×'], ['12', '12×']] } /></li>
           <li className="l-shot-option"><span>取色色值格式</span><Segmented label="取色色值格式" value={draft.loupeColorFormat} onChange={loupeColorFormat => patch({ loupeColorFormat })} options={ [['hex', 'HEX'], ['rgb', 'RGB'], ['hsl', 'HSL']] } /></li>
         </ul>

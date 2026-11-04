@@ -5,16 +5,17 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync, appendFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 
 const root = new URL('../..', import.meta.url).pathname;
 const fixtures = join(root, 'scripts/ui-shots');
 const focusedCases = (process.env.LASSO_UI_CASES || '').split(',').map(value=>value.trim()).filter(Boolean);
-const out = join(root, focusedCases.length ? 'outputs/stage-9/ui-shots-focused' : 'outputs/ui-shots');
+const out = process.env.LASSO_UI_OUTPUT_DIR ? resolve(root, process.env.LASSO_UI_OUTPUT_DIR) : join(root, focusedCases.length ? 'outputs/stage-9/ui-shots-focused' : 'outputs/ui-shots');
+if (relative(join(root, 'outputs'), out).startsWith('..') || !relative(root, out).startsWith('outputs/')) throw Error('UI shots output must stay inside workspace outputs/');
 const surfacesOnly = focusedCases.length > 0 || process.env.LASSO_UI_SCOPE === 'capture';
 const captureOnly = surfacesOnly || process.env.LASSO_UI_SCOPE === 'screenshot';
 mkdirSync(out, { recursive: true });
-const runtime = mkdtempSync(join(root, 'outputs/ui-shots-runtime-'));
+const runtime = mkdtempSync(join(out, 'runtime-'));
 const bootstrap = join(runtime, 'main.cjs');
 const runtimePaths = Object.fromEntries(['appData', 'userData', 'sessionData', 'temp', 'crashDumps', 'logs'].map(name => [name, join(runtime, name === 'userData' ? 'lasso-ui-shots' : name)]));
 const electron = createRequire(import.meta.url)('electron');
@@ -828,21 +829,54 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     return names;
   }));
 
+  // The grid switch uses the real draft/save/reopen flow and remains selectable in focused runs.
+  saved.push(...await main(async () => {
+    const { find, page, wait, ready, scrollTo, settingsTab, save, fs, path, out, app, focusedCases, captureOnly } = global.uiShots, m=find(), names=[],checks=[];
+    const cases=['settings-loupe-grid-off','settings-loupe-grid-on'];
+    if(focusedCases.length?!focusedCases.some(name=>cases.includes(name)):captureOnly)return names;
+    const original=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)'),selector='[aria-label="显示放大镜像素网格"]';
+    const expect=(ok,message)=>{if(!ok)throw Error(message);};
+    const fixtureRoot=path.dirname(app.getPath('userData')),legacy=path.join(fixtureRoot,'stage-9-grid-legacy.json');
+    fs.writeFileSync(legacy,JSON.stringify({shortcut:'',selectionEnabled:false,clipboardFallback:false,screenshot:{directory:app.getPath('temp')}}));
+    expect(process.mainModule.require(path.join(fixtureRoot,'stage-9-settings.cjs')).readSettings(legacy).screenshot.showLoupeGrid===true,'Legacy configuration without showLoupeGrid must default to grid enabled');
+    try {
+      await page(m,`(async()=>{const result=await window.desktop.saveScreenshot(${JSON.stringify({...original,showLoupeGrid:true})});if(result.error)throw Error(result.error);})()`);
+      await settingsTab(m,'截图');
+      for(const enabled of [false,true]){
+        await ready(m,`Boolean(document.querySelector(${JSON.stringify(selector)}))`);
+        expect(await page(m,`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-checked')===${JSON.stringify(String(!enabled))}`),'Grid switch did not restore its previous saved value');
+        await page(m,`document.querySelector(${JSON.stringify(selector)}).click()`);
+        await ready(m,`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-checked')===${JSON.stringify(String(enabled))}&&Boolean(document.querySelector('.l-save-bar .primary'))`);
+        await page(m,`(()=>{const button=[...document.querySelectorAll('.l-save-bar button')].find(button=>button.textContent==='保存');if(!button||button.disabled)throw Error('Grid settings save unavailable');button.click();})()`);
+        await ready(m,`!document.querySelector('.l-save-bar .primary')&&document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-checked')===${JSON.stringify(String(enabled))}`);
+        const screenshot=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)'),disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')).screenshot;
+        expect(screenshot.showLoupeGrid===enabled&&disk.showLoupeGrid===enabled&&screenshot.showCrosshair===original.showCrosshair&&JSON.stringify(screenshot)===JSON.stringify(disk),'Grid switch did not persist independently from crosshair');
+        await settingsTab(m,'通用');await settingsTab(m,'截图');
+        expect(await page(m,`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-checked')===${JSON.stringify(String(enabled))}`),'Grid switch did not restore after reopening settings');
+        const name='settings-loupe-grid-'+(enabled?'on':'off');
+        if(!focusedCases.length||focusedCases.includes(name)){await scrollTo(m,'#screenshot-advanced .l-set-row-head');names.push(await save(m,name));}
+        checks.push({enabled,persisted:disk.showLoupeGrid,reopened:true,crosshairUnchanged:true});
+      }
+      fs.writeFileSync(path.join(out,'stage-9-loupe-grid-settings.json'),JSON.stringify({status:'passed',source:'production readSettings migration, ScreenshotSettings Switch, saveScreenshot IPC, settings.json and reopen',legacyConfigWithoutGridDefaultsTo:true,checks,shots:names},null,2));
+    } finally {await page(m,`(async()=>{await window.desktop.saveScreenshot(${JSON.stringify(original)});await window.desktop.act('close-settings');})()`);await wait(180);}
+    return names;
+  }));
+
   // S5 settings use production IPC and VM execution; only desktop pin creation is receipted.
   saved.push(...await main(async ({ app, nativeTheme, clipboard }) => {
-    const { find, page, wait, ready, scrollTo, settingsTab, save, fs, path, out, stage4 } = global.uiShots, names=[],checks=[],m=find();
-    if(global.uiShots.captureOnly)return names;
+    const { find, page, wait, ready, scrollTo, settingsTab, save, fs, path, out, stage4, focusedCases } = global.uiShots, names=[],checks=[],m=find();
+    if(global.uiShots.captureOnly&&!focusedCases.some(name=>['settings-advanced-capture','settings-advanced-narrow-capture'].includes(name)))return names;
     const expect=(ok,message)=>{if(!ok)throw Error(message);},get=()=>page(m,'window.desktop.getState().then(s=>s.settings)'),original=await get(),bounds=m.getBounds(),minimum=m.getMinimumSize(),theme=nativeTheme.themeSource;
     const general=s=>Object.fromEntries(['launchAtLogin','themeMode','toolbarTools','mouseActions','scriptActions','autoCheckUpdates'].map(key=>[key,s[key]]));
     const click=async selector=>{await page(m,`(()=>{const b=document.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)throw Error('Unavailable S5 control');b.click();})()`);await wait(180);};
     const text=async(scope,label)=>{await page(m,`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw Error('Unavailable S5 action: '+${JSON.stringify(label)});b.click();})()`);await wait(220);};
     const fill=async(id,value)=>{await page(m,`(()=>{const e=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(100);};
     const choice=async(label,value)=>{await text('[aria-label="'+label+'"]',value);};
-    const shot=async(selector,name)=>{await scrollTo(m,selector);names.push(await save(m,name));};
+    const shot=async(selector,name)=>{if(focusedCases.length&&!focusedCases.includes(name))return;await scrollTo(m,selector);names.push(await save(m,name));};
     const fixtureRoot=path.dirname(app.getPath('userData')),legacyPath=path.join(fixtureRoot,'stage-9-legacy.json');
     fs.writeFileSync(legacyPath,JSON.stringify({shortcut:'',selectionEnabled:false,clipboardFallback:false,screenshot:{directory:app.getPath('temp')}}));
     const migrated=process.mainModule.require(path.join(fixtureRoot,'stage-9-settings.cjs')).readSettings(legacyPath);
-    expect(migrated.themeMode==='paper'&&!migrated.launchAtLogin&&migrated.autoCheckUpdates&&!migrated.toolbarTools.length&&!migrated.scriptActions.length&&migrated.mouseActions.doubleClick==='copy'&&migrated.screenshot.selectionShape==='rect'&&migrated.screenshot.loupeMagnification===8,'Legacy S5 defaults did not migrate');checks.push('production readSettings migrates legacy general/capture settings');
+    expect(migrated.themeMode==='paper'&&!migrated.launchAtLogin&&migrated.autoCheckUpdates&&!migrated.toolbarTools.length&&!migrated.scriptActions.length&&migrated.mouseActions.doubleClick==='copy'&&migrated.screenshot.selectionShape==='rect'&&migrated.screenshot.showLoupeGrid===true&&migrated.screenshot.loupeMagnification===8,'Legacy S5 defaults did not migrate');checks.push('production readSettings migrates legacy general/capture settings, including grid enabled by default');
     try {
       await settingsTab(m,'截图');await choice('选区形状','多边形');await choice('放大镜倍率','12×');await choice('取色色值格式','HSL');await click('[aria-label="截图包含鼠标指针"]');await click('[aria-label="显示十字辅助线"]');
       for(const [id,value]of [['screenshot-cornerRadius',24],['screenshot-borderWidth',6],['screenshot-border-color','#bd7658'],['screenshot-watermark','LASSO · 内部评审'],['screenshot-watermark-opacity',.28]])await fill(id,value);
@@ -850,6 +884,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       let settings=await get();const screenshot=settings.screenshot,disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8'));
       expect(screenshot.selectionShape==='polygon'&&screenshot.loupeMagnification===12&&screenshot.loupeColorFormat==='hsl'&&screenshot.cornerRadius===24&&screenshot.borderWidth===6&&screenshot.watermarkOpacity===.28&&JSON.stringify(screenshot)===JSON.stringify(disk.screenshot),'Advanced capture preferences did not persist');
       await settingsTab(m,'通用');await settingsTab(m,'截图');expect(await page(m,`document.getElementById('screenshot-cornerRadius').value==='24'&&document.querySelector('[aria-label="选区形状"] [aria-checked="true"]').textContent==='多边形'`),'Advanced capture settings did not restore');checks.push('advanced capture/decorations/watermark save and reopen; native cursor/crosshair/loupe effects are not exercised');
+      if(focusedCases.length){
+        // Use the same saved S5 draft and geometry as the canonical full-suite screenshot.
+        if(focusedCases.includes('settings-advanced-narrow-capture')){m.setMinimumSize(375,400);m.setSize(375,740);await wait(250);await shot('#screenshot-advanced .l-set-row-head','settings-advanced-narrow-capture');expect(await page(m,'document.documentElement.scrollWidth<=innerWidth'),'S5 settings overflow narrow window');}
+        fs.writeFileSync(path.join(out,'stage-9-settings.json'),JSON.stringify({status:'passed',focusedCases,checks,shots:names,source:'canonical S5 capture-settings controls and persistence; focused run stops before general/script settings'},null,2));
+        return names;
+      }
       await settingsTab(m,'通用');await click('[aria-label="开机自启"]');await click('[aria-label="自动检查更新"]');await choice('双击动作','保存');await choice('中键动作','快速保存');await choice('右键动作','重新选区');await shot('#mouse-actions','settings-mouse-actions');
       await text('.l-toolbar-options','画笔');settings=await get();expect(settings.launchAtLogin!==original.launchAtLogin&&settings.autoCheckUpdates!==original.autoCheckUpdates&&settings.mouseActions.doubleClick==='save'&&settings.mouseActions.middleClick==='quick-save'&&settings.mouseActions.rightClick==='reselect'&&!settings.toolbarTools.includes('pen')&&settings.toolbarTools.includes('spotlight'),'General S5 controls did not persist');await shot('#toolbar-tools','settings-toolbar-tools');
       for(const [mode,source]of [['纸面','light'],['跟随系统','light'],['跟随系统','dark']]){await choice('界面主题',mode);if(mode==='跟随系统')nativeTheme.themeSource=source;await ready(m,`matchMedia('(prefers-color-scheme: dark)').matches===${source==='dark'}`);await shot('#system-settings','settings-theme-'+(mode==='纸面'?'paper':'system-'+source));}
@@ -889,7 +929,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     for(let y=277;y<=325;y++)for(let x=377;x<=425;x++){const [r,g,b]=loupeRGB(x,y),i=(y*W*2+x)*4;nativeRetinaPixels[i]=b;nativeRetinaPixels[i+1]=g;nativeRetinaPixels[i+2]=r;}
     const nativeRetinaBackdrop=nativeImage.createFromBitmap(nativeRetinaPixels,{width:W*2,height:H*2}).toDataURL();
     const states = {
-      'overlay-loupe-retina': { ...base, image:'',backdrop:nativeRetinaBackdrop,width:W,height:H,pixelWidth:W*2,pixelHeight:H*2,pointer:{x:200.5,y:150.5},candidates:[],windows:[],mode:'rect',phase:'selecting',origin:'screen' },
+      'overlay-loupe-retina': { ...base, image:'',backdrop:nativeRetinaBackdrop,width:W,height:H,pixelWidth:W*2,pixelHeight:H*2,pointer:{x:200.5,y:150.5},candidates:[],windows:[],mode:'rect',phase:'selecting',origin:'screen',nativePreferences:{showLoupeGrid:false} },
       'overlay-handoff-error': { ...base,image:'',backdrop,width:W,height:H,windows,candidates:[{...sel,source:'element'}],mode:'area',phase:'selecting',origin:'screen' },
       'overlay-fixed-region': { ...base,image:'',backdrop,width:W,height:H,mode:'rect',fixedSize:{width:400,height:240},phase:'selecting',origin:'screen'},
       'overlay-rect': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, candidates: [], windows: [], mode: 'rect', phase: 'selecting', origin: 'screen' },
@@ -925,7 +965,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       ['overlay-loupe-rgb',{loupeColorFormat:'rgb'}],['overlay-loupe-hsl',{loupeColorFormat:'hsl'}],['overlay-crosshair-off',{showCrosshair:false}],
       ['overlay-loupe-rgb-edge',{loupeColorFormat:'rgb'},{x:W-1,y:H-1}],['overlay-loupe-hsl-edge',{loupeColorFormat:'hsl'},{x:W-1,y:H-1}],
       ['overlay-loupe-top-left',{}, {x:1,y:1}],['overlay-loupe-top-right',{}, {x:W-1,y:1}],['overlay-loupe-bottom-left',{}, {x:1,y:H-1}],['overlay-loupe-edge',{}, {x:W-1,y:H-1}]
-    ])states[name]={...states['overlay-loupe-retina'],nativePreferences,pointer:pointer||states['overlay-loupe-retina'].pointer};
+    ])states[name]={...states['overlay-loupe-retina'],nativePreferences:{showLoupeGrid:false,...nativePreferences},pointer:pointer||states['overlay-loupe-retina'].pointer};
+    // Keep the original source-pixel evidence free of grid lines; new cases exercise the default and all grid/crosshair combinations.
+    for(const [name,nativePreferences]of [
+      ['overlay-loupe-grid-on',{}],['overlay-loupe-grid-off',{showLoupeGrid:false}],
+      ['overlay-loupe-grid-4x',{loupeMagnification:4}],['overlay-loupe-grid-8x',{loupeMagnification:8}],['overlay-loupe-grid-12x',{loupeMagnification:12}],
+      ['overlay-loupe-grid-crosshair-off',{showCrosshair:false}],['overlay-loupe-grid-off-crosshair-off',{showLoupeGrid:false,showCrosshair:false}]
+    ])states[name]={...states['overlay-loupe-retina'],nativePreferences};
     states['editor-region-retina']={...states['editor-region'],image:retinaBackdrop,backdrop:retinaBackdrop,editableRegion:{...states['editor-region'].editableRegion,display:{...states['editor-region'].editableRegion.display,scaleFactor:2},sourceSize:{width:W*2,height:H*2},initialCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2},currentCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2}}};
     states['editor-stage-2']={...states['editor-window'],editorShortcuts:{...preferences.editorShortcuts,arrow:'Q',copy:'F16',save:'F17','quick-save':'F18',pin:'F19'},annotationMemory:{...preferences.annotationMemory,lastTool:'arrow',perTool:{arrow:{arrowType:'double',width:8},text:{textBackground:true,fontSize:40},mosaic:{mosaicSize:32},blur:{blurRadius:18}}}};
     states['editor-shared-style']={...states['editor-stage-2'],annotationMemory:{...states['editor-stage-2'].annotationMemory,rememberToolStyles:false}};
@@ -959,7 +1005,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     for(let y=0;y<inlineHeight;y++)for(let x=0;x<inlineWidth;x++){const i=(y*inlineWidth+x)*4;inlinePixels[i]=40+(x+2*y)%180;inlinePixels[i+1]=40+y%180;inlinePixels[i+2]=40+x%180;inlinePixels[i+3]=255;}
     const inlineImage=nativeImage.createFromBitmap(inlinePixels,{width:inlineWidth,height:inlineHeight}).toDataURL();
     states['editor-advanced-inline-rotation']={...states['editor-advanced-transform'],stage9:'inline-rotation',image:inlineImage,backdrop:inlineImage,width:inlineWidth,height:inlineHeight,pixelWidth:inlineWidth,pixelHeight:inlineHeight,selection:inlineCrop,placement:inlineCrop,presentation:'inline',origin:'screen',viewSize:{width:inlineWidth,height:inlineHeight},editableRegion:{display:{id:1,bounds:{x:0,y:0,width:inlineWidth,height:inlineHeight},scaleFactor:1,rotation:0},sourceSize:{width:inlineWidth,height:inlineHeight},initialCrop:inlineCrop,currentCrop:inlineCrop,ratio:null}};
-    if(focusedCases.some(name=>!Object.hasOwn(states,name)))throw Error('Unknown UI case: '+focusedCases.filter(name=>!Object.hasOwn(states,name)).join(', '));
+    const settingsCases=['settings-loupe-grid-off','settings-loupe-grid-on','settings-advanced-capture','settings-advanced-narrow-capture'];
+    if(focusedCases.some(name=>!Object.hasOwn(states,name)&&!settingsCases.includes(name)))throw Error('Unknown UI case: '+focusedCases.filter(name=>!Object.hasOwn(states,name)&&!settingsCases.includes(name)).join(', '));
     let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [], intelligenceReceipts=[],scrollReceipts=[],clipboardAudits=[],advancedChecks=[],screenshotActions=[];
     const verify=(ok,message)=>{if(!ok)throw Error(message);};
     const record=(method,args)=>intelligenceReceipts.push({method,args});
@@ -989,10 +1036,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const legacyNativePath=path.join(fixtureRoot,'stage-9-native-legacy.json');
     fs.writeFileSync(legacyNativePath,JSON.stringify({shortcut:'',selectionEnabled:false,clipboardFallback:false,screenshot:{directory:app.getPath('temp')}}));
     const nativeDefaults=process.mainModule.require(path.join(fixtureRoot,'stage-9-settings.cjs')).readSettings(legacyNativePath).screenshot,nativeChecks=[];
+    verify(nativeDefaults.showLoupeGrid===true,'Legacy screenshot configuration without showLoupeGrid must default to grid enabled');
     const persistNativePreferences=async preferences=>{
       await page(find(),`(async()=>{const result=await window.desktop.saveScreenshot(${JSON.stringify(preferences)});if(result.error)throw Error(result.error);})()`);
       const settings=await page(find(),'window.desktop.getState().then(s=>s.settings)');
-      for(const key of ['includeCursor','showCrosshair','loupeMagnification','loupeColorFormat'])verify(settings.screenshot[key]===preferences[key],'Native preference did not persist: '+key);
+      const persisted=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')).screenshot;
+      for(const key of ['includeCursor','showCrosshair','showLoupeGrid','loupeMagnification','loupeColorFormat'])verify(settings.screenshot[key]===preferences[key]&&persisted[key]===preferences[key],'Native preference did not persist: '+key);
       return settings;
     };
     const applyNativePreferences=async preferences=>{
@@ -1012,21 +1061,22 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         try {
           const preferences={...nativeDefaults,...value.nativePreferences};
           // Public persistence and the production adapter feed the actual AppKit controls.
-          const onSettings=name==='overlay-crosshair-off'?await persistNativePreferences({...preferences,showCrosshair:true}):null,settings=await applyNativePreferences(preferences);
+          const liveKey=name==='overlay-crosshair-off'?'showCrosshair':name.startsWith('overlay-loupe-grid-')?'showLoupeGrid':null;
+          const beforeSettings=liveKey?await persistNativePreferences({...preferences,[liveKey]:!preferences[liveKey]}):null,settings=await applyNativePreferences(preferences);
           native.show(options);await wait(150); // Let AppKit lay out before synchronously restoring the fixture pointer.
-          let crosshairBefore;
-          if(onSettings)nativeAdapter.updateNativeAppearance(native,onSettings,onSettings.screenshot);
+          let before;
+          if(beforeSettings)nativeAdapter.updateNativeAppearance(native,beforeSettings,beforeSettings.screenshot);
           native.show(options); // No await until snapshot/render: live mouse events must not replace the pointer.
-          if(onSettings){
-            crosshairBefore={snapshot:native.snapshot(),image:native.render()};
-            nativeAdapter.updateNativeAppearance(native,settings,settings.screenshot); // Live warmup(off), no await or show().
+          if(beforeSettings){
+            before={snapshot:native.snapshot(),image:native.render()};
+            nativeAdapter.updateNativeAppearance(native,settings,settings.screenshot); // Live warmup, no await or show().
           }
           if(name==='overlay-handoff-error'){native.update({session:'ui-shots-native',message:'编辑器未能准备好，请重试或取消'});await wait(150);}
           const sample=native.snapshot(),pixels=native.render(),file=path.join(out,name+'.png');
           fs.writeFileSync(file,nativeImage.createFromBitmap(pixels.data,{width:pixels.width,height:pixels.height}).toPNG());names.push(name);
           const decoded=nativeImage.createFromPath(file),image={...decoded.getSize(),data:decoded.toBitmap()};
-          verify(sample.showCrosshair===Number(preferences.showCrosshair)&&sample.loupeMagnification===preferences.loupeMagnification&&sample.loupeColorFormat===preferences.loupeColorFormat,'Production native appearance disagrees with persisted preferences: '+name);
-          const evidence={name,preferences:Object.fromEntries(['showCrosshair','loupeMagnification','loupeColorFormat'].map(key=>[key,preferences[key]])),snapshot:sample,layoutWaitMs:150,pointerResetBeforeSample:true,png:{width:image.width,height:image.height}};
+          verify(sample.showCrosshair===Number(preferences.showCrosshair)&&sample.showLoupeGrid===Number(preferences.showLoupeGrid)&&sample.loupeMagnification===preferences.loupeMagnification&&sample.loupeColorFormat===preferences.loupeColorFormat,'Production native appearance disagrees with persisted preferences: '+name);
+          const evidence={name,preferences:Object.fromEntries(['showCrosshair','showLoupeGrid','loupeMagnification','loupeColorFormat'].map(key=>[key,preferences[key]])),snapshot:sample,layoutWaitMs:150,pointerResetBeforeSample:true,png:{width:image.width,height:image.height}};
           if(name.startsWith('overlay-loupe-')||name==='overlay-crosshair-off'){
             const viewport={x:0,y:0,width:value.width,height:value.height},px=Math.floor(options.pointer.x*size.width/value.width),py=Math.floor(options.pointer.y*size.height/value.height),center={x:sample.loupeCenter.x+sample.loupeCenter.width/2,y:sample.loupeCenter.y+sample.loupeCenter.height/2};
             const sampled=px===401&&py===301,rgb=sampled?[239,205,171]:[18,52,86],expected=preferences.loupeColorFormat==='rgb'?`rgb(${rgb.join(', ')})`:preferences.loupeColorFormat==='hsl'?(sampled?'hsl(30, 68%, 80%)':'hsl(210, 65%, 20%)'):sampled?'#EFCDAB':'#123456';
@@ -1034,6 +1084,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
             verify(inside(sample.loupe,viewport)&&inside(sample.loupePicture,sample.loupe)&&inside(sample.loupeCenter,sample.loupePicture)&&inside(sample.colorBounds,sample.loupe)&&sample.colorTextWidth<=sample.colorBounds.width+.01,'Native loupe content or full color value leaves its panel: '+name);
             verify(sample.loupePicture.width===136&&sample.loupePicture.height===136&&sample.loupeCenter.width===preferences.loupeMagnification&&sample.loupeCenter.height===preferences.loupeMagnification,'Native pixel grid does not use the requested magnification: '+name);
             verify(sample.crosshairVisible===Number(preferences.showCrosshair),'Native crosshair visibility disagrees with preference: '+name);
+            verify(sample.loupeGridVisible===Number(preferences.showLoupeGrid),'Native loupe grid visibility disagrees with preference: '+name);
             verify(nearRGB(nativePixel(image,center.x,center.y),rgb),'Saved native PNG lost the loupe center pixel: '+name);
             evidence.grid=[];
             if(px===401&&py===301)for(let y=-2;y<=2;y++)for(let x=-2;x<=2;x++){
@@ -1042,10 +1093,33 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
               evidence.grid.push({source:{x:px+x,y:py+y},actual,expected});
             }
             if(['overlay-loupe-default','overlay-loupe-retina'].includes(name))verify(sample.loupe.width===160&&sample.loupe.height===200,'Legacy default loupe dimensions changed');
-            if(crosshairBefore){
+            if(liveKey==='showLoupeGrid'){
+              const beforePNG=nativeImage.createFromBuffer(nativeImage.createFromBitmap(before.image.data,{width:before.image.width,height:before.image.height}).toPNG()),beforeImage={...beforePNG.getSize(),data:beforePNG.toBitmap()};
+              const on=preferences.showLoupeGrid?image:beforeImage,off=preferences.showLoupeGrid?beforeImage:image,grid=sample.loupeGrid,step=sample.loupeGridStep,lineWidth=sample.loupeGridLineWidth,boundaryPixels=[];
+              verify(before.snapshot.showLoupeGrid===Number(!preferences.showLoupeGrid)&&before.snapshot.loupeGridVisible===Number(!preferences.showLoupeGrid)&&before.snapshot.crosshairVisible===sample.crosshairVisible&&before.snapshot.color===sample.color,'Live grid warmup changed crosshair/color or did not toggle visibility: '+name);
+              const expectedOffset=((136-step)/2)%step;
+              verify(grid.x===sample.loupePicture.x&&grid.y===sample.loupePicture.y&&grid.width===136&&grid.height===136&&step===preferences.loupeMagnification&&sample.loupeGridOffset===expectedOffset&&sample.loupeRasterScale===image.width/value.width&&Math.abs(lineWidth*sample.loupeRasterScale-1)<.001,'Native grid does not match source-pixel boundaries or one-raster-pixel stroke: '+name);
+              verify(nearRGB(nativePixel(on,center.x,center.y),rgb)&&nearRGB(nativePixel(off,center.x,center.y),rgb),'Grid toggle changed the center source color: '+name);
+              const crosshairProbes=[{x:options.pointer.x-60,y:options.pointer.y},...(preferences.showCrosshair?[{x:sample.loupeCenter.x+.25,y:center.y}]:[])];
+              const crosshairPixels=crosshairProbes.map(point=>({point,on:nativePixel(on,point.x,point.y),off:nativePixel(off,point.x,point.y)}));
+              verify(crosshairPixels.every(pixel=>nearRGB(pixel.on,pixel.off.slice(0,3))),'Grid toggle changed crosshair lines or the center frame PNG: '+name);
+              for(const axis of ['x','y'])for(let boundary=sample.loupeGridOffset;boundary<136;boundary+=step){
+                if(boundary<20||boundary>116)continue; // Avoid the rounded picture clip; inspect real interior boundaries.
+                const point=axis==='x'?{x:grid.x+boundary+lineWidth/2,y:center.y+step*2}:{x:center.x+step*2,y:grid.y+boundary+lineWidth/2};
+                const at=nativePixel(on,point.x,point.y),without=nativePixel(off,point.x,point.y);
+                verify(at[3]===255&&at.slice(0,3).some((value,i)=>Math.abs(value-without[i])>5),'Saved native PNG lacks a grid boundary: '+name+' '+axis+' '+boundary);
+                const adjacent=[-1.5,1.5].map(distance=>{const p={...point,[axis]:point[axis]+distance*lineWidth};return {point:p,on:nativePixel(on,p.x,p.y),off:nativePixel(off,p.x,p.y)};});
+                verify(adjacent.every(pixel=>nearRGB(pixel.on,pixel.off.slice(0,3))),'Grid stroke bleeds beyond one raster pixel: '+name+' '+axis+' '+boundary);
+                boundaryPixels.push({axis,boundary,point,on:at,off:without,adjacent});
+              }
+              verify(boundaryPixels.length>=12,'Too few native grid boundaries checked: '+name);
+              evidence.gridToggle={from:!preferences.showLoupeGrid,to:preferences.showLoupeGrid,beforeSnapshot:before.snapshot,beforePNGDecoded:true,centerOriginalRGB:rgb,crosshairPixels,boundaryPixels};
+              evidence.livePreferenceUpdate='synchronous production warmup(on/off), no await/show before after-snapshot/render';
+            }
+            if(liveKey==='showCrosshair'){
               const line={x:options.pointer.x-60,y:options.pointer.y},border={x:sample.loupeCenter.x+.25,y:center.y};
-              evidence.crosshairPixels=[line,border].map(point=>({point,before:nativePixel(crosshairBefore.image,point.x,point.y),after:nativePixel(image,point.x,point.y)}));
-              verify(crosshairBefore.snapshot.crosshairVisible===1&&evidence.crosshairPixels.every(pixel=>pixel.before.some((value,i)=>Math.abs(value-pixel.after[i])>5)),'Live crosshair preference did not remove the rendered lines and center frame');
+              evidence.crosshairPixels=[line,border].map(point=>({point,before:nativePixel(before.image,point.x,point.y),after:nativePixel(image,point.x,point.y)}));
+              verify(before.snapshot.crosshairVisible===1&&before.snapshot.loupeGridVisible===sample.loupeGridVisible&&evidence.crosshairPixels.every(pixel=>pixel.before.some((value,i)=>Math.abs(value-pixel.after[i])>5)),'Live crosshair preference did not remove the rendered lines and center frame independently of grid');
               evidence.livePreferenceUpdate='synchronous production warmup(off), no await/show before after-snapshot/render';
             }
           }
@@ -1365,7 +1439,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
       w.destroy();
     }
-    if(nativeChecks.length)fs.writeFileSync(path.join(out,'stage-9-native.json'),JSON.stringify({status:'passed',focusedCases,source:'public saveScreenshot, production readSettings migration/updateNativeAppearance, generated native theme, createFrame/show/update/render, decoded saved PNG pixels',checks:nativeChecks,physicalCapture:'not exercised; no system display/cursor is acquired'},null,2));
+    if(nativeChecks.length)fs.writeFileSync(path.join(out,'stage-9-native.json'),JSON.stringify({status:'passed',focusedCases,source:'public saveScreenshot, production readSettings migration/updateNativeAppearance, generated native theme, createFrame/show/update/render, decoded PNG pixels (saved target and in-memory before-toggle PNG)',legacyConfigWithoutGridDefaultsTo:true,checks:nativeChecks,physicalCapture:'not exercised; no system display/cursor is acquired'},null,2));
     fs.writeFileSync(path.join(out,'stage-9-editor.json'),JSON.stringify({status:'passed',focusedCases,checks:advancedChecks,screenshotActions,output:'production Editor gestures, PNG export, decodeFrameImage and encodeScreenshot pixels; fixture OCR and output destination'},null,2));
     if(!focusedCases.length)fs.writeFileSync(path.join(out,'stage-6-surfaces.json'),JSON.stringify({status:'passed',scroll:scrollReceipts,intelligence:intelligenceReceipts,clipboardAudits,copies:global.uiShots.stage4.state.receipts.filter(r=>r.method==='editorText'),checks:['方向切换/反裁状态、中段删除、四档接缝修正与横向预览','QR/Code128内容复制与URL回执','四种目标语言、原文译文对照、图上覆盖与全文复制','改单元格/增删行列/Markdown/TSV/XLSX回执','初始公式/编辑后SVG排版/复制/转贴图回执'],electronSessionNetworkAtCapture:global.uiShotsNetwork.audit,linkOpens:'ui-shots:open-url fixture receipts only'},null,2));
     ipcMain.removeHandler('ui-shots:state');

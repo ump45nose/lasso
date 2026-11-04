@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { Settings } from '../../shared/contracts';
 import type { CaptureRect, RegionCandidate, CaptureWindow } from '../../shared/capture';
 import type { ScreenshotSettings } from '../../shared/screenshot-settings';
-export type NativeCapturePreferences = Pick<ScreenshotSettings,'includeCursor'|'showCrosshair'|'loupeMagnification'|'loupeColorFormat'>;
+export type NativeCapturePreferences = Pick<ScreenshotSettings,'includeCursor'|'showCrosshair'|'showLoupeGrid'|'loupeMagnification'|'loupeColorFormat'>;
 export interface NativeFrame { id: string; width: number; height: number; scale: number; bounds: CaptureRect; hostTimeMs: number; captureMs: number; queueMs: number; completionMs: number; workMs: number }
 export interface NativePixels { width: number; height: number; data: Uint8Array }
 export interface NativeCaptureEvent { session: string; type: 'copy'|'last'|'shown'|'hover'|'mode'|'select'|'window'|'scroll'|'screen'|'cancel'|'retry'; x?: number; y?: number; mode?: 'area'|'window'|'scroll'; rect?: CaptureRect; kind?: 'rect'|'area'; id?: number; shadow?: boolean; nativeReadyMs?: number }
@@ -17,7 +17,7 @@ export interface NativeCapture {
   update(options: { session: string; candidates?: RegionCandidate[]; message?: string; resume?: boolean }): void;
   hide(): void; focus(): void; release(id: string): void; invalidate(): void;
   windowID(handle: Buffer): number;
-  snapshot(): { visible: number; focused: number; frameCount: number; windowId: number; session: string; mode: string; selection: CaptureRect; bounds: CaptureRect; color: string; position: string; loupe: CaptureRect; loupePicture: CaptureRect; loupeCenter: CaptureRect; colorBounds: CaptureRect; colorTextWidth: number; showCrosshair: number; crosshairVisible: number; loupeMagnification: number; loupeColorFormat: string };
+  snapshot(): { visible: number; focused: number; frameCount: number; windowId: number; session: string; mode: string; selection: CaptureRect; bounds: CaptureRect; color: string; position: string; loupe: CaptureRect; loupePicture: CaptureRect; loupeCenter: CaptureRect; colorBounds: CaptureRect; colorTextWidth: number; showCrosshair: number; crosshairVisible: number; showLoupeGrid: number; loupeGridVisible: number; loupeGrid: CaptureRect; loupeGridStep: number; loupeGridOffset: number; loupeGridLineWidth: number; loupeRasterScale: number; loupeMagnification: number; loupeColorFormat: string };
 }
 export function loadNativeCapture(callback: (event: NativeCaptureEvent) => void): NativeCapture {
   const native = require(join(__dirname, 'native/capture-native.node')) as NativeCapture;
@@ -40,7 +40,7 @@ export function updateNativeAppearance(native:NativeCapture,settings:Pick<Settin
   if(settings?.fonts.ui)theme.uiFonts.unshift(settings.fonts.ui);
   if(settings?.fonts.mono)theme.monoFonts.unshift(settings.fonts.mono);
   theme.fontFiles=settings?.importedFonts.map(font=>join(app.getPath('userData'),'fonts',font.file))??[];
-  Object.assign(theme,{showCrosshair:screenshot.showCrosshair,loupeMagnification:screenshot.loupeMagnification,loupeColorFormat:screenshot.loupeColorFormat});
+  Object.assign(theme,{showCrosshair:screenshot.showCrosshair,showLoupeGrid:screenshot.showLoupeGrid,loupeMagnification:screenshot.loupeMagnification,loupeColorFormat:screenshot.loupeColorFormat});
   native.warmup(theme,()=>{});
 }
 

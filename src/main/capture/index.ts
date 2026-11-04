@@ -326,7 +326,7 @@ export class CaptureManager {
   }
   closeFocused(){if(this.native.snapshot().focused){this.cancel();return true;}if(this.pins.closeFocused())return true;if(this.win&&BrowserWindow.getFocusedWindow()===this.win){this.win.close();return true;}return false;}
   supportedLanguages(): string[] { return (this.vision??=require(join(__dirname,'native/capture-vision.node')) as VisionOCR).supportedLanguages(); }
-  private configureNativeAppearance(){const settings=this.appearance?.(),{includeCursor,showCrosshair,loupeMagnification,loupeColorFormat}=this.settings(),screenshot={includeCursor,showCrosshair,loupeMagnification,loupeColorFormat};const key=JSON.stringify({fonts:settings?.fonts,importedFonts:settings?.importedFonts,...screenshot});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings,screenshot);}}
+  private configureNativeAppearance(){const settings=this.appearance?.(),{includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat}=this.settings(),screenshot={includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat};const key=JSON.stringify({fonts:settings?.fonts,importedFonts:settings?.importedFonts,...screenshot});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings,screenshot);}}
   private assertCaptureDisplay(){if(!this.captureDisplay||!screen.getAllDisplays().some(display=>sameCaptureDisplay(this.captureDisplay!,bindDisplay(display))))throw new CaptureReselectRequiredError();}
   async start(mode:CaptureMode='area',request?:{area?:SuccessfulCaptureArea;signal:AbortSignal;custom?:CustomCaptureRequest}) {
     if(this.recordingPreparing||this.recordingSource)throw Error('请先停止当前录制');
