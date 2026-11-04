@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld('screenshot', {
   ready: () => {},
   onState: cb=>{const listener=(_e,s)=>cb(s);ipcRenderer.on('ui-shots:changed',listener);return()=>ipcRenderer.removeListener('ui-shots:changed',listener);},
   onSuspend: () => () => {},
-  action:done, scrollAction:request=>ipcRenderer.invoke('ui-shots:scroll-action',request),
+  action:action=>ipcRenderer.invoke('ui-shots:screenshot-action',action), scrollAction:request=>ipcRenderer.invoke('ui-shots:scroll-action',request),
   analyze: request=>ipcRenderer.invoke('ui-shots:analyze',request),
   visionLanguage: ()=>ipcRenderer.invoke('ui-shots:vision-language'),
   previewFormula: request=>ipcRenderer.invoke('ui-shots:formula-preview',request),

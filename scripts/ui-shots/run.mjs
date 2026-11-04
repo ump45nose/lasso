@@ -9,8 +9,9 @@ import { join } from 'node:path';
 
 const root = new URL('../..', import.meta.url).pathname;
 const fixtures = join(root, 'scripts/ui-shots');
-const out = join(root, 'outputs/ui-shots');
-const surfacesOnly = process.env.LASSO_UI_SCOPE === 'capture';
+const focusedCases = (process.env.LASSO_UI_CASES || '').split(',').map(value=>value.trim()).filter(Boolean);
+const out = join(root, focusedCases.length ? 'outputs/stage-9/ui-shots-focused' : 'outputs/ui-shots');
+const surfacesOnly = focusedCases.length > 0 || process.env.LASSO_UI_SCOPE === 'capture';
 const captureOnly = surfacesOnly || process.env.LASSO_UI_SCOPE === 'screenshot';
 mkdirSync(out, { recursive: true });
 const runtime = mkdtempSync(join(root, 'outputs/ui-shots-runtime-'));
@@ -50,6 +51,10 @@ function main(fn, ...args) {
 const saved = [];
 try {
   for (const directory of Object.values(runtimePaths)) mkdirSync(directory, { recursive: true });
+  // Exercise the production encoders/migration functions without exposing test hooks in the app.
+  for (const [name, source] of [['output', 'capture/output'], ['settings', 'settings'], ['native', 'capture/native']]) writeFileSync(join(runtime, `stage-9-${name}.cjs`), createRequire(import.meta.url)('esbuild').buildSync({ entryPoints: [join(root, `src/main/${source}.ts`)], bundle: true, platform: 'node', format: 'cjs', external: ['electron'], write: false }).outputFiles[0].contents);
+  // The production appearance adapter resolves its generated theme/icons beside its bundle.
+  symlinkSync(join(root, 'dist/native'), join(runtime, 'native'), 'dir');
   // Fixture runs must never start global selection hooks or ask for accessibility permission.
   writeFileSync(join(runtimePaths.userData, 'settings.json'), JSON.stringify({ shortcut: '', selectionEnabled: false, clipboardFallback: false }));
   // Electron uses the bootstrap directory as app.getAppPath(); keep icon reads local.
@@ -58,6 +63,28 @@ try {
   // the same userData path, so the disabled-selection settings are read on boot.
   writeFileSync(bootstrap, `const electron = require('electron');
 const { app, dialog, session } = electron;
+global.uiShotsLogin = { settings:{openAtLogin:false},calls:[],systemReads:0,systemWrites:0 };
+app.setLoginItemSettings = options => { global.uiShotsLogin.calls.push(options);global.uiShotsLogin.settings={...global.uiShotsLogin.settings,...options}; };
+app.getLoginItemSettings = () => ({...global.uiShotsLogin.settings});
+// Guard Node entry points before product imports cache them. Never record request bodies or CLI arguments.
+const nodeAudit={scope:'main-process JS fetch, http(s), net, tls, Electron net and child_process; not an OS firewall',blocked:[],allowedLocal:[],guards:[]},nodeGuards=[];
+const loopback=host=>['localhost','127.0.0.1','::1','[::1]'].includes(String(host).toLowerCase());
+const localURL=value=>{try{return loopback(new URL(value).hostname);}catch{return false;}};
+function nodeGate(kind,target,local){const entry={kind,target};if(local){nodeAudit.allowedLocal.push(entry);return;}nodeAudit.blocked.push(entry);const error=Error('UI shots blocked external runtime access: '+kind);error.code='UI_SHOTS_EXTERNAL_BLOCKED';throw error;}
+function urlTarget(value){const url=new URL(typeof value==='object'&&value?.url?value.url:value);return {target:url.origin,local:['file:','data:','lasso-font:'].includes(url.protocol)||loopback(url.hostname)};}
+function socketTarget(args){let value=args[0];if(Array.isArray(value))return socketTarget(value);if(value&&typeof value==='object'){if(value.path)return {target:'unix-socket',local:true};const host=value.hostname||value.host||'localhost';return {target:String(host),local:loopback(host)};}if(typeof value==='string'&&!/^\\d+$/.test(value))return {target:'unix-socket',local:true};const host=typeof args[1]==='string'?args[1]:'localhost';return {target:host,local:loopback(host)};}
+function requestTarget(args){const value=args[0];if(typeof value==='string'||value instanceof URL)return urlTarget(value);if(value?.url)return urlTarget(value.url);if(value?.socketPath)return {target:'unix-socket',local:true};const host=value?.hostname||value?.host||'localhost';return {target:String(host),local:loopback(host)};}
+function guard(owner,key,kind,resolve){const original=owner[key];if(typeof original!=='function')throw Error('Missing runtime guard entry point: '+kind);const wrapped=function(...args){const route=resolve(args);nodeGate(kind,route.target,route.local);return Reflect.apply(original,this,args);};owner[key]=wrapped;nodeGuards.push(()=>owner[key]===wrapped);nodeAudit.guards.push(kind);}
+const nodeHttp=require('node:http'),nodeHttps=require('node:https'),nodeNet=require('node:net'),nodeTls=require('node:tls'),nodeChild=require('node:child_process');
+guard(global,'fetch','fetch',args=>urlTarget(args[0]));const guardedFetch=global.fetch,asyncFetch=async(...args)=>guardedFetch(...args);global.fetch=asyncFetch;nodeGuards.pop();nodeGuards.push(()=>global.fetch===asyncFetch);
+for(const [module,name]of [[nodeHttp,'http'],[nodeHttps,'https']])for(const method of ['request','get'])guard(module,method,name+'.'+method,requestTarget);
+for(const method of ['connect','createConnection'])guard(nodeNet,method,'net.'+method,socketTarget);
+guard(nodeNet.Socket.prototype,'connect','net.Socket.connect',socketTarget);guard(nodeTls,'connect','tls.connect',socketTarget);
+guard(electron.net,'fetch','electron.net.fetch',args=>urlTarget(args[0]));guard(electron.net,'request','electron.net.request',requestTarget);
+for(const method of ['spawn','spawnSync','exec','execSync','execFile','execFileSync','fork'])guard(nodeChild,method,'child_process.'+method,args=>({target:method==='exec'||method==='execSync'?'shell-command':require('node:path').basename(String(args[0])).slice(0,120),local:false}));
+guard(nodeChild.ChildProcess.prototype,'spawn','ChildProcess.spawn',args=>({target:require('node:path').basename(String(args[0]?.file)).slice(0,120),local:false}));
+require('node:module').syncBuiltinESMExports();
+global.uiShotsNode={audit:nodeAudit,verify:()=>nodeGuards.every(check=>check())};
 // Install before product modules can create sessions or warm a remote page.
 const networkSessions = new WeakSet();
 const networkAudit = { scope:'Electron session.webRequest only', guardedSessions:0, blockedRequests:0, blockedByProtocol:{http:0,https:0,ws:0,wss:0,ftp:0}, blockedOrigins:{}, allowedLocalByProtocol:{} };
@@ -65,7 +92,7 @@ function isolateNetwork(currentSession) {
   if (networkSessions.has(currentSession)) return;
   currentSession.webRequest.onBeforeRequest({urls:['<all_urls>']}, (request, callback) => {
     const protocol = request.url.split(':',1)[0].toLowerCase();
-    if (Object.hasOwn(networkAudit.blockedByProtocol,protocol)) {
+    if (Object.hasOwn(networkAudit.blockedByProtocol,protocol) && !localURL(request.url)) {
       networkAudit.blockedRequests++; networkAudit.blockedByProtocol[protocol]++;
       const origin = new URL(request.url).origin;
       networkAudit.blockedOrigins[origin] = (networkAudit.blockedOrigins[origin] || 0) + 1;
@@ -135,7 +162,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   await new Promise((resolve, reject) => { ws.addEventListener('open', resolve, { once: true }); ws.addEventListener('error', reject, { once: true }); });
   // Let AppKit finish launching between inspector calls; an awaited evaluation before ready can starve its launch event.
   for(let pass=0;pass<100;pass++){if(await main(({app})=>app.isReady()))break;await sleep(100);}
-  await main(async ({ app, BrowserWindow, ipcMain }, out, fixtures, runtime, captureOnly, surfacesOnly) => {
+  await main(async ({ app, BrowserWindow, ipcMain }, out, fixtures, runtime, captureOnly, surfacesOnly, focusedCases) => {
     const fs = process.mainModule.require('fs'), path = process.mainModule.require('path');
     for (let i = 0; i < 200 && (!app.isReady() || !BrowserWindow.getAllWindows().some(w => w.webContents.getURL().includes('renderer/index.html'))); i++) await new Promise(resolve => setTimeout(resolve, 50));
     for (const name of ['appData', 'userData', 'sessionData', 'temp', 'crashDumps', 'logs']) {
@@ -145,6 +172,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     if (app.getPath('userData') !== path.join(runtime, 'lasso-ui-shots')) throw Error('Unexpected fixture profile path');
     if (JSON.parse(fs.readFileSync(path.join(app.getPath('userData'), 'settings.json'), 'utf8')).selectionEnabled !== false) throw Error('Fixture selection hooks were not disabled before boot');
     if (!global.uiShotsNetwork?.hasSession(process.mainModule.require('electron').session.defaultSession) || BrowserWindow.getAllWindows().some(win=>!global.uiShotsNetwork.hasSession(win.webContents.session))) throw Error('Fixture network session isolation missing');
+    if (!global.uiShotsNode?.verify()) throw Error('Fixture Node runtime isolation missing before product startup');
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
     const find = surface => BrowserWindow.getAllWindows().find(w => surface ? w.webContents.getURL().includes('surface=' + surface) : !w.webContents.getURL().includes('surface='));
     for (let i = 0; i < 40 && !(find() && find('action-bar')); i++) await wait(250);
@@ -180,12 +208,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await page(w, `Array.from(document.querySelectorAll('.l-set-nav button')).find(b => b.textContent === ${JSON.stringify(label)}).click()`); await wait(400);
     };
     if(!find()||!find('action-bar'))throw Error('UI startup failed: '+JSON.stringify(BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL()}))));
-    global.uiShots = { captureOnly, surfacesOnly, fs, path, wait, ready, scrollTo, settingsTab, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
+    global.uiShots = { captureOnly, surfacesOnly, focusedCases, fs, path, wait, ready, scrollTo, settingsTab, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
       save: async (w, name) => {
-        await page(w, `(async()=>{for(let frame=0;frame<120;frame++){await new Promise(requestAnimationFrame);if([...document.querySelectorAll('.l-seg')].every(group=>{const active=group.querySelector('[aria-checked="true"]'),thumbs=group.querySelectorAll('.l-seg-thumb');if(!active)return thumbs.length===0;if(thumbs.length!==1||!active.contains(thumbs[0]))return false;const style=getComputedStyle(thumbs[0]);return Number(style.opacity)===1&&new DOMMatrixReadOnly(style.transform).isIdentity&&!thumbs[0].getAnimations().some(animation=>animation.playState==='running');}))return;}throw Error('Segmented animation did not settle before capture');})()`);
+        await page(w, `(async()=>{await document.fonts.ready;for(let frame=0;frame<120;frame++){await new Promise(requestAnimationFrame);if(!document.getAnimations().some(a=>a.playState==='running'&&Number.isFinite(a.effect?.getComputedTiming().endTime))&&[...document.querySelectorAll('.l-seg')].every(group=>{const active=group.querySelector('[aria-checked="true"]'),thumbs=group.querySelectorAll('.l-seg-thumb');if(!active)return thumbs.length===0;if(thumbs.length!==1||!active.contains(thumbs[0]))return false;const style=getComputedStyle(thumbs[0]);return Number(style.opacity)===1&&new DOMMatrixReadOnly(style.transform).isIdentity&&!thumbs[0].getAnimations().some(animation=>animation.playState==='running');}))return;}throw Error('Motion did not settle before capture');})()`);
         fs.writeFileSync(path.join(out, name + '.png'), (await w.webContents.capturePage()).toPNG()); return name;
       } };
-  }, out, fixtures, runtime, captureOnly, surfacesOnly);
+  }, out, fixtures, runtime, captureOnly, surfacesOnly, focusedCases);
 
   // S2 uses the public IPC contracts against a deterministic, persisted fixture store.
   // No native pickers, WebDAV requests, real pins, or user files are used by these panels.
@@ -594,6 +622,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   // Selection action bar: hover on the first preset, then the ··· menu with its first row hovered.
   saved.push(...await main(async () => {
     const { find, page, wait, move, center, save } = global.uiShots, w = find('action-bar'), names = [];
+    if(global.uiShots.focusedCases.length)return names;
     w.setOpacity(1); w.showInactive(); w.webContents.send('bar:enter', { tip: 'above', menu: 'above' }); await wait(500);
     const first = await center(w, '.ab-buttons button'); if (first) await move(w, ...first);
     names.push(await save(w, 'action-bar'));
@@ -607,6 +636,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   // Region presets: configuration IPC and form interactions; acquisition is stubbed.
   saved.push(...await main(async () => {
     const {find,page,wait,save,settingsTab,ipcMain,app,fs,path,out}=global.uiShots,names=[],checks=[];let m;
+    if(global.uiShots.focusedCases.length)return names;
     await wait(1800);
     m=global.uiShots.BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('/renderer/index.html')&&!w.webContents.getURL().includes('surface='));
     if(!m)throw Error('Main renderer unavailable');m.show();m.focus();await wait(300);
@@ -658,6 +688,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   // Every action is consumed here; native desktop/media acquisition is never started.
   saved.push(...await main(async ({ nativeImage }) => {
     const { find, page, wait, ready, save, scrollTo, settingsTab, ipcMain, fs, path, app, out } = global.uiShots, names = [], checks = [], receipts = [], m = find();
+    if(global.uiShots.focusedCases.length)return names;
     const expect = (ok, text) => { if (!ok) throw Error(text); };
     const makeFrame = index => {
       const width = 640, height = 360, pixels = Buffer.alloc(width * height * 4);
@@ -797,9 +828,46 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     return names;
   }));
 
+  // S5 settings use production IPC and VM execution; only desktop pin creation is receipted.
+  saved.push(...await main(async ({ app, nativeTheme, clipboard }) => {
+    const { find, page, wait, ready, scrollTo, settingsTab, save, fs, path, out, stage4 } = global.uiShots, names=[],checks=[],m=find();
+    if(global.uiShots.captureOnly)return names;
+    const expect=(ok,message)=>{if(!ok)throw Error(message);},get=()=>page(m,'window.desktop.getState().then(s=>s.settings)'),original=await get(),bounds=m.getBounds(),minimum=m.getMinimumSize(),theme=nativeTheme.themeSource;
+    const general=s=>Object.fromEntries(['launchAtLogin','themeMode','toolbarTools','mouseActions','scriptActions','autoCheckUpdates'].map(key=>[key,s[key]]));
+    const click=async selector=>{await page(m,`(()=>{const b=document.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)throw Error('Unavailable S5 control');b.click();})()`);await wait(180);};
+    const text=async(scope,label)=>{await page(m,`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw Error('Unavailable S5 action: '+${JSON.stringify(label)});b.click();})()`);await wait(220);};
+    const fill=async(id,value)=>{await page(m,`(()=>{const e=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(100);};
+    const choice=async(label,value)=>{await text('[aria-label="'+label+'"]',value);};
+    const shot=async(selector,name)=>{await scrollTo(m,selector);names.push(await save(m,name));};
+    const fixtureRoot=path.dirname(app.getPath('userData')),legacyPath=path.join(fixtureRoot,'stage-9-legacy.json');
+    fs.writeFileSync(legacyPath,JSON.stringify({shortcut:'',selectionEnabled:false,clipboardFallback:false,screenshot:{directory:app.getPath('temp')}}));
+    const migrated=process.mainModule.require(path.join(fixtureRoot,'stage-9-settings.cjs')).readSettings(legacyPath);
+    expect(migrated.themeMode==='paper'&&!migrated.launchAtLogin&&migrated.autoCheckUpdates&&!migrated.toolbarTools.length&&!migrated.scriptActions.length&&migrated.mouseActions.doubleClick==='copy'&&migrated.screenshot.selectionShape==='rect'&&migrated.screenshot.loupeMagnification===8,'Legacy S5 defaults did not migrate');checks.push('production readSettings migrates legacy general/capture settings');
+    try {
+      await settingsTab(m,'截图');await choice('选区形状','多边形');await choice('放大镜倍率','12×');await choice('取色色值格式','HSL');await click('[aria-label="截图包含鼠标指针"]');await click('[aria-label="显示十字辅助线"]');
+      for(const [id,value]of [['screenshot-cornerRadius',24],['screenshot-borderWidth',6],['screenshot-border-color','#bd7658'],['screenshot-watermark','LASSO · 内部评审'],['screenshot-watermark-opacity',.28]])await fill(id,value);
+      await shot('#screenshot-advanced .l-set-row-head','settings-advanced-capture');await shot('#screenshot-cornerRadius','settings-output-decoration');await text('.l-save-bar','保存');
+      let settings=await get();const screenshot=settings.screenshot,disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8'));
+      expect(screenshot.selectionShape==='polygon'&&screenshot.loupeMagnification===12&&screenshot.loupeColorFormat==='hsl'&&screenshot.cornerRadius===24&&screenshot.borderWidth===6&&screenshot.watermarkOpacity===.28&&JSON.stringify(screenshot)===JSON.stringify(disk.screenshot),'Advanced capture preferences did not persist');
+      await settingsTab(m,'通用');await settingsTab(m,'截图');expect(await page(m,`document.getElementById('screenshot-cornerRadius').value==='24'&&document.querySelector('[aria-label="选区形状"] [aria-checked="true"]').textContent==='多边形'`),'Advanced capture settings did not restore');checks.push('advanced capture/decorations/watermark save and reopen; native cursor/crosshair/loupe effects are not exercised');
+      await settingsTab(m,'通用');await click('[aria-label="开机自启"]');await click('[aria-label="自动检查更新"]');await choice('双击动作','保存');await choice('中键动作','快速保存');await choice('右键动作','重新选区');await shot('#mouse-actions','settings-mouse-actions');
+      await text('.l-toolbar-options','画笔');settings=await get();expect(settings.launchAtLogin!==original.launchAtLogin&&settings.autoCheckUpdates!==original.autoCheckUpdates&&settings.mouseActions.doubleClick==='save'&&settings.mouseActions.middleClick==='quick-save'&&settings.mouseActions.rightClick==='reselect'&&!settings.toolbarTools.includes('pen')&&settings.toolbarTools.includes('spotlight'),'General S5 controls did not persist');await shot('#toolbar-tools','settings-toolbar-tools');
+      for(const [mode,source]of [['纸面','light'],['跟随系统','light'],['跟随系统','dark']]){await choice('界面主题',mode);if(mode==='跟随系统')nativeTheme.themeSource=source;await ready(m,`matchMedia('(prefers-color-scheme: dark)').matches===${source==='dark'}`);await shot('#system-settings','settings-theme-'+(mode==='纸面'?'paper':'system-'+source));}
+      const darkBackground=await page(m,`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`);await choice('界面主题','纸面');await ready(m,`!matchMedia('(prefers-color-scheme: dark)').matches`);expect(darkBackground!==await page(m,`getComputedStyle(document.documentElement).getPropertyValue('--bg').trim()`),'System dark theme did not change paper colors');checks.push('mouse actions/tool filtering/system toggles persist; paper and system light/dark media render');
+      const success="return input.text.trim().toUpperCase() + ' · ' + [typeof process, typeof require, typeof fetch].join('/');",expected='LASSO · undefined/undefined/undefined';
+      await text('#script-actions','新建脚本');await fill('script-name','整理评审文字');await fill('script-code',success);await fill('script-input','  lasso  ');await shot('#script-name','settings-script-editor');await text('#script-actions','保存并运行');await ready(m,`document.getElementById('script-output')?.value===${JSON.stringify(expected)}`);
+      expect(await clipboard.readText()===expected,'Production VM output did not reach isolated main clipboard');await text('#script-actions','复制结果');expect(await page(m,'navigator.clipboard.readText()')===expected,'Script copy result did not reach isolated renderer clipboard');const receipts=stage4.state.receipts.length;await text('#script-actions','贴到桌面');expect(stage4.state.receipts.slice(receipts).some(r=>r.method==='createPin'&&r.args[0].kind==='text'&&r.args[0].text===expected),'Script result pin lost output');await shot('#script-output','settings-script-result');
+      for(const [code,error,name]of [["throw Error('fixture deliberate failure');",'fixture deliberate failure','error'],['while (true) {}','超时','timeout']]){await fill('script-code',code);await text('#script-actions','保存并运行');await ready(m,`document.querySelector('#script-actions [role="alert"]')?.textContent.includes(${JSON.stringify(error)})`);expect(!await page(m,`Boolean(document.getElementById('script-output'))`),'Failed script retained stale output');await shot('#script-actions [role="alert"]','settings-script-'+name);}
+      await fill('script-code',success);await text('#script-actions','保存脚本');const actions=(await get()).scriptActions;expect(actions.some(action=>action.name==='整理评审文字'&&action.code===success),'Script save did not persist');await click('[aria-label="启用脚本动作"]');await text('#script-actions','保存脚本');expect(await page(m,`[...document.querySelectorAll('#script-actions button')].find(b=>b.textContent.includes('运行并复制')).disabled`),'Disabled script remained runnable');expect(JSON.stringify(general(await get()))===JSON.stringify(general(JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')))),'General settings/scripts differ from disk');checks.push('JS create/save/run/sandbox globals/success/copy/pin/error/timeout/disabled use real VM and public controls');
+      m.setMinimumSize(375,400);m.setSize(375,740);await wait(250);for(const [selector,name]of [['#system-settings','system'],['#mouse-actions','mouse'],['#toolbar-tools','toolbar'],['#script-name','script']]){await shot(selector,'settings-advanced-narrow-'+name);expect(await page(m,`document.documentElement.scrollWidth<=innerWidth`),'S5 settings overflow narrow window');}await settingsTab(m,'截图');await shot('#screenshot-advanced .l-set-row-head','settings-advanced-narrow-capture');
+      expect(global.uiShotsLogin.systemReads===0&&global.uiShotsLogin.systemWrites===0,'System login preferences were accessed');fs.writeFileSync(path.join(out,'stage-9-settings.json'),JSON.stringify({status:'passed',checks,shots:names,login:global.uiShotsLogin,clipboard:{systemReads:0,systemWrites:0},scriptExecution:'production IPC/node:vm Worker; pin creation fixture only'},null,2));
+    } finally {await page(m,`(async()=>{await window.desktop.saveGeneral(${JSON.stringify(general(original))});await window.desktop.saveScreenshot(${JSON.stringify(original.screenshot)});await window.desktop.act('close-settings');})()`);m.setMinimumSize(...minimum);m.setBounds(bounds);nativeTheme.themeSource=theme;await wait(180);}
+    return names;
+  }));
+
   // Capture surfaces from fixture states over a frame of the main window.
   saved.push(...await main(async ({ nativeImage }) => {
-    const { find, wait, ready, move, center, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs, out } = global.uiShots, names = [];
+    const { find, wait, ready, move, center, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs, out, focusedCases } = global.uiShots, names = [];
     const W = 1280, H = 800, frame = (await find().webContents.capturePage()).resize({ width: W, height: H }), backdrop = frame.toDataURL();
     const sel = { x: 380, y: 170, width: 520, height: 320 }, crop = frame.crop(sel);
     const windows = [{ id: 1, x: 300, y: 120, width: 640, height: 430 }, { id: 2, x: 120, y: 60, width: 900, height: 620 }];
@@ -815,9 +883,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const transparentImage=nativeImage.createFromBitmap(transparentPixels,{width:300,height:200});
     const retinaPixels=Buffer.alloc(W*2*H*2*4);for(let offset=0;offset<retinaPixels.length;offset+=4){retinaPixels[offset]=0x56;retinaPixels[offset+1]=0x34;retinaPixels[offset+2]=0x12;retinaPixels[offset+3]=255;}
     const retinaSample=(301*W*2+401)*4;retinaPixels[retinaSample]=0xab;retinaPixels[retinaSample+1]=0xcd;retinaPixels[retinaSample+2]=0xef;
-    const retinaBackdrop=nativeImage.createFromBitmap(retinaPixels,{width:W*2,height:H*2}).toDataURL();
+    const retinaBackdrop=nativeImage.createFromBitmap(retinaPixels,{width:W*2,height:H*2}).toDataURL(),nativeRetinaPixels=Buffer.from(retinaPixels);
+    // Distinct neighboring source pixels reveal real magnification and orientation in the saved native PNG.
+    const loupeRGB=(x,y)=>x===401&&y===301?[239,205,171]:[40+(x%17)*9,55+(y%17)*8,60+((x+y)%13)*10];
+    for(let y=277;y<=325;y++)for(let x=377;x<=425;x++){const [r,g,b]=loupeRGB(x,y),i=(y*W*2+x)*4;nativeRetinaPixels[i]=b;nativeRetinaPixels[i+1]=g;nativeRetinaPixels[i+2]=r;}
+    const nativeRetinaBackdrop=nativeImage.createFromBitmap(nativeRetinaPixels,{width:W*2,height:H*2}).toDataURL();
     const states = {
-      'overlay-loupe-retina': { ...base, image:'',backdrop:retinaBackdrop,width:W,height:H,pixelWidth:W*2,pixelHeight:H*2,pointer:{x:200.5,y:150.5},candidates:[],windows:[],mode:'rect',phase:'selecting',origin:'screen' },
+      'overlay-loupe-retina': { ...base, image:'',backdrop:nativeRetinaBackdrop,width:W,height:H,pixelWidth:W*2,pixelHeight:H*2,pointer:{x:200.5,y:150.5},candidates:[],windows:[],mode:'rect',phase:'selecting',origin:'screen' },
       'overlay-handoff-error': { ...base,image:'',backdrop,width:W,height:H,windows,candidates:[{...sel,source:'element'}],mode:'area',phase:'selecting',origin:'screen' },
       'overlay-fixed-region': { ...base,image:'',backdrop,width:W,height:H,mode:'rect',fixedSize:{width:400,height:240},phase:'selecting',origin:'screen'},
       'overlay-rect': { ...base, image: '', backdrop, width: W, height: H, pixelWidth: W, pixelHeight: H, candidates: [], windows: [], mode: 'rect', phase: 'selecting', origin: 'screen' },
@@ -848,6 +920,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         crop: { x: 0, y: 0, width: W, height: H }, nextNumber: 1, privacy: []
       } }
     };
+    for(const [name,nativePreferences,pointer] of [
+      ['overlay-loupe-default',{}],['overlay-loupe-4x',{loupeMagnification:4}],['overlay-loupe-8x',{loupeMagnification:8}],['overlay-loupe-12x',{loupeMagnification:12}],
+      ['overlay-loupe-rgb',{loupeColorFormat:'rgb'}],['overlay-loupe-hsl',{loupeColorFormat:'hsl'}],['overlay-crosshair-off',{showCrosshair:false}],
+      ['overlay-loupe-rgb-edge',{loupeColorFormat:'rgb'},{x:W-1,y:H-1}],['overlay-loupe-hsl-edge',{loupeColorFormat:'hsl'},{x:W-1,y:H-1}],
+      ['overlay-loupe-top-left',{}, {x:1,y:1}],['overlay-loupe-top-right',{}, {x:W-1,y:1}],['overlay-loupe-bottom-left',{}, {x:1,y:H-1}],['overlay-loupe-edge',{}, {x:W-1,y:H-1}]
+    ])states[name]={...states['overlay-loupe-retina'],nativePreferences,pointer:pointer||states['overlay-loupe-retina'].pointer};
     states['editor-region-retina']={...states['editor-region'],image:retinaBackdrop,backdrop:retinaBackdrop,editableRegion:{...states['editor-region'].editableRegion,display:{...states['editor-region'].editableRegion.display,scaleFactor:2},sourceSize:{width:W*2,height:H*2},initialCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2},currentCrop:{x:sel.x*2,y:sel.y*2,width:sel.width*2,height:sel.height*2}}};
     states['editor-stage-2']={...states['editor-window'],editorShortcuts:{...preferences.editorShortcuts,arrow:'Q',copy:'F16',save:'F17','quick-save':'F18',pin:'F19'},annotationMemory:{...preferences.annotationMemory,lastTool:'arrow',perTool:{arrow:{arrowType:'double',width:8},text:{textBackground:true,fontSize:40},mosaic:{mosaicSize:32},blur:{blurRadius:18}}}};
     states['editor-shared-style']={...states['editor-stage-2'],annotationMemory:{...states['editor-stage-2'].annotationMemory,rememberToolStyles:false}};
@@ -873,13 +951,23 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       const image=frame.resize({width:width*2,height:height*2}).toDataURL();
       states['editor-layout-'+name]={...states['editor-region'],image,backdrop:image,viewSize:{width,height},editableRegion:{display:{id:1,bounds:{x:0,y:0,width,height},scaleFactor:2,rotation:0},sourceSize:{width:width*2,height:height*2},initialCrop:crop,currentCrop:crop,ratio:null}};
     }
-    let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [], intelligenceReceipts=[],scrollReceipts=[],clipboardAudits=[];
+    const advancedWidth=640,advancedHeight=400,advancedPixels=Buffer.alloc(advancedWidth*advancedHeight*4);
+    for(let y=0;y<advancedHeight;y++)for(let x=0;x<advancedWidth;x++){const rgb=x>=100&&x<260&&y>=80&&y<220?((Math.floor(x/8)+Math.floor(y/8))%2?[100,140,200]:[220,170,100]):x>=340&&x<380&&y>=240&&y<280?[20,20,19]:x>=20&&x<70&&y>=280&&y<340?[20,100,180]:[220,210,190],offset=(y*advancedWidth+x)*4;advancedPixels[offset]=rgb[2];advancedPixels[offset+1]=rgb[1];advancedPixels[offset+2]=rgb[0];advancedPixels[offset+3]=255;}
+    const advancedImage=nativeImage.createFromBitmap(advancedPixels,{width:advancedWidth,height:advancedHeight}),advancedSettings=await page(find(),'window.desktop.getState().then(s=>s.settings.screenshot)');
+    for(const kind of ['spotlight','magnifier-circle','magnifier-rect','watermark','inpaint','auto-mosaic','transform','crop-freehand','crop-polygon','crop-multi-rect','mouse','toolbar','narrow'])states['editor-advanced-'+kind]={...base,stage9:kind,image:advancedImage.toDataURL(),width:advancedWidth,height:advancedHeight,pixelWidth:advancedWidth,pixelHeight:advancedHeight,selection:{x:0,y:0,width:advancedWidth,height:advancedHeight},phase:'result',origin:'clipboard',viewSize:{width:kind==='narrow'?375:1050,height:740},annotationMemory:{...base.annotationMemory,lastTool:'text-select'},screenshotSettings:{...advancedSettings,selectionShape:'rect',watermarkText:'LASSO',watermarkOpacity:.28},mouseActions:{doubleClick:'save',middleClick:'quick-save',rightClick:'reselect'},...(kind==='toolbar'?{toolbarTools:['text-select','spotlight','image-adjust']}: {})};
+    const inlineWidth=1120,inlineHeight=820,inlineCrop={x:930,y:680,width:180,height:100},inlinePixels=Buffer.alloc(inlineWidth*inlineHeight*4);
+    for(let y=0;y<inlineHeight;y++)for(let x=0;x<inlineWidth;x++){const i=(y*inlineWidth+x)*4;inlinePixels[i]=40+(x+2*y)%180;inlinePixels[i+1]=40+y%180;inlinePixels[i+2]=40+x%180;inlinePixels[i+3]=255;}
+    const inlineImage=nativeImage.createFromBitmap(inlinePixels,{width:inlineWidth,height:inlineHeight}).toDataURL();
+    states['editor-advanced-inline-rotation']={...states['editor-advanced-transform'],stage9:'inline-rotation',image:inlineImage,backdrop:inlineImage,width:inlineWidth,height:inlineHeight,pixelWidth:inlineWidth,pixelHeight:inlineHeight,selection:inlineCrop,placement:inlineCrop,presentation:'inline',origin:'screen',viewSize:{width:inlineWidth,height:inlineHeight},editableRegion:{display:{id:1,bounds:{x:0,y:0,width:inlineWidth,height:inlineHeight},scaleFactor:1,rotation:0},sourceSize:{width:inlineWidth,height:inlineHeight},initialCrop:inlineCrop,currentCrop:inlineCrop,ratio:null}};
+    if(focusedCases.some(name=>!Object.hasOwn(states,name)))throw Error('Unknown UI case: '+focusedCases.filter(name=>!Object.hasOwn(states,name)).join(', '));
+    let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [], intelligenceReceipts=[],scrollReceipts=[],clipboardAudits=[],advancedChecks=[],screenshotActions=[];
     const verify=(ok,message)=>{if(!ok)throw Error(message);};
     const record=(method,args)=>intelligenceReceipts.push({method,args});
     const fixtureRequire=process.mainModule.require('node:module').createRequire(path.join(process.cwd(),'package.json'));
     const renderFormula=latex=>{const {mathjax}=fixtureRequire('mathjax-full/js/mathjax.js'),{TeX}=fixtureRequire('mathjax-full/js/input/tex.js'),{SVG}=fixtureRequire('mathjax-full/js/output/svg.js'),{liteAdaptor}=fixtureRequire('mathjax-full/js/adaptors/liteAdaptor.js'),{RegisterHTMLHandler}=fixtureRequire('mathjax-full/js/handlers/html.js'),adaptor=liteAdaptor();fixtureRequire('mathjax-full/js/input/tex/ams/AmsConfiguration.js');RegisterHTMLHandler(adaptor);return adaptor.serializeXML(adaptor.tags(mathjax.document('',{InputJax:new TeX({packages:['base','ams']}),OutputJax:new SVG({fontCache:'none'})}).convert(latex,{display:true}),'svg')[0]);};
     ipcMain.handle('ui-shots:vision-language',()=> '简体中文');
-    ipcMain.handle('ui-shots:recognize',(_event,request)=>{const text='示例识别文字',line={x:24,y:40,width:260,height:26,text,confidence:.95,glyphs:[...text].map((text,i)=>({x:24+i*43,y:40,width:42,height:26,text}))};return {id:request.id,revision:request.revision,lines:[line],...(state.stage6==='barcode'?{barcodes:[{x:60,y:120,width:140,height:140,symbology:'QR',payload:'https://example.invalid/lasso'},{x:240,y:120,width:260,height:80,symbology:'Code128',payload:'LASSO-2026-001'}]}:{})};});
+    ipcMain.handle('ui-shots:recognize',(_event,request)=>{const text='示例识别文字',line={x:24,y:40,width:260,height:26,text,confidence:.95,glyphs:[...text].map((text,i)=>({x:24+i*43,y:40,width:42,height:26,text}))};return {id:request.id,revision:request.revision,lines:state.stage9==='auto-mosaic'?[80,150].map((y,i)=>({x:320+i*100,y,width:80,height:24,text:'LASSO',confidence:1,glyphs:[...'LASSO'].map((text,j)=>({x:320+i*100+j*16,y,width:16,height:24,text}))})):[line],...(state.stage6==='barcode'?{barcodes:[{x:60,y:120,width:140,height:140,symbology:'QR',payload:'https://example.invalid/lasso'},{x:240,y:120,width:260,height:80,symbology:'Code128',payload:'LASSO-2026-001'}]}:{})};});
+    ipcMain.handle('ui-shots:screenshot-action',(_event,action)=>{screenshotActions.push(action);return {error:null};});
     ipcMain.handle('ui-shots:analyze',(_event,request)=>{verify(request.id&&Number.isInteger(request.revision)&&request.png?.length>24&&Buffer.from(request.png).subarray(1,4).toString()==='PNG'&&request.crop.width>0&&request.crop.height>0,'Intelligence request lost image/owner/crop');record('analyze',{id:request.id,revision:request.revision,kind:request.kind,targetLanguage:request.targetLanguage,pngBytes:request.png.length,crop:request.crop,lines:request.lines});const kind=request.kind;return {error:null,result:kind==='translate'?{kind,blocks:[{original:'Design with clarity',translated:'清晰表达设计',box:{x:24,y:40,width:260,height:26}},{original:'A quiet workspace',translated:'安静的工作空间',box:{x:24,y:90,width:260,height:26}}],sourceText:'Design with clarity\nA quiet workspace',translatedText:'清晰表达设计\n安静的工作空间'}:kind==='table'?{kind,table:[['项目','数量','状态'],['图像翻译','12','完成'],['表格识别','8','复核中']]}:{kind,latex:'E=mc^2',formulaSvg:renderFormula('E=mc^2')}};});
     ipcMain.handle('ui-shots:formula-preview',(_event,request)=>{verify(request.id&&Number.isInteger(request.revision)&&request.latex,'Formula preview lost owner or source');record('previewFormula',request);return {svg:renderFormula(request.latex),error:null};});
     ipcMain.handle('ui-shots:open-url',(_event,request)=>{record('openURL',request);verify(request.url==='https://example.invalid/lasso','Wrong barcode URL');return {error:null};});
@@ -897,28 +985,128 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       return {...size,data};
     });
     const native=process.mainModule.require(path.join(process.cwd(),'dist/native/capture-native.node'));
+    const fixtureRoot=path.dirname(app.getPath('userData')),nativeAdapter=process.mainModule.require(path.join(fixtureRoot,'stage-9-native.cjs'));
+    const legacyNativePath=path.join(fixtureRoot,'stage-9-native-legacy.json');
+    fs.writeFileSync(legacyNativePath,JSON.stringify({shortcut:'',selectionEnabled:false,clipboardFallback:false,screenshot:{directory:app.getPath('temp')}}));
+    const nativeDefaults=process.mainModule.require(path.join(fixtureRoot,'stage-9-settings.cjs')).readSettings(legacyNativePath).screenshot,nativeChecks=[];
+    const persistNativePreferences=async preferences=>{
+      await page(find(),`(async()=>{const result=await window.desktop.saveScreenshot(${JSON.stringify(preferences)});if(result.error)throw Error(result.error);})()`);
+      const settings=await page(find(),'window.desktop.getState().then(s=>s.settings)');
+      for(const key of ['includeCursor','showCrosshair','loupeMagnification','loupeColorFormat'])verify(settings.screenshot[key]===preferences[key],'Native preference did not persist: '+key);
+      return settings;
+    };
+    const applyNativePreferences=async preferences=>{
+      const settings=await persistNativePreferences(preferences);
+      nativeAdapter.updateNativeAppearance(native,settings,settings.screenshot);
+      return settings;
+    };
+    const nativePixel=(image,x,y,logicalWidth=W)=>{const scale=image.width/logicalWidth,i=(Math.floor(y*scale)*image.width+Math.floor(x*scale))*4;return [image.data[i+2],image.data[i+1],image.data[i],image.data[i+3]];};
+    const nearRGB=(actual,expected)=>actual[3]===255&&expected.every((value,i)=>Math.abs(actual[i]-value)<=2);
+    const inside=(inner,outer)=>inner.width>0&&inner.height>0&&inner.x>=outer.x-.01&&inner.y>=outer.y-.01&&inner.x+inner.width<=outer.x+outer.width+.01&&inner.y+inner.height<=outer.y+outer.height+.01;
     for (const [name, value] of Object.entries(states)) {
+      if(focusedCases.length&&!focusedCases.includes(name))continue;
       state = value; exports = [];regionUpdates=[];
       if(name.startsWith('overlay-')){
         const source=nativeImage.createFromDataURL(value.backdrop),size=source.getSize(),frame=native.createFrame({...size,data:source.toBitmap(),logicalWidth:value.width,logicalHeight:value.height});
         const options={fixedSize:value.fixedSize,frameId:frame.id,session:'ui-shots-native',mode:value.mode,windows:value.windows||[],candidates:value.candidates||[],pointer:value.pointer||{x:420,y:240}};
-        native.show(options);if(name==='overlay-handoff-error')native.update({session:'ui-shots-native',message:'编辑器未能准备好，请重试或取消'});await wait(150);
-        const saveNative=name=>{const pixels=native.render();fs.writeFileSync(path.join(out,name+'.png'),nativeImage.createFromBitmap(pixels.data,{width:pixels.width,height:pixels.height}).toPNG());names.push(name);};
-        if(name==='overlay-loupe-retina'){
-          // Reapply the fixture pointer and sample synchronously, before live desktop mouse events run.
-          native.show(options);
-          const sample=native.snapshot();if(sample.color!=='#EFCDAB'||!sample.position.includes('X 401 · Y 301'))throw Error('Native Retina loupe sampled the wrong pixel: '+JSON.stringify(sample));
-          saveNative(name);
-          for(const [x,y] of [[1,1],[W-1,1],[1,H-1],[W-1,H-1]]){native.show({...options,pointer:{x,y}});const r=native.snapshot().loupe;await wait(30);if(r.x<0||r.y<0||r.x+r.width>W||r.y+r.height>H)throw Error('Native loupe leaves viewport');}
-          saveNative('overlay-loupe-edge');
-        }else{native.show(options);if(name==='overlay-handoff-error')native.update({session:'ui-shots-native',message:'编辑器未能准备好，请重试或取消'});saveNative(name);}
-        native.hide();native.release(frame.id);continue;
+        try {
+          const preferences={...nativeDefaults,...value.nativePreferences};
+          // Public persistence and the production adapter feed the actual AppKit controls.
+          const onSettings=name==='overlay-crosshair-off'?await persistNativePreferences({...preferences,showCrosshair:true}):null,settings=await applyNativePreferences(preferences);
+          native.show(options);await wait(150); // Let AppKit lay out before synchronously restoring the fixture pointer.
+          let crosshairBefore;
+          if(onSettings)nativeAdapter.updateNativeAppearance(native,onSettings,onSettings.screenshot);
+          native.show(options); // No await until snapshot/render: live mouse events must not replace the pointer.
+          if(onSettings){
+            crosshairBefore={snapshot:native.snapshot(),image:native.render()};
+            nativeAdapter.updateNativeAppearance(native,settings,settings.screenshot); // Live warmup(off), no await or show().
+          }
+          if(name==='overlay-handoff-error'){native.update({session:'ui-shots-native',message:'编辑器未能准备好，请重试或取消'});await wait(150);}
+          const sample=native.snapshot(),pixels=native.render(),file=path.join(out,name+'.png');
+          fs.writeFileSync(file,nativeImage.createFromBitmap(pixels.data,{width:pixels.width,height:pixels.height}).toPNG());names.push(name);
+          const decoded=nativeImage.createFromPath(file),image={...decoded.getSize(),data:decoded.toBitmap()};
+          verify(sample.showCrosshair===Number(preferences.showCrosshair)&&sample.loupeMagnification===preferences.loupeMagnification&&sample.loupeColorFormat===preferences.loupeColorFormat,'Production native appearance disagrees with persisted preferences: '+name);
+          const evidence={name,preferences:Object.fromEntries(['showCrosshair','loupeMagnification','loupeColorFormat'].map(key=>[key,preferences[key]])),snapshot:sample,layoutWaitMs:150,pointerResetBeforeSample:true,png:{width:image.width,height:image.height}};
+          if(name.startsWith('overlay-loupe-')||name==='overlay-crosshair-off'){
+            const viewport={x:0,y:0,width:value.width,height:value.height},px=Math.floor(options.pointer.x*size.width/value.width),py=Math.floor(options.pointer.y*size.height/value.height),center={x:sample.loupeCenter.x+sample.loupeCenter.width/2,y:sample.loupeCenter.y+sample.loupeCenter.height/2};
+            const sampled=px===401&&py===301,rgb=sampled?[239,205,171]:[18,52,86],expected=preferences.loupeColorFormat==='rgb'?`rgb(${rgb.join(', ')})`:preferences.loupeColorFormat==='hsl'?(sampled?'hsl(30, 68%, 80%)':'hsl(210, 65%, 20%)'):sampled?'#EFCDAB':'#123456';
+            verify(sample.color===expected&&sample.position===`X ${px} · Y ${py} px`,'Native loupe sampled/formatted the wrong source pixel: '+name+' '+JSON.stringify(sample));
+            verify(inside(sample.loupe,viewport)&&inside(sample.loupePicture,sample.loupe)&&inside(sample.loupeCenter,sample.loupePicture)&&inside(sample.colorBounds,sample.loupe)&&sample.colorTextWidth<=sample.colorBounds.width+.01,'Native loupe content or full color value leaves its panel: '+name);
+            verify(sample.loupePicture.width===136&&sample.loupePicture.height===136&&sample.loupeCenter.width===preferences.loupeMagnification&&sample.loupeCenter.height===preferences.loupeMagnification,'Native pixel grid does not use the requested magnification: '+name);
+            verify(sample.crosshairVisible===Number(preferences.showCrosshair),'Native crosshair visibility disagrees with preference: '+name);
+            verify(nearRGB(nativePixel(image,center.x,center.y),rgb),'Saved native PNG lost the loupe center pixel: '+name);
+            evidence.grid=[];
+            if(px===401&&py===301)for(let y=-2;y<=2;y++)for(let x=-2;x<=2;x++){
+              const actual=nativePixel(image,center.x+x*preferences.loupeMagnification,center.y+y*preferences.loupeMagnification),expected=loupeRGB(px+x,py+y);
+              verify(nearRGB(actual,expected),'Saved native PNG has the wrong pixel grid at '+name+' '+x+','+y+': '+actual+' expected '+expected);
+              evidence.grid.push({source:{x:px+x,y:py+y},actual,expected});
+            }
+            if(['overlay-loupe-default','overlay-loupe-retina'].includes(name))verify(sample.loupe.width===160&&sample.loupe.height===200,'Legacy default loupe dimensions changed');
+            if(crosshairBefore){
+              const line={x:options.pointer.x-60,y:options.pointer.y},border={x:sample.loupeCenter.x+.25,y:center.y};
+              evidence.crosshairPixels=[line,border].map(point=>({point,before:nativePixel(crosshairBefore.image,point.x,point.y),after:nativePixel(image,point.x,point.y)}));
+              verify(crosshairBefore.snapshot.crosshairVisible===1&&evidence.crosshairPixels.every(pixel=>pixel.before.some((value,i)=>Math.abs(value-pixel.after[i])>5)),'Live crosshair preference did not remove the rendered lines and center frame');
+              evidence.livePreferenceUpdate='synchronous production warmup(off), no await/show before after-snapshot/render';
+            }
+          }
+          nativeChecks.push(evidence);
+          if(name==='overlay-handoff-error'){
+            const image=nativeImage.createFromPath(path.join(out,name+'.png')),scale=image.getSize().width/value.width,guide=image.crop({x:Math.round((value.width-600)/2*scale),y:Math.round((value.height-80)*scale),width:Math.round(600*scale),height:Math.round(70*scale)}),vision=process.mainModule.require(path.join(process.cwd(),'dist/native/capture-vision.node'));
+            const result=await vision.recognize(guide.toPNG(),9001,'text',false,['zh-Hans','en-US']),lines=result.lines.map(({text,x,y,width,height})=>({text,x,y,width,height})),normalized=lines.map(line=>line.text.replace(/\s/g,''));
+            verify(normalized.includes('编辑器未能准备好，请重试或取消')&&normalized.includes('重试')&&normalized.some(text=>/^Esc取消$/i.test(text)),'Native handoff guide is missing error/retry/cancel in rendered PNG: '+normalized.join(' | '));
+            const size=guide.getSize();verify(lines.every(line=>line.width>0&&line.height>0&&line.x>=0&&line.y>=0&&line.x+line.width<=size.width+.1&&line.y+line.height<=size.height+.1),'Native handoff guide labels leave the PNG viewport');
+            fs.writeFileSync(path.join(out,'overlay-handoff-error.json'),JSON.stringify({status:'passed',waitAfterUpdateMs:150,source:'saved native.render PNG, local Vision OCR of bottom guide',lines,snapshot:native.snapshot(),interaction:'rendered controls verified; physical click acceptance excluded'},null,2));
+          }
+        } finally {native.hide();native.release(frame.id);await applyNativePreferences(advancedSettings);}
+        continue;
       }
 
       const controls=name.startsWith('scroll-')&&value.phase==='scrolling';
       const w = new BrowserWindow({ x: 40, y: 40, width: value.viewSize?.width??(controls?700:W), height:value.viewSize?.height??(controls?144:H), frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
       await w.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'screenshot' } });
       await wait(900);
+      if(value.stage9){
+        const kind=value.stage9,encoder=process.mainModule.require(path.join(path.dirname(app.getPath('userData')),'stage-9-output.cjs'));let evidence;
+        const click=async selector=>{await page(w,`(()=>{const b=document.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)throw Error('Unavailable S5 editor control: '+${JSON.stringify(selector)});b.click();})()`);await wait(180);};
+        const label=text=>click('[aria-label="'+text+'"]'),choice=async(group,text)=>{await page(w,`[...document.querySelectorAll('[aria-label="${group}"] [role="radio"]')].find(b=>b.textContent===${JSON.stringify(text)}).click()`);await wait(180);};
+        const fill=async(label,value)=>{await page(w,`(()=>{const e=document.querySelector('[aria-label="${label}"]');Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(120);};
+        const point=async([x,y])=>page(w,`(()=>{const r=document.querySelector('canvas.upper-canvas').getBoundingClientRect();return {x:Math.round(r.x+${x}/640*r.width),y:Math.round(r.y+${y}/400*r.height)};})()`);
+        const gesture=async(points,polygon=false)=>{app.focus({steal:true});w.focus();w.webContents.focus();if(polygon){for(const p of points){const xy=await point(p);await move(w,xy.x,xy.y);for(const type of ['mouseDown','mouseUp'])w.webContents.sendInputEvent({type,button:'left',clickCount:1,...xy});await wait(70);}}else{const first=await point(points[0]);await move(w,first.x,first.y);w.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,...first});for(const p of points.slice(1)){w.webContents.sendInputEvent({type:'mouseMove',modifiers:['leftButtonDown'],...await point(p)});await wait(60);}w.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,...await point(points.at(-1))});}await wait(220);};
+        const output=async()=>{const count=exports.length;await click('.ed-primary');await ready(w,`document.querySelector('.ed')?.getAttribute('aria-busy')==='false'`);verify(exports.length===count+1&&exports.at(-1).action==='copy','S5 output did not export once');const frame=exports.at(-1).frame,image=encoder.decodeFrameImage(frame);verify(Buffer.from(frame.png).subarray(1,4).toString()==='PNG','S5 export did not contain production PNG');return {frame,image,bytes:image.toBitmap(),size:image.getSize()};};
+        const pixel=(result,x,y)=>{const i=(Math.floor(y)*result.size.width+Math.floor(x))*4,b=result.bytes;return [b[i+2],b[i+1],b[i],b[i+3]];},source=(x,y)=>{const i=(y*640+x)*4;return [advancedPixels[i+2],advancedPixels[i+1],advancedPixels[i],255];},same=(a,b,tolerance=2)=>a.every((v,i)=>Math.abs(v-b[i])<=tolerance);
+        await ready(w,`Boolean(document.querySelector('.ed-primary:not(:disabled)'))`);
+        if(kind==='spotlight'){await label('聚光灯 · 框选重点');await gesture([[100,80],[260,220]]);const r=await output();verify(r.frame.annotations.objects.some(o=>o.lassoTool==='spotlight')&&same(pixel(r,180,140),source(180,140))&&pixel(r,500,350)[0]<110,'Spotlight failed highlight/dim PNG pixels');}
+        else if(kind.startsWith('magnifier-')){await label('局部放大镜 · 2×');await choice('放大镜形状',kind.endsWith('circle')?'圆形':'矩形');await gesture([[100,80],[260,220]]);const r=await output();verify(r.frame.annotations.objects.some(o=>o.lassoTool==='magnifier'),'Magnifier annotation missing');verify(same(pixel(r,130,150),source(155,150),10),'Magnifier PNG does not sample at 2x');verify(kind.endsWith('circle')?same(pixel(r,102,85),source(102,85)):!same(pixel(r,102,85),source(102,85)),'Magnifier circle/rectangle clip pixels differ');if(kind.endsWith('circle'))verify(same(pixel(r,103,150),source(103,150)),'Non-square magnifier drag produced an ellipse instead of a circle');}
+        else if(kind==='watermark'){await label('平铺水印');await page(w,`[...document.querySelectorAll('.ed-panel button')].find(b=>b.textContent==='添加平铺水印').click()`);await wait(180);const r=await output();let changed=0;for(let i=0;i<r.bytes.length;i+=4)if(Math.abs(r.bytes[i]-advancedPixels[i])>3||Math.abs(r.bytes[i+1]-advancedPixels[i+1])>3||Math.abs(r.bytes[i+2]-advancedPixels[i+2])>3)changed++;verify(r.frame.annotations.objects.some(o=>o.lassoTool==='watermark')&&changed>1000,'Tiled watermark did not affect PNG');}
+        else if(kind==='inpaint'){await label('智能消除 · 框选后以周围像素填补');await gesture([[335,235],[385,285]]);const r=await output();verify(r.frame.annotations.privacy.length===1&&same(pixel(r,360,260),source(500,350),3),'Inpaint PNG did not interpolate surrounding pixels');}
+        else if(kind==='auto-mosaic'){
+          await ready(w,`document.querySelectorAll('.editor-text-line').length===2`);await label('联动遮挡相同文字');await fill('联动遮挡词条','LASSO');await page(w,`[...document.querySelectorAll('.ed-panel button')].find(b=>b.textContent==='联动遮挡相同文字').click()`);await wait(180);const r=await output(),expected=[{x:320,y:80,width:80,height:24},{x:420,y:150,width:80,height:24}],privacy=r.frame.annotations.privacy;
+          verify(privacy.length===expected.length&&expected.every((box,i)=>Object.entries(box).every(([key,value])=>privacy[i][key]===value)),'Repeated OCR mask privacy bounds shifted from glyph coordinates: '+JSON.stringify(privacy));
+          for(const box of expected){for(let y=box.y;y<box.y+box.height;y++)for(let x=box.x;x<box.x+box.width;x++)verify(same(pixel(r,x,y),[20,20,19,255],0),'Repeated OCR mask missed PNG pixel '+x+','+y);for(const [x,y]of [[box.x+box.width,box.y+12],[box.x+40,box.y+box.height]])verify(same(pixel(r,x,y),source(x,y)),'Repeated OCR mask extended past the right/bottom edge');}
+          evidence={expected,privacy,coverage:'every word pixel including final column/row, plus unchanged pixels immediately outside right/bottom edges'};
+        }
+        else if(kind==='inline-rotation'){
+          const layouts=[],sourcePixel=(x,y)=>{const i=(y*inlineWidth+x)*4;return [inlinePixels[i+2],inlinePixels[i+1],inlinePixels[i],255];};
+          const check=async(crop,expectedRect)=>{await label('图像调整');await label('旋转90°');const result=await output(),rect=await page(w,`(()=>{const r=document.querySelector('.cap-rect.ed-hole').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height,right:r.right,bottom:r.bottom,viewport:{width:innerWidth,height:innerHeight}};})()`);verify(rect.viewport.width===inlineWidth&&rect.viewport.height===inlineHeight&&rect.x>=0&&rect.y>=0&&rect.right<=rect.viewport.width+.01&&rect.bottom<=rect.viewport.height+.01,'Rotated inline preview leaves viewport: '+JSON.stringify(rect));verify(Object.entries(expectedRect).every(([key,value])=>Math.abs(rect[key]-value)<.6),'Rotated inline preview geometry differs: '+JSON.stringify(rect));verify(result.size.width===crop.height&&result.size.height===crop.width&&Object.entries(crop).every(([key,value])=>result.frame.crop[key]===value),'Inline preview fit changed exported dimensions/crop');
+            const samples=[[0,0],[crop.width-1,0],[0,crop.height-1],[crop.width-1,crop.height-1],[30,20]];for(const [x,y]of samples)verify(same(pixel(result,crop.height-1-y,x),sourcePixel(crop.x+x,crop.y+y)),'Inline preview fit resampled rotated export at '+x+','+y);layouts.push({crop,preview:rect,outputSize:result.size,samples});};
+          await check(inlineCrop,{x:930,y:640,width:100,height:180});names.push(await save(w,'editor-advanced-inline-rotation-edge'));
+          const full={x:0,y:0,width:inlineWidth,height:inlineHeight};state={...state,editId:'ui-shots-inline-full',selection:full,placement:full,editableRegion:{...state.editableRegion,initialCrop:full,currentCrop:full}};w.webContents.send('ui-shots:changed',{...state,imageFrame:'fixture-image',backdropFrame:'fixture-backdrop'});await ready(w,`document.querySelector('.ed-primary:not(:disabled)')&&document.querySelector('[aria-label="图像调整"]')?.getAttribute('aria-pressed')==='false'`);await check(full,{x:0,y:0,width:inlineHeight*inlineHeight/inlineWidth,height:inlineHeight});evidence=layouts;
+        }
+        else if(kind==='transform'){
+          await label('图像调整');const initial=await output();await label('旋转90°');let r=await output();verify(r.size.width===400&&r.size.height===640&&same(pixel(r,399-300,40),pixel(initial,40,300)),'Rotation PNG dimensions/pixels mismatch');names.push(await save(w,'editor-advanced-rotation'));
+          await label('水平翻转');r=await output();verify(r.frame.annotations.effects.flipX&&same(pixel(r,399-300,639-40),pixel(initial,40,300)),'Horizontal flip PNG pixels mismatch');names.push(await save(w,'editor-advanced-flip-horizontal'));
+          await label('垂直翻转');r=await output();verify(r.frame.annotations.effects.flipY&&same(pixel(r,300,639-40),pixel(initial,40,300)),'Vertical flip PNG pixels mismatch');names.push(await save(w,'editor-advanced-flip-vertical'));
+          await label('灰度');const gray=await output(),p=pixel(gray,300,599);verify(Math.max(...p.slice(0,3))-Math.min(...p.slice(0,3))<=1&&gray.frame.annotations.effects.grayscale,'Grayscale PNG channels mismatch');names.push(await save(w,'editor-advanced-grayscale'));await fill('亮度',130);r=await output();verify(r.frame.annotations.effects.brightness===130&&pixel(r,300,599)[0]>p[0]+8,'Brightness did not affect PNG');
+          const decorated=encoder.encodeScreenshot(initial.image,{...advancedSettings,background:'transparent',cornerRadius:24,borderWidth:6,borderColor:'#bd7658'},'png'),image=nativeImage.createFromBuffer(decorated),d={image,size:image.getSize(),bytes:image.toBitmap()};verify(pixel(d,0,0)[3]===0&&same(pixel(d,320,1),[189,118,88,255])&&same(pixel(d,500,350),pixel(initial,500,350)),'Production PNG decoration lost corner/border/interior pixels');fs.writeFileSync(path.join(out,'editor-advanced-decoration-export.png'),decorated);names.push('editor-advanced-decoration-export');
+        }
+        else if(kind.startsWith('crop-')){await label('裁剪 · 可撤销');await choice('裁剪形状',kind==='crop-freehand'?'自由':kind==='crop-polygon'?'多边形':'多矩形');if(kind==='crop-multi-rect'){await gesture([[50,50],[180,150]]);await gesture([[340,220],[500,340]]);}else{await gesture([[80,50],[280,50],[80,250]],kind==='crop-polygon');if(kind==='crop-polygon')await page(w,`[...document.querySelectorAll('.ed-panel button')].find(b=>b.textContent==='闭合选区 ↵').click()`);}await wait(150);const r=await output(),polygons=r.frame.annotations.cropPolygons;verify(polygons.length===(kind==='crop-multi-rect'?2:1)&&r.size.width<640&&r.size.height<400,'Masked crop did not export path/size');verify(kind==='crop-multi-rect'?pixel(r,250-r.frame.crop.x,180-r.frame.crop.y)[3]===0:pixel(r,r.size.width-5,r.size.height-5)[3]===0,'Masked crop PNG did not preserve transparent excluded area');verify(pixel(r,20,20)[3]===255,'Masked crop removed included pixels');}
+        else if(kind==='mouse'){
+          for(const [field,type,button,actions]of [['doubleClick','dblclick',0,['copy','save','pin','none']],['middleClick','auxclick',1,['pin','quick-save','none']],['rightClick','contextmenu',2,['reselect','cancel']]])for(const action of actions){state={...state,mouseActions:{...state.mouseActions,[field]:action}};w.webContents.send('ui-shots:changed',{...state,imageFrame:'fixture-image'});await wait(100);const count=exports.length,commands=screenshotActions.length;await page(w,`document.querySelector('.ed-viewport').dispatchEvent(new MouseEvent('${type}',{bubbles:true,button:${button}}))`);await ready(w,`document.querySelector('.ed')?.getAttribute('aria-busy')==='false'`);await wait(80);verify(field==='rightClick'?screenshotActions.length===commands+1&&screenshotActions.at(-1)===action:action==='none'?exports.length===count:exports.length===count+1&&exports.at(-1).action===action,'Configured editor mouse action failed: '+field+'/'+action);}
+        }
+        else if(kind==='toolbar'){verify(await page(w,`document.querySelector('[aria-label="聚光灯 · 框选重点"]')&&document.querySelector('[aria-label="图像调整"]')&&!document.querySelector('[aria-label="画笔"]')&&!document.querySelector('[aria-label="局部放大镜 · 2×"]')`),'Toolbar filter did not hide unchecked tools');await label('聚光灯 · 框选重点');await gesture([[100,80],[260,220]]);verify((await output()).frame.annotations.objects.length===1,'Filtered toolbar tool did not remain usable');}
+        else if(kind==='narrow'){await label('局部放大镜 · 2×');await choice('放大镜形状','矩形');const layout=await page(w,`(()=>{const p=document.querySelector('.ed-primary'),r=p.getBoundingClientRect();return {visible:r.x>=0&&r.y>=0&&r.right<=innerWidth&&r.bottom<=innerHeight&&Boolean(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)?.closest('.ed-primary')),overflow:document.documentElement.scrollWidth>innerWidth};})()`);verify(layout.visible&&!layout.overflow,'375px advanced editor output is clipped or covered');}
+        advancedChecks.push({kind,status:'passed',outputs:exports.length,...(evidence?{evidence}:{})});names.push(await save(w,name+(kind==='inline-rotation'?'-oversized':'')));w.destroy();continue;
+      }
       if(name==='scroll-direction'||name==='scroll-corrections'||name==='scroll-review-horizontal'){
         const click=async label=>{await page(w,`document.querySelector('[aria-label="${label}"]').click()`);await wait(200);};
         if(name==='scroll-direction'){
@@ -1177,8 +1365,11 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
       w.destroy();
     }
-    fs.writeFileSync(path.join(out,'stage-6-surfaces.json'),JSON.stringify({status:'passed',scroll:scrollReceipts,intelligence:intelligenceReceipts,clipboardAudits,copies:global.uiShots.stage4.state.receipts.filter(r=>r.method==='editorText'),checks:['方向切换/反裁状态、中段删除、四档接缝修正与横向预览','QR/Code128内容复制与URL回执','四种目标语言、原文译文对照、图上覆盖与全文复制','改单元格/增删行列/Markdown/TSV/XLSX回执','初始公式/编辑后SVG排版/复制/转贴图回执'],electronSessionNetworkAtCapture:global.uiShotsNetwork.audit,linkOpens:'ui-shots:open-url fixture receipts only'},null,2));
+    if(nativeChecks.length)fs.writeFileSync(path.join(out,'stage-9-native.json'),JSON.stringify({status:'passed',focusedCases,source:'public saveScreenshot, production readSettings migration/updateNativeAppearance, generated native theme, createFrame/show/update/render, decoded saved PNG pixels',checks:nativeChecks,physicalCapture:'not exercised; no system display/cursor is acquired'},null,2));
+    fs.writeFileSync(path.join(out,'stage-9-editor.json'),JSON.stringify({status:'passed',focusedCases,checks:advancedChecks,screenshotActions,output:'production Editor gestures, PNG export, decodeFrameImage and encodeScreenshot pixels; fixture OCR and output destination'},null,2));
+    if(!focusedCases.length)fs.writeFileSync(path.join(out,'stage-6-surfaces.json'),JSON.stringify({status:'passed',scroll:scrollReceipts,intelligence:intelligenceReceipts,clipboardAudits,copies:global.uiShots.stage4.state.receipts.filter(r=>r.method==='editorText'),checks:['方向切换/反裁状态、中段删除、四档接缝修正与横向预览','QR/Code128内容复制与URL回执','四种目标语言、原文译文对照、图上覆盖与全文复制','改单元格/增删行列/Markdown/TSV/XLSX回执','初始公式/编辑后SVG排版/复制/转贴图回执'],electronSessionNetworkAtCapture:global.uiShotsNetwork.audit,linkOpens:'ui-shots:open-url fixture receipts only'},null,2));
     ipcMain.removeHandler('ui-shots:state');
+    if(focusedCases.length)return names;
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
     let pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false, kind:'image',title:'设计评审截图',groupId:'default',groups:global.uiShots.stage4.groups,zoomPercent:100,wheelAction:'zoom',locked:false,thumbnail:false };
     const basePin=structuredClone(pin),pinActions = [],pinUpdates=[],pinDrags=[];
@@ -1261,13 +1452,16 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     return names;
   }));
   await main(async ({clipboard})=>{const {fs,path,out,BrowserWindow,page,stage4}=global.uiShots;if(!clipboard.__uiShotsMemory)throw Error('Native clipboard isolation was lost');const renderers=[];for(const win of BrowserWindow.getAllWindows()){if(!win.webContents.getURL().startsWith('file:'))continue;const audit=await page(win,'window.__uiShotsClipboard');if(!audit)throw Error('Renderer clipboard isolation missing');renderers.push({surface:new URL(win.webContents.getURL()).searchParams.get('surface')||'main',...audit});}fs.writeFileSync(path.join(out,'stage-4-isolation.json'),JSON.stringify({systemClipboardReads:0,systemClipboardWrites:0,main:global.uiShotsClipboard,renderers,receipts:stage4.state.receipts,fixtureState:JSON.parse(fs.readFileSync(stage4.store,'utf8'))},null,2));});
-  console.log(`Saved ${saved.length} shots to outputs/ui-shots:\n` + saved.map(name => `  ${name}.png`).join('\n'));
+  console.log(`Saved ${saved.length} shots to ${out}:\n` + saved.map(name => `  ${name}.png`).join('\n'));
 } finally {
   let networkAuditError, networkAuditTimer;
   try { if (ws?.readyState === WebSocket.OPEN) await Promise.race([main(({BrowserWindow},out)=>{
     const network=global.uiShotsNetwork;if(!network)throw Error('Fixture network audit missing');
     const guardedWindows=BrowserWindow.getAllWindows().map(win=>({id:win.id,guarded:network.hasSession(win.webContents.session)}));
     process.mainModule.require('node:fs').writeFileSync(process.mainModule.require('node:path').join(out,'electron-session-network.json'),JSON.stringify({...network.audit,guardedWindows},null,2));
+    const runtime=global.uiShotsNode;if(!runtime)throw Error('Fixture Node runtime audit missing');const guardsIntact=runtime.verify();
+    process.mainModule.require('node:fs').writeFileSync(process.mainModule.require('node:path').join(out,'node-runtime-isolation.json'),JSON.stringify({...runtime.audit,guardsIntact,cliPolicy:'all child_process execution blocked; no encoder CLI is needed',login:global.uiShotsLogin},null,2));
+    if(!guardsIntact)throw Error('Fixture Node runtime isolation was replaced');
     if(guardedWindows.some(win=>!win.guarded)||network.audit.blockedRequests!==Object.values(network.audit.blockedByProtocol).reduce((sum,value)=>sum+value,0))throw Error('Fixture network isolation audit failed');
   },out),new Promise((_,reject)=>{networkAuditTimer=setTimeout(()=>reject(Error('Electron session network audit timed out')),2000);})]); } catch(error) { networkAuditError=error; } finally {clearTimeout(networkAuditTimer);}
   if (ws?.readyState === WebSocket.OPEN) await Promise.race([
