@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
-import type { OCRLine, OCRMode, OCRResult } from '../../shared/capture';
+import type { BarcodeItem, OCRLine, OCRMode, OCRResult } from '../../shared/capture';
+
+export interface VisionResult { lines: OCRLine[]; barcodes: BarcodeItem[] }
 
 export interface VisionOCR {
-  recognize(png: Buffer, token: number, mode: OCRMode, enhance: boolean, languages: string[]): Promise<OCRLine[]>;
+  recognize(png: Buffer, token: number, mode: OCRMode, enhance: boolean, languages: string[]): Promise<VisionResult>;
   supportedLanguages(): string[];
   cancel(token: number): void;
 }
@@ -15,7 +17,7 @@ let nextToken=0;
 export class OCRService {
   private active: Job | null=null;
   private pending: Job | null=null;
-  private cache=new Map<string, {lines:OCRLine[];bytes:number}>();
+  private cache=new Map<string, VisionResult & {bytes:number}>();
   private cacheBytes=0;
   get busy(){return Boolean(this.active||this.pending);}
   constructor(private driver:()=>VisionOCR, private current:(id:string,revision:number)=>boolean){}
@@ -24,7 +26,7 @@ export class OCRService {
     if(!this.current(input.id,input.revision))return Promise.resolve({id:input.id,revision:input.revision,lines:[]});
     this.invalidate(input.id,input.revision);
     const cached=!input.force&&this.cache.get(key);
-    if(cached){this.cache.delete(key);this.cache.set(key,cached);return Promise.resolve({id:input.id,revision:input.revision,lines:cached.lines});}
+    if(cached){this.cache.delete(key);this.cache.set(key,cached);return Promise.resolve({id:input.id,revision:input.revision,lines:cached.lines,barcodes:cached.barcodes});}
     return new Promise((settle,fail)=>{
       this.drop(this.pending);this.pending={...input,key,token:nextToken=nextToken%2147483646+1,canceled:false,settle,fail};
       if(this.active)this.drop(this.active);
@@ -46,12 +48,12 @@ export class OCRService {
     const job=this.pending;this.pending=null;this.active=job;
     void(async()=>{
       try{
-        const lines=await this.driver().recognize(job.png,job.token,job.mode,job.enhance,job.languages);
+        const result=await this.driver().recognize(job.png,job.token,job.mode,job.enhance,job.languages);
         if(job.canceled||!this.current(job.id,job.revision)){job.settle({id:job.id,revision:job.revision,lines:[]});return;}
-        const bytes=JSON.stringify(lines).length*2;
-        if(bytes<=2_000_000){const previous=this.cache.get(job.key);if(previous)this.cacheBytes-=previous.bytes;this.cache.delete(job.key);this.cache.set(job.key,{lines,bytes});this.cacheBytes+=bytes;
+        const bytes=JSON.stringify(result).length*2;
+        if(bytes<=2_000_000){const previous=this.cache.get(job.key);if(previous)this.cacheBytes-=previous.bytes;this.cache.delete(job.key);this.cache.set(job.key,{...result,bytes});this.cacheBytes+=bytes;
           while(this.cache.size>8||this.cacheBytes>2_000_000){const first=this.cache.keys().next().value!;this.cacheBytes-=this.cache.get(first)!.bytes;this.cache.delete(first);}}
-        job.settle({id:job.id,revision:job.revision,lines});
+        job.settle({id:job.id,revision:job.revision,...result});
       }catch(error){if(!job.canceled)job.fail(error);}
       finally{if(this.active===job)this.active=null;this.pump();}
     })();

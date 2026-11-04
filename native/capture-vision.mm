@@ -14,11 +14,13 @@
 
 struct Glyph { std::string text; double x,y,w,h; };
 struct TextLine { std::string text; double x,y,w,h,confidence; std::vector<Glyph> glyphs; };
+struct Barcode { std::string symbology,payload; double x,y,w,h; };
 struct OCRWork {
   napi_async_work work; napi_deferred deferred; int32_t token=0;
   std::vector<std::string> languages; std::vector<unsigned char> bytes; std::vector<TextLine> lines; std::string error,mode;
+  std::vector<Barcode> barcodes;
   bool enhance=false; std::atomic<bool> canceled{false};
-  std::mutex requestMutex; VNRecognizeTextRequest* __strong request=nil;
+  std::mutex requestMutex; VNRequest* __strong request=nil;
 };
 static std::mutex jobsMutex;
 static std::unordered_map<int32_t,OCRWork*> jobs;
@@ -49,7 +51,7 @@ static void placeWhitespace(TextLine&line){
 }
 static bool sharedBox(const Glyph&a,const Glyph&b){return fabs(a.x-b.x)<.5&&fabs(a.y-b.y)<.5&&fabs(a.w-b.w)<.5;}
 static bool hasSharedBoxes(const TextLine&line){for(size_t i=1;i<line.glyphs.size();i++)if(line.glyphs[i].w>0&&sharedBox(line.glyphs[i-1],line.glyphs[i]))return true;return false;}
-static bool perform(OCRWork*q,VNRecognizeTextRequest*request,CGImageRef image,NSError**error){
+static bool perform(OCRWork*q,VNRequest*request,CGImageRef image,NSError**error){
   {std::lock_guard<std::mutex>lock(q->requestMutex);if(q->canceled)return false;q->request=request;}
   @try{VNImageRequestHandler*handler=[[VNImageRequestHandler alloc] initWithCGImage:image options:@{}];return [handler performRequests:@[request] error:error];}
   @finally{std::lock_guard<std::mutex>lock(q->requestMutex);q->request=nil;}
@@ -111,6 +113,15 @@ static void execute(napi_env,void*data){@autoreleasepool {@try{
   ImageOwner enhanced{q->enhance?enhanceImage(original.image):nullptr};if(q->canceled)return;
   CGImageRef image=enhanced.image?:original.image;
   const double width=CGImageGetWidth(original.image),height=CGImageGetHeight(original.image);
+  // Vision's barcode defaults include every supported symbology. Detect on the
+  // original pixels so enhancement never alters barcode geometry or payloads.
+  VNDetectBarcodesRequest*barcodes=[[VNDetectBarcodesRequest alloc] init];NSError*barcodeError=nil;
+  if(!perform(q,barcodes,original.image,&barcodeError)){if(!q->canceled)q->error=barcodeError.localizedDescription.UTF8String?:"条码识别失败";return;}
+  for(VNBarcodeObservation*observation in barcodes.results){
+    if(q->canceled)return;NSString*payload=observation.payloadStringValue;if(!payload)continue;
+    NSString*symbology=observation.symbology;NSString*prefix=@"VNBarcodeSymbology";if([symbology hasPrefix:prefix])symbology=[symbology substringFromIndex:prefix.length];
+    CGRect b=observation.boundingBox;q->barcodes.push_back({symbology.UTF8String,payload.UTF8String,b.origin.x*width,(1-CGRectGetMaxY(b))*height,b.size.width*width,b.size.height*height});
+  }
   VNRecognizeTextRequest*request=[[VNRecognizeTextRequest alloc] init];
   request.recognitionLevel=VNRequestTextRecognitionLevelAccurate;
   NSMutableArray*preferred=[NSMutableArray array]; if(q->mode=="code")[preferred addObject:@"en-US"]; for(const auto&language:q->languages){NSString*value=[NSString stringWithUTF8String:language.c_str()];if(![preferred containsObject:value])[preferred addObject:value];}
@@ -146,7 +157,9 @@ static void execute(napi_env,void*data){@autoreleasepool {@try{
 static void complete(napi_env e,napi_status status,void*data){
   auto*q=(OCRWork*)data;{std::lock_guard<std::mutex>lock(jobsMutex);jobs.erase(q->token);}
   if(!q->canceled&&(status!=napi_ok||!q->error.empty())){napi_value message,error;napi_create_string_utf8(e,q->error.empty()?"文字识别已取消":q->error.c_str(),NAPI_AUTO_LENGTH,&message);napi_create_error(e,nullptr,message,&error);napi_reject_deferred(e,q->deferred,error);}
-  else{napi_value lines;napi_create_array_with_length(e,q->canceled?0:q->lines.size(),&lines);if(!q->canceled)for(size_t i=0;i<q->lines.size();i++){const auto&l=q->lines[i];napi_value o=rect(e,l.x,l.y,l.w,l.h),glyphs;napi_create_array_with_length(e,l.glyphs.size(),&glyphs);text(e,o,"text",l.text);prop(e,o,"confidence",l.confidence);for(size_t j=0;j<l.glyphs.size();j++){const auto&g=l.glyphs[j];napi_value glyph=rect(e,g.x,g.y,g.w,g.h);text(e,glyph,"text",g.text);napi_set_element(e,glyphs,j,glyph);}napi_set_named_property(e,o,"glyphs",glyphs);napi_set_element(e,lines,i,o);}napi_resolve_deferred(e,q->deferred,lines);}
+  else{napi_value result,lines,barcodes;napi_create_object(e,&result);napi_create_array_with_length(e,q->canceled?0:q->barcodes.size(),&barcodes);
+    if(!q->canceled)for(size_t i=0;i<q->barcodes.size();i++){const auto&b=q->barcodes[i];napi_value item=rect(e,b.x,b.y,b.w,b.h);text(e,item,"symbology",b.symbology);text(e,item,"payload",b.payload);napi_set_element(e,barcodes,i,item);}
+    napi_create_array_with_length(e,q->canceled?0:q->lines.size(),&lines);if(!q->canceled)for(size_t i=0;i<q->lines.size();i++){const auto&l=q->lines[i];napi_value o=rect(e,l.x,l.y,l.w,l.h),glyphs;napi_create_array_with_length(e,l.glyphs.size(),&glyphs);text(e,o,"text",l.text);prop(e,o,"confidence",l.confidence);for(size_t j=0;j<l.glyphs.size();j++){const auto&g=l.glyphs[j];napi_value glyph=rect(e,g.x,g.y,g.w,g.h);text(e,glyph,"text",g.text);napi_set_element(e,glyphs,j,glyph);}napi_set_named_property(e,o,"glyphs",glyphs);napi_set_element(e,lines,i,o);}napi_set_named_property(e,result,"lines",lines);napi_set_named_property(e,result,"barcodes",barcodes);napi_resolve_deferred(e,q->deferred,result);}
   napi_delete_async_work(e,q->work);delete q;
 }
 static napi_value recognize(napi_env e,napi_callback_info info){
@@ -159,7 +172,7 @@ static napi_value recognize(napi_env e,napi_callback_info info){
   napi_create_promise(e,&q->deferred,&promise);napi_create_string_utf8(e,"capture-vision",NAPI_AUTO_LENGTH,&name);napi_create_async_work(e,nullptr,name,execute,complete,q,&q->work);{std::lock_guard<std::mutex>lock(jobsMutex);jobs[token]=q;}napi_queue_async_work(e,q->work);return promise;
 }
 static napi_value cancel(napi_env e,napi_callback_info info){
-  size_t n=1;napi_value arg,undefined;napi_get_cb_info(e,info,&n,&arg,nullptr,nullptr);int32_t token=0;VNRecognizeTextRequest*request=nil;
+  size_t n=1;napi_value arg,undefined;napi_get_cb_info(e,info,&n,&arg,nullptr,nullptr);int32_t token=0;VNRequest*request=nil;
   if(n==1&&napi_get_value_int32(e,arg,&token)==napi_ok){std::lock_guard<std::mutex>lock(jobsMutex);auto found=jobs.find(token);if(found!=jobs.end()){auto*q=found->second;q->canceled=true;std::lock_guard<std::mutex>requestLock(q->requestMutex);request=q->request;}}
   [request cancel];napi_get_undefined(e,&undefined);return undefined;
 }

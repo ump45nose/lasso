@@ -3,6 +3,7 @@ import type { ScreenshotSettings } from './screenshot-settings';
 import type { MemorySettings } from './memory';
 import type { ImageOptions, MediaConfig, MediaConfigInput } from './media';
 import type { CaptureMode } from './capture';
+import type { VisionServiceConfig, VisionServiceInput } from './intelligence';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
 import type { EditorShortcutMap, GlobalActionId, IgnoredAppRule } from './shortcuts';
 import type { CaptureHistoryState, PinArrangeMode, PinKind, PinWorkspaceSettings, PinWorkspaceState, WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from './history-sync';
@@ -29,6 +30,7 @@ export type FontRole = 'display' | 'text' | 'ui' | 'mono';
 export interface ImportedFont { family: string; file: string }
 export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
 export interface Settings {
+  vision: Omit<VisionServiceConfig, 'hasCredential'>;
   memory: MemorySettings;
   screenshot: ScreenshotSettings;
   /** Empty means no global shortcut. */
@@ -144,6 +146,8 @@ export interface DesktopAPI {
   saveRegionPreset(preset:RegionPreset):Promise<void>;
   deleteRegionPreset(id:string):Promise<void>;
   mediaConfig(): Promise<MediaConfig>;
+  visionConfig(): Promise<VisionServiceConfig>;
+  saveVisionConfig(input: VisionServiceInput): Promise<VisionServiceConfig>;
   saveMediaConfig(input: MediaConfigInput): Promise<MediaConfig>;
   mediaModels(): Promise<string[]>;
   openImagePresets(): Promise<void>;
