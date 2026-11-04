@@ -5,6 +5,7 @@ import type { ImageOptions, MediaConfig, MediaConfigInput } from './media';
 import type { CaptureMode } from './capture';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
 import type { EditorShortcutMap, GlobalActionId, IgnoredAppRule } from './shortcuts';
+import type { CaptureHistoryState, PinArrangeMode, PinKind, PinWorkspaceSettings, PinWorkspaceState, WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from './history-sync';
 export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
 /** Native web views are placed below the title bar and above any footer rows. */
 export const HEADER_HEIGHT = 44;
@@ -122,6 +123,21 @@ export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' |
 export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
+  captureHistory(query?: string): Promise<CaptureHistoryState>;
+  actCaptureHistory(id: string, action: 'edit' | 'pin' | 'copy' | 'delete'): Promise<{ error: string | null }>;
+  clearCaptureHistory(): Promise<{ error: string | null }>;
+  pinWorkspace(): Promise<PinWorkspaceState>;
+  savePinWorkspace(settings: PinWorkspaceSettings): Promise<{ error: string | null }>;
+  createPin(input: { kind: PinKind; text?: string; color?: string; filePath?: string; groupId?: string }): Promise<{ error: string | null }>;
+  pinClipboard(): Promise<{ error: string | null }>;
+  reopenClosedPin(): Promise<{ error: string | null }>;
+  arrangePins(mode: PinArrangeMode, groupId?: string): Promise<{ error: string | null }>;
+  actPin(id: string, action: 'focus' | 'toggle-visible' | 'toggle-lock' | 'toggle-thumbnail' | 'close', groupId?: string): Promise<{ error: string | null }>;
+  exportConfig(): Promise<{ path: string | null; error: string | null }>;
+  importConfig(): Promise<{ error: string | null }>;
+  webdavConfig(): Promise<WebDavConfig>;
+  saveWebdavConfig(input: WebDavConfigInput): Promise<WebDavConfig>;
+  syncWebdav(direction: WebDavSyncDirection): Promise<{ state: WebDavConfig; error: string | null }>;
   saveMemory(options: MemorySettings): Promise<{ error: string | null }>;
   captureRegions():Promise<RegionConfiguration>;
   customScreenshot(request:CustomCaptureRequest):Promise<{error:string|null}>;

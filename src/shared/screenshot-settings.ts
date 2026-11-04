@@ -1,5 +1,6 @@
 import { validateRegionPreset, type RegionPreset } from './capture-regions';
 import type { CaptureMode } from './capture';
+import { captureHistoryDefaults, pinWorkspaceDefaults, validateCaptureHistoryPolicy, validatePinWorkspaceSettings, type CaptureHistoryPolicy, type PinWorkspaceSettings } from './history-sync';
 export type ScreenshotKind = CaptureMode | 'scroll';
 export const screenshotKinds: ScreenshotKind[] = ['rect', 'area', 'window', 'front', 'screen', 'scroll'];
 export type ScreenshotOutputFormat = 'png' | 'jpeg' | 'webp' | 'bmp' | 'pdf';
@@ -24,6 +25,8 @@ export interface AnnotationStyleMemory {
 }
 export interface ScreenshotActions { show: boolean; copy: boolean; save: boolean }
 export interface ScreenshotSettings {
+  history: CaptureHistoryPolicy;
+  pinWorkspace: PinWorkspaceSettings;
   rememberRegionAcrossLaunches: boolean;
   regionPresets: RegionPreset[];
   actions: Record<ScreenshotKind, ScreenshotActions>;
@@ -47,6 +50,7 @@ export interface ScreenshotSettings {
 }
 export function screenshotDefaults(directory = ''): ScreenshotSettings {
   return {
+    history: captureHistoryDefaults(), pinWorkspace: pinWorkspaceDefaults(),
     rememberRegionAcrossLaunches: true, regionPresets: [],
     actions: Object.fromEntries(screenshotKinds.map(kind => [kind, { show: true, copy: false, save: false }])) as ScreenshotSettings['actions'],
     directory, format: 'png', jpegQuality: 92, quickSaveDirectory: directory,
@@ -65,6 +69,8 @@ export function migrateScreenshotSettings(value: Partial<ScreenshotSettings> | u
   const defaults = screenshotDefaults(directory);
   return {
     ...defaults, ...value,
+    history: { ...defaults.history, ...value?.history },
+    pinWorkspace: { ...defaults.pinWorkspace, ...value?.pinWorkspace },
     quickSaveDirectory: value?.quickSaveDirectory ?? value?.directory ?? directory,
     annotationMemory: {
       ...defaults.annotationMemory, ...value?.annotationMemory,
@@ -105,6 +111,8 @@ export function validateScreenshotSettings(value: ScreenshotSettings, supported:
   if (!['image', 'file', 'path'].includes(value.copyMode) || !['result', 'original', 'display'].includes(value.exportContentMode) || !['none', 'reveal', 'copy-path', 'copy-file'].includes(value.afterSaveAction)) throw Error('截图输出配置无效');
   validateScreenshotFileNameTemplate(value.fileNameTemplate);
   validateAnnotationMemory(value.annotationMemory);
+  validateCaptureHistoryPolicy(value.history);
+  validatePinWorkspaceSettings(value.pinWorkspace);
   if(typeof value.rememberRegionAcrossLaunches!=='boolean'||!Array.isArray(value.regionPresets)||value.regionPresets.length>100)throw Error('区域预设配置无效');
   value.regionPresets.forEach(validateRegionPreset);
   if(new Set(value.regionPresets.map(p=>p.id)).size!==value.regionPresets.length)throw Error('区域预设重复');

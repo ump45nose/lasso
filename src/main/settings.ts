@@ -24,12 +24,10 @@ export function defaultSettings(): Settings {
     codex: { executable: executable('codex'), cwd: homedir() }, pi: { executable: executable('pi'), cwd: homedir() }
   }, fonts: { ...defaultFonts }, importedFonts: [] });
 }
-export function readSettings(path: string): Settings {
-  if (!existsSync(path)) return defaultSettings();
+export function migrateSettings(value: Partial<Settings> & { screenshotShortcut?: string }, defaults: Settings): Settings {
   // Before capture modes existed, the area shortcut was stored as `screenshotShortcut`.
-  const { screenshotShortcut, ...settings } = JSON.parse(readFileSync(path, 'utf8')) as Partial<Settings> & { screenshotShortcut?: string };
+  const { screenshotShortcut, ...settings } = value;
   if (settings.shortcut !== undefined && typeof settings.shortcut !== 'string') throw new Error('设置文件中的 shortcut 必须是字符串');
-  const defaults = defaultSettings();
   settings.memory = validMemorySettings(settings.memory!) ? settings.memory : defaults.memory;
   return syncActionShortcuts({
     ...defaults, ...settings,
@@ -42,6 +40,9 @@ export function readSettings(path: string): Settings {
     fonts: { ...defaults.fonts, ...settings.fonts },
     lastTarget: ['chatgpt', 'gemini', 'codex', 'pi'].includes(settings.lastTarget || '') ? settings.lastTarget! : 'chatgpt'
   });
+}
+export function readSettings(path: string): Settings {
+  return existsSync(path) ? migrateSettings(JSON.parse(readFileSync(path, 'utf8')), defaultSettings()) : defaultSettings();
 }
 export function writeSettings(path: string, settings: Settings) {
   writeFileSync(path, JSON.stringify(syncActionShortcuts(settings), null, 2) + '\n');
