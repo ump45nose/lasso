@@ -42,6 +42,8 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
       <div className="l-set-row-head"><h3>截图完成后</h3><button className="l-text-btn" onClick={shortcuts}>配置快捷键</button></div>
       <ul className="l-group">{screenshotKinds.map(kind => <li key={kind} className="l-shot-policy"><span>{labels[kind]}</span><div className="l-shot-actions">{([['show', '显示'], ['copy', '复制'], ['save', '保存']] as const).map(([key, label]) => <label key={key}><span>{label}</span><Switch label={`${labels[kind]}后${label}`} value={draft.actions[kind][key]} change={() => action(kind, key)} /></label>)}</div></li>)}</ul>
       <p className="l-field-help">复制和保存输出截图完成时的图片。后续标注通过编辑器手动输出。</p>
+      <div className="l-set-row-head l-gap"><h3>贴图</h3></div>
+      <ul className="l-group"><li><div className="l-row-label"><span>保持原尺寸</span><span>按截图在屏幕上的大小显示，不拖边改变大小。关闭后缩进窗口，并可拖动边缘调整。</span></div><Switch label="贴图保持原尺寸" value={draft.pinKeepsSize} change={() => patch({ pinKeepsSize: !draft.pinKeepsSize })} /></li></ul>
       <div className="l-set-row-head l-gap"><h3>保存</h3></div>
       <ul className="l-group">
         <li className="col"><div className="l-field"><label htmlFor="screenshot-directory">截图文件夹</label><div className="l-row"><input id="screenshot-directory" className="l-input mono" value={draft.directory} onChange={e => patch({ directory: e.target.value })} /><button className="l-btn" aria-label="选择截图文件夹" onClick={() => void window.desktop.choosePath('directory').then(result => { if (result) patch({ directory: result.path }); }).catch(e => setError(String(e)))}><FolderOpen size={16} />选择</button></div></div></li>

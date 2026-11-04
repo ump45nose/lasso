@@ -14,10 +14,12 @@ export interface ScreenshotSettings {
   backgroundColor: string;
   shadow: boolean;
   scrollMaxHeight: number;
+  /** Show a pin at its on-screen size and keep the window edges fixed. */
+  pinKeepsSize: boolean;
   languages: string[];
 }
 export function screenshotDefaults(directory = ''): ScreenshotSettings {
-  return { rememberRegionAcrossLaunches:true,regionPresets:[],actions: Object.fromEntries(screenshotKinds.map(kind => [kind, { show: true, copy: false, save: false }])) as ScreenshotSettings['actions'], directory, format: 'png', resizeTo1x: false, background: 'transparent', backgroundColor: '#ffffff', shadow: false, scrollMaxHeight: 16384, languages: ['zh-Hans', 'en-US', 'zh-Hant'] };
+  return { rememberRegionAcrossLaunches:true,regionPresets:[],actions: Object.fromEntries(screenshotKinds.map(kind => [kind, { show: true, copy: false, save: false }])) as ScreenshotSettings['actions'], directory, format: 'png', resizeTo1x: false, background: 'transparent', backgroundColor: '#ffffff', shadow: false, scrollMaxHeight: 16384, pinKeepsSize: true, languages: ['zh-Hans', 'en-US', 'zh-Hant'] };
 }
 /** Merge missing fields independently so old installations keep their capture habits. */
 export function migrateScreenshotSettings(value: Partial<ScreenshotSettings> | undefined, directory: string): ScreenshotSettings {
@@ -25,7 +27,7 @@ export function migrateScreenshotSettings(value: Partial<ScreenshotSettings> | u
   return { ...defaults, ...value, actions: Object.fromEntries(screenshotKinds.map(kind => [kind, { ...defaults.actions[kind], ...value?.actions?.[kind] }])) as ScreenshotSettings['actions'] };
 }
 export function validateScreenshotSettings(value: ScreenshotSettings, supported: string[]): void {
-  if (!value || typeof value.directory !== 'string' || !value.directory.startsWith('/') || !['png', 'jpeg'].includes(value.format) || typeof value.resizeTo1x !== 'boolean' || !['transparent', 'solid'].includes(value.background) || !/^#[\da-f]{6}$/i.test(value.backgroundColor) || typeof value.shadow !== 'boolean' || !Number.isSafeInteger(value.scrollMaxHeight) || value.scrollMaxHeight < 1) throw Error('截图配置无效');
+  if (!value || typeof value.directory !== 'string' || !value.directory.startsWith('/') || !['png', 'jpeg'].includes(value.format) || typeof value.resizeTo1x !== 'boolean' || !['transparent', 'solid'].includes(value.background) || !/^#[\da-f]{6}$/i.test(value.backgroundColor) || typeof value.shadow !== 'boolean' || typeof value.pinKeepsSize !== 'boolean' || !Number.isSafeInteger(value.scrollMaxHeight) || value.scrollMaxHeight < 1) throw Error('截图配置无效');
   if(typeof value.rememberRegionAcrossLaunches!=='boolean'||!Array.isArray(value.regionPresets)||value.regionPresets.length>100)throw Error('区域预设配置无效');
   value.regionPresets.forEach(validateRegionPreset);
   if(new Set(value.regionPresets.map(p=>p.id)).size!==value.regionPresets.length)throw Error('区域预设重复');

@@ -1,7 +1,56 @@
-import { nativeImage, type NativeImage } from 'electron';
+import { clipboard, ClipboardItem, nativeImage, type NativeImage } from 'electron';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { CaptureFrame } from '../../shared/capture';
 import type { ScreenshotSettings } from '../../shared/screenshot-settings';
+
+const pngMagic = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+export function assertPng(png: Uint8Array | undefined, width: number, height: number) {
+  if (!(png instanceof Uint8Array) || png.byteLength < 24 || png.byteLength > 64 * 1024 * 1024) throw Error('无效的合成图片');
+  const bytes = Buffer.from(png);
+  if (!bytes.subarray(0, 8).equals(pngMagic) || bytes.readUInt32BE(16) !== width || bytes.readUInt32BE(20) !== height) throw Error('合成图片尺寸与裁剪范围不符');
+  return bytes;
+}
+
+/** Canvas bytes are straight RGBA. Electron bitmaps are premultiplied BGRA. */
+export function rgbaToPremulBgra(rgba: Buffer): Buffer {
+  const bgra = Buffer.allocUnsafe(rgba.length);
+  for (let i = 0; i < rgba.length; i += 4) {
+    const a = rgba[i + 3];
+    if (a === 255) { bgra[i] = rgba[i + 2]; bgra[i + 1] = rgba[i + 1]; bgra[i + 2] = rgba[i]; bgra[i + 3] = 255; }
+    else if (a === 0) bgra[i] = bgra[i + 1] = bgra[i + 2] = bgra[i + 3] = 0;
+    else {
+      const scale = a / 255;
+      bgra[i] = Math.round(rgba[i + 2] * scale); bgra[i + 1] = Math.round(rgba[i + 1] * scale); bgra[i + 2] = Math.round(rgba[i] * scale); bgra[i + 3] = a;
+    }
+  }
+  return bgra;
+}
+
+/** One flattened image, either raw pixels from the editor or a PNG. */
+export function decodeFrameImage(frame: Pick<CaptureFrame, 'crop' | 'png' | 'pixels'>): NativeImage {
+  const r = frame.crop;
+  if (!r || ![r.x, r.y, r.width, r.height].every(Number.isSafeInteger) || r.x < 0 || r.y < 0 || r.width < 1 || r.height < 1 || r.width * r.height > 40_000_000) throw Error('无效的裁剪范围');
+  if (frame.pixels) {
+    const data = Buffer.from(frame.pixels);
+    if (data.byteLength !== r.width * r.height * 4) throw Error('无效的合成图片');
+    const image = nativeImage.createFromBitmap(rgbaToPremulBgra(data), { width: r.width, height: r.height, scaleFactor: 1 });
+    if (image.isEmpty()) throw Error('图片合成失败');
+    return image;
+  }
+  const png = assertPng(frame.png, r.width, r.height);
+  const image = nativeImage.createFromBuffer(png), size = image.getSize();
+  if (image.isEmpty() || size.width !== r.width || size.height !== r.height) throw Error('图片合成失败');
+  return image;
+}
+
+/** Write PNG bytes that are already encoded. Callers with a NativeImage use copyImage. */
+export async function copyPng(bytes: Uint8Array | Buffer) {
+  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(bytes)], { type: 'image/png' }) })]);
+}
+export async function copyImage(image: NativeImage) {
+  await copyPng(image.toPNG());
+}
 
 /** Electron's native BGRA bitmap is premultiplied; composite once onto an opaque background. */
 export function flattenBackground(image: NativeImage, color: string): NativeImage {

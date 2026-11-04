@@ -7,6 +7,7 @@ export type Style = { color: string; width: number; fontSize: number };
 type Mark = FabricObject & { lassoTool?: Tool };
 type Snapshot = AnnotationSnapshot;
 const box = (a: { x: number; y: number }, b: { x: number; y: number }): CaptureRect => ({ x: Math.round(Math.min(a.x,b.x)), y: Math.round(Math.min(a.y,b.y)), width: Math.round(Math.abs(b.x-a.x)), height: Math.round(Math.abs(b.y-a.y)) });
+const shapeTools = new Set<Tool>(['arrow', 'line', 'rectangle', 'ellipse', 'highlight', 'redact', 'mosaic', 'blur']);
 export const intersects = (a: CaptureRect,b: CaptureRect) => a.x < b.x+b.width && a.x+a.width > b.x && a.y < b.y+b.height && a.y+a.height > b.y;
 // ActiveSelection stores children in group coordinates; history and clipboard always store image coordinates.
 const serializeMark=(o:FabricObject):Record<string,unknown>=>{
@@ -15,6 +16,7 @@ const serializeMark=(o:FabricObject):Record<string,unknown>=>{
 };
 
 /** Fabric owns object editing; this adapter owns tools, bounded history and pixels.
+ * The screenshot stays on a static canvas, so a drag repaints only the mark preview.
  * No eSearch application/tool source is copied into this module. */
 export class AnnotationEditor {
   readonly canvas: Canvas;
@@ -32,11 +34,18 @@ export class AnnotationEditor {
   private objectClipboard: Record<string, unknown>[] | null = null;
   private pasteOffset = 0;
   private pointer: { x: number; y: number } | null = null;
+  private gestureEnd: { x: number; y: number } | null = null;
+  private previewFrame = 0;
+  private flat: HTMLCanvasElement | null = null;
+  private loupe: HTMLCanvasElement | null = null;
   private shift = false;
   constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void, initialCrop?:CaptureRect) {
     this.crop = initialCrop?{...initialCrop}:{ x:0,y:0,width:source.width,height:source.height };
     this.canvas = new Canvas(element, { width:source.width,height:source.height,enableRetinaScaling:false,preserveObjectStacking:true,selection:false,altActionKey:undefined,backgroundColor:'',renderOnAddRemove:false });
-    this.canvas.backgroundImage = new FabricImage(source,{originX:'left',originY:'top'});
+    const wrapper=this.canvas.wrapperEl;
+    wrapper.style.position='absolute';wrapper.style.left='0';wrapper.style.top='0';
+    source.classList.add('editor-source');source.setAttribute('aria-hidden','true');
+    wrapper.parentElement?.insertBefore(source,wrapper);
     this.canvas.on('mouse:down',e=>this.down(e.scenePoint,e.target));
     this.canvas.on('mouse:move',e=>{this.shift=e.e.shiftKey;this.move(e.scenePoint);});
     this.canvas.on('mouse:up',()=>this.up());
@@ -57,7 +66,7 @@ export class AnnotationEditor {
   get contentKey(){return this.history[this.cursor]+JSON.stringify(this.crop);}
   snapshot(visibleOnly=false): Snapshot {return {objects:this.canvas.getObjects().filter(o=>{const r=o.getBoundingRect();return !visibleOnly||intersects({x:r.left,y:r.top,width:r.width,height:r.height},this.crop);}).map(o=>({...serializeMark(o),...(visibleOnly?{lassoBounds:(()=>{const r=o.getBoundingRect();return {x:r.left,y:r.top,width:r.width,height:r.height};})()}: {})})),crop:{...this.crop},nextNumber:this.number,privacy:this.privacy};}
   async load(snapshot: Snapshot){
-    this.restoring=true;
+    this.flat=null;this.restoring=true;
     try{
       const objects=await util.enlivenObjects<FabricObject>(snapshot.objects);
       if(this.disposed){objects.forEach(o=>o.dispose());return;}
@@ -77,16 +86,19 @@ export class AnnotationEditor {
   }
   get isEditingText(){return this.canvas.getActiveObject() instanceof IText && (this.canvas.getActiveObject() as IText).isEditing;}
   get privacy(){return this.canvas.getObjects().filter(o=>['redact','mosaic','blur'].includes((o as Mark).lassoTool||'')).map(o=>{const r=o.getBoundingRect();return {x:r.left,y:r.top,width:r.width,height:r.height};});}
+  /** Warm the flattened pixels after the tool changes, so the first loupe move does not composite. */
+  prepareSample(){if(!this.disposed&&!this.flat)this.flat=this.compose();}
   sample(x:number,y:number){
     x=Math.floor(x);y=Math.floor(y);if(x<this.crop.x||y<this.crop.y||x>=this.crop.x+this.crop.width||y>=this.crop.y+this.crop.height)return null;
-    // Fabric draws selection controls on its upper canvas; the lower canvas contains only image pixels.
-    const canvas=this.canvas.lowerCanvasEl,ctx=canvas.getContext('2d')!,pixel=ctx.getImageData(x,y,1,1).data;
-    const preview=document.createElement('canvas');preview.width=17;preview.height=17;preview.getContext('2d')!.drawImage(canvas,x-8,y-8,17,17,0,0,17,17);
-    return {color:'#'+[pixel[0],pixel[1],pixel[2]].map(v=>v.toString(16).padStart(2,'0')).join(''),rgb:`rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`,image:preview.toDataURL(),x,y};
+    const flat=this.flat??=this.compose(),sx=x-this.crop.x,sy=y-this.crop.y,pixel=flat.getContext('2d')!.getImageData(sx,sy,1,1).data;
+    const loupe=this.loupe??=Object.assign(document.createElement('canvas'),{width:17,height:17}),preview=loupe.getContext('2d')!;
+    preview.imageSmoothingEnabled=false;preview.clearRect(0,0,17,17);preview.drawImage(flat,sx-8,sy-8,17,17,0,0,17,17);
+    return {color:'#'+[pixel[0],pixel[1],pixel[2]].map(v=>v.toString(16).padStart(2,'0')).join(''),rgb:`rgb(${pixel[0]}, ${pixel[1]}, ${pixel[2]})`,image:loupe,x,y};
   }
   private decorate(o: Mark, tool: Tool | undefined){o.lassoTool=tool;o.set({borderColor:'#bd7658',cornerColor:'#bd7658',cornerStrokeColor:'#fff',transparentCorners:false,cornerSize:10});return o;}
   setTool(tool: Tool){
     if(this.start)this.up();
+    this.clearPreview();
     if(this.isEditingText)(this.canvas.getActiveObject() as IText).exitEditing();
     this.tool=tool;this.canvas.discardActiveObject();this.canvas.selection=tool==='select';this.canvas.skipTargetFind=tool!=='select';
     this.canvas.isDrawingMode=tool==='pen';
@@ -134,43 +146,70 @@ export class AnnotationEditor {
     this.pointer=p;
     let end=this.point(p);
     if(this.shift&&['rectangle','ellipse','line','arrow'].includes(this.tool))end=constrainedEnd(this.start,end,this.crop,['line','arrow'].includes(this.tool)?'angle':'square');
-    const r=box(this.start,end);
-    if(this.tool==='crop'){this.cropDraft=r;this.preview(r);return;}
-    if(Math.hypot(end.x-this.start.x,end.y-this.start.y)<2){if(this.draft){this.canvas.remove(this.draft);this.draft=null;this.canvas.requestRenderAll();}return;}
-    if(this.draft)this.canvas.remove(this.draft);
-    const options={originX:'left' as const,originY:'top' as const,fill:'transparent',stroke:this.style.color,strokeWidth:this.style.width,selectable:false,evented:false,objectCaching:false};
-    let o: FabricObject;
-    if(this.tool==='line')o=new Line([this.start.x,this.start.y,end.x,end.y],options);
-    else if(this.tool==='arrow'){
-      const {x,y}=this.start,angle=Math.atan2(end.y-y,end.x-x),head=Math.max(14,this.style.width*4);
-      o=new Path(`M ${x} ${y} L ${end.x} ${end.y} M ${end.x-head*Math.cos(angle-.5)} ${end.y-head*Math.sin(angle-.5)} L ${end.x} ${end.y} L ${end.x-head*Math.cos(angle+.5)} ${end.y-head*Math.sin(angle+.5)}`,{...options,strokeLineCap:'round',strokeLineJoin:'round'});
-    }else if(this.tool==='ellipse')o=new Ellipse({...options,left:r.x,top:r.y,rx:r.width/2,ry:r.height/2});
-    else o=new Rect({...options,left:r.x,top:r.y,width:r.width,height:r.height,...(this.tool==='highlight'?{fill:this.style.color,strokeWidth:0,opacity:.3}:['redact','mosaic','blur'].includes(this.tool)?{fill:'#171717',strokeWidth:0}:{} )});
-    this.draft=this.decorate(o,this.tool);this.canvas.add(this.draft);this.canvas.requestRenderAll();
+    if(this.tool==='crop'){const r=box(this.start,end);this.cropDraft=r;this.preview(r);return;}
+    if(!shapeTools.has(this.tool))return;
+    this.gestureEnd=end;
+    if(this.previewFrame)return;
+    this.previewFrame=requestAnimationFrame(()=>{this.previewFrame=0;if(this.start&&this.gestureEnd)this.paintPreview(this.gestureEnd);});
+  }
+  private paintPreview(end:{x:number;y:number}){
+    const ctx=this.canvas.contextTop;if(!ctx||!this.start)return;
+    this.canvas.clearContext(ctx);
+    const start=this.start,r=box(start,end);
+    ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle=this.style.color;ctx.lineWidth=this.style.width;
+    ctx.fillStyle=this.tool==='redact'||this.tool==='mosaic'||this.tool==='blur'?'#171717':this.style.color;
+    if(this.tool==='line'||this.tool==='arrow'){
+      ctx.beginPath();ctx.moveTo(start.x,start.y);ctx.lineTo(end.x,end.y);
+      if(this.tool==='arrow'){const head=Math.max(14,this.style.width*4),angle=Math.atan2(end.y-start.y,end.x-start.x);ctx.moveTo(end.x-head*Math.cos(angle-.5),end.y-head*Math.sin(angle-.5));ctx.lineTo(end.x,end.y);ctx.lineTo(end.x-head*Math.cos(angle+.5),end.y-head*Math.sin(angle+.5));}
+      ctx.stroke();
+    }else if(this.tool==='ellipse'){ctx.beginPath();ctx.ellipse(r.x+r.width/2,r.y+r.height/2,Math.max(.5,r.width/2),Math.max(.5,r.height/2),0,0,Math.PI*2);ctx.stroke();}
+    else if(this.tool==='highlight'){ctx.globalAlpha=.3;ctx.fillRect(r.x,r.y,r.width,r.height);}
+    else if(this.tool==='rectangle')ctx.strokeRect(r.x,r.y,r.width,r.height);
+    else ctx.fillRect(r.x,r.y,r.width,r.height);
+    ctx.restore();
+  }
+  private clearPreview(){
+    if(this.previewFrame){cancelAnimationFrame(this.previewFrame);this.previewFrame=0;}
+    const ctx=this.canvas.contextTop;if(ctx)this.canvas.clearContext(ctx);
   }
   private up(){
+    if(this.previewFrame){cancelAnimationFrame(this.previewFrame);this.previewFrame=0;}
     if(!this.start){if(this.tool==='select'||this.tool==='pen')this.commit();return;}
-    this.start=null;this.pointer=null;
+    const start=this.start,end=this.gestureEnd??start;
+    this.start=null;this.pointer=null;this.gestureEnd=null;this.clearPreview();
     if(this.tool==='crop'){const r=this.cropDraft;this.cropDraft=null;this.preview(null);if(r&&r.width>=2&&r.height>=2)this.applyCrop(r);else this.changed();return;}
-    if(!this.draft){this.changed();return;}
-    let o=this.draft;this.draft=null;
-    const r=o.getBoundingRect();
-    if(r.width<2||r.height<2){this.canvas.remove(o);this.canvas.requestRenderAll();this.changed();return;}
-    if(this.tool==='mosaic'||this.tool==='blur'){
-      this.canvas.remove(o);
-      const region={x:Math.floor(r.left),y:Math.floor(r.top),width:Math.max(1,Math.round(r.width)),height:Math.max(1,Math.round(r.height))};
-      const raw=this.canvas.toCanvasElement(1,{left:region.x,top:region.y,width:region.width,height:region.height});
-      const pixels=document.createElement('canvas');pixels.width=region.width;pixels.height=region.height;const ctx=pixels.getContext('2d')!;
-      if(this.tool==='mosaic'){
-        const small=document.createElement('canvas');small.width=Math.max(1,Math.ceil(raw.width/16));small.height=Math.max(1,Math.ceil(raw.height/16));small.getContext('2d')!.drawImage(raw,0,0,small.width,small.height);
-        ctx.imageSmoothingEnabled=false;ctx.drawImage(small,0,0,pixels.width,pixels.height);
-      }else{
-        // Fill the edges before blurring so the mask stays fully opaque.
-        ctx.drawImage(raw,0,0);ctx.filter='blur(12px)';ctx.drawImage(raw,-16,-16,raw.width+32,raw.height+32);
-      }
-      o=this.decorate(new FabricImage(pixels,{left:region.x,top:region.y,originX:'left',originY:'top'}),this.tool);this.canvas.add(o);
+    if(!shapeTools.has(this.tool)){this.changed();return;}
+    if(Math.hypot(end.x-start.x,end.y-start.y)<2){this.changed();return;}
+    this.commitShape(start,end);
+  }
+  private commitShape(start:{x:number;y:number},end:{x:number;y:number}){
+    const r=box(start,end);
+    if(!['line','arrow'].includes(this.tool)&&(r.width<2||r.height<2)){this.changed();return;}
+    const options={originX:'left' as const,originY:'top' as const,fill:'transparent',stroke:this.style.color,strokeWidth:this.style.width,selectable:false,evented:false};
+    let o:FabricObject;
+    if(this.tool==='line')o=new Line([start.x,start.y,end.x,end.y],options);
+    else if(this.tool==='arrow'){
+      const angle=Math.atan2(end.y-start.y,end.x-start.x),head=Math.max(14,this.style.width*4);
+      o=new Path(`M ${start.x} ${start.y} L ${end.x} ${end.y} M ${end.x-head*Math.cos(angle-.5)} ${end.y-head*Math.sin(angle-.5)} L ${end.x} ${end.y} L ${end.x-head*Math.cos(angle+.5)} ${end.y-head*Math.sin(angle+.5)}`,{...options,strokeLineCap:'round',strokeLineJoin:'round'});
+    }else if(this.tool==='ellipse')o=new Ellipse({...options,left:r.x,top:r.y,rx:r.width/2,ry:r.height/2});
+    else if(this.tool==='mosaic'||this.tool==='blur')o=new FabricImage(this.pixelEffect(r,this.tool),{left:r.x,top:r.y,originX:'left',originY:'top'});
+    else if(this.tool==='highlight')o=new Rect({...options,left:r.x,top:r.y,width:r.width,height:r.height,fill:this.style.color,strokeWidth:0,opacity:.3});
+    else if(this.tool==='redact')o=new Rect({...options,left:r.x,top:r.y,width:r.width,height:r.height,fill:'#171717',strokeWidth:0});
+    else o=new Rect({...options,left:r.x,top:r.y,width:r.width,height:r.height});
+    this.decorate(o,this.tool);const bounds=o.getBoundingRect();
+    if(bounds.width<2||bounds.height<2){o.dispose();this.changed();return;}
+    this.canvas.add(o);o.setCoords();this.commit();this.canvas.requestRenderAll();
+  }
+  private pixelEffect(region:CaptureRect,tool:'mosaic'|'blur'){
+    const raw=this.compose(region),pixels=document.createElement('canvas');pixels.width=region.width;pixels.height=region.height;const ctx=pixels.getContext('2d')!;
+    if(tool==='mosaic'){
+      const small=document.createElement('canvas');small.width=Math.max(1,Math.ceil(raw.width/16));small.height=Math.max(1,Math.ceil(raw.height/16));
+      small.getContext('2d')!.drawImage(raw,0,0,small.width,small.height);ctx.imageSmoothingEnabled=false;ctx.drawImage(small,0,0,pixels.width,pixels.height);
+    }else{
+      // Fill the edges before blurring so the mask stays fully opaque.
+      ctx.drawImage(raw,0,0);ctx.filter='blur(12px)';ctx.drawImage(raw,-16,-16,raw.width+32,raw.height+32);
     }
-    o.setCoords();this.commit();this.canvas.requestRenderAll();
+    return pixels;
   }
   applyCrop(r: CaptureRect,save=true){
     if(r.width<2||r.height<2)return;
@@ -229,10 +268,10 @@ export class AnnotationEditor {
     while(this.history.length>40||(this.history.length>1&&this.history.reduce((n,s)=>n+s.length,0)>16_000_000))this.history.shift();
     this.cursor=this.history.length-1;
   }
-  private commit(){if(this.restoring||this.disposed)return;this.save();this.changed();}
+  private commit(){if(this.restoring||this.disposed)return;this.flat=null;this.save();this.changed();}
   async restore(delta:number){
     const next=this.cursor+delta;if(this.restoring||next<0||next>=this.history.length)return;
-    this.restoring=true;this.invalidate();
+    this.flat=null;this.restoring=true;this.invalidate();
     try{
       const snap=JSON.parse(this.history[next]) as Snapshot;
       const objects=await util.enlivenObjects<FabricObject>(snap.objects);
@@ -240,12 +279,23 @@ export class AnnotationEditor {
       this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(this.decorate(o,(o as Mark).lassoTool)));this.crop=snap.crop;this.number=snap.nextNumber;this.cursor=next;this.setTool(this.tool);this.canvas.requestRenderAll();
     }finally{this.restoring=false;if(!this.disposed)this.changed();}
   }
+  private compose(crop=this.crop){
+    const canvas=document.createElement('canvas');canvas.width=Math.max(1,crop.width);canvas.height=Math.max(1,crop.height);
+    const ctx=canvas.getContext('2d',{willReadFrequently:true})!;
+    ctx.drawImage(this.source,crop.x,crop.y,crop.width,crop.height,0,0,crop.width,crop.height);
+    if(this.canvas.getObjects().length)ctx.drawImage(this.canvas.toCanvasElement(1,{left:crop.x,top:crop.y,width:crop.width,height:crop.height}),0,0);
+    return canvas;
+  }
+  private composed(){return this.flat??=this.compose();}
+  bitmap(){
+    if(this.restoring||this.start||this.isEditingText)throw new Error('请先完成当前编辑。');
+    const flat=this.composed();return new Uint8Array(flat.getContext('2d')!.getImageData(0,0,flat.width,flat.height).data);
+  }
   async pixels(){
     if(this.restoring||this.start||this.isEditingText)throw new Error('请先完成当前编辑。');
-    const {x,y,width,height}=this.crop;
-    const flat=this.canvas.toCanvasElement(1,{left:x,top:y,width,height});
+    const flat=this.composed();
     const blob=await new Promise<Blob>((resolve,reject)=>flat.toBlob(b=>b?resolve(b):reject(Error('图片合成失败')),'image/png'));
     return new Uint8Array(await blob.arrayBuffer());
   }
-  dispose(){this.disposed=true;this.objectClipboard=null;void this.canvas.dispose().then(()=>{this.source.width=this.source.height=0;});this.history=[];}
+  dispose(){this.disposed=true;this.flat=null;this.clearPreview();this.objectClipboard=null;this.source.remove();void this.canvas.dispose().then(()=>{this.source.width=this.source.height=0;});this.history=[];}
 }

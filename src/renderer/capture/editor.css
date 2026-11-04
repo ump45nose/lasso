@@ -11,6 +11,7 @@
 .ed-inline .ed-stage { position: absolute; }
 .ed-window .ed-stage { position: relative; flex-shrink: 0; margin: auto; border-radius: 3px; box-shadow: var(--shadow-window); }
 .editor-pixels { position: relative; transform-origin: 0 0; }
+.editor-source { position: absolute; left: 0; top: 0; width: 100%; height: 100%; pointer-events: none; }
 .ed-hole { animation: ed-ring 520ms var(--ease-out) both; }
 .ed-hole .cap-size { animation: l-rise var(--t-base) var(--ease-out) both; }
 /* The shade clips the dim to the image, so neither the desk nor the frozen screen darkens twice. */
@@ -114,7 +115,7 @@
 .ed-loupe { position: fixed; z-index: 6; width: 132px; padding: 6px; border-radius: 12px; pointer-events: none; }
 .ed-loupe.locked { pointer-events: auto; }
 .ed-loupe-pixels { position: relative; width: 120px; height: 120px; overflow: hidden; border-radius: 8px; }
-.ed-loupe img { width: 100%; height: 100%; image-rendering: pixelated; }
+.ed-loupe-pixels canvas { width: 100%; height: 100%; image-rendering: pixelated; }
 .ed-loupe i { position: absolute; width: 8px; height: 8px; left: 50%; top: 50%; transform: translate(-50%, -50%); outline: 1px solid #FFFFFF; box-shadow: 0 0 0 2px var(--clay); }
 .ed-loupe .ed-color-value { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 6px; }
 .ed-loupe b { width: 12px; height: 12px; border-radius: 3px; box-shadow: inset 0 0 0 0.5px rgba(20, 20, 19, 0.3); }

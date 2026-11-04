@@ -555,9 +555,10 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         await press('Right',['meta']);expect((await rect()).width===before.width,'Command expansion failed');
         result.keyboardBatchAndUndo=true;
         const drag=async(dx,dy,{cancel=false,alt=false}={})=>{
-          if(alt){w.webContents.sendInputEvent({type:'keyDown',keyCode:'Alt',modifiers:['alt']});await wait(100);}
           const r=await rect(),x=r.x+r.width/2,y=r.y+r.height/2;
-          await move(w,x,y);w.webContents.sendInputEvent({type:'mouseDown',x,y,button:'left',clickCount:1,modifiers:alt?['alt']:[]});await wait(80);
+          await move(w,x,y);app.focus({steal:true});w.focus();w.webContents.focus();
+          if(alt){w.webContents.sendInputEvent({type:'keyDown',keyCode:'Alt',modifiers:['alt']});await wait(80);}
+          w.webContents.sendInputEvent({type:'mouseDown',x,y,button:'left',clickCount:1,modifiers:alt?['alt']:[]});await wait(80);
           w.webContents.sendInputEvent({type:'mouseMove',x:x+dx,y:y+dy,modifiers:alt?['leftButtonDown','alt']:['leftButtonDown']});await wait(100);
           if(cancel)await press('Escape');
           w.webContents.sendInputEvent({type:'mouseUp',x:x+dx,y:y+dy,button:'left',clickCount:1,modifiers:alt?['alt']:[]});await wait(150);
@@ -619,6 +620,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       if(name==='editor-region-marks'){
         await page(w,`document.querySelector('[aria-label="贴图"]').click()`);for(let i=0;i<30&&!exports.length;i++)await wait(100);
         const first=exports[0]?.frame.annotations; if(first?.objects.length!==3)throw Error('Marked source lost objects');exports=[];
+        await wait(80); // The export flag clears after the IPC reply; a faster bitmap export can otherwise swallow the next key.
         w.webContents.sendInputEvent({type:'keyDown',keyCode:'Right',modifiers:['meta']});w.webContents.sendInputEvent({type:'keyUp',keyCode:'Right',modifiers:['meta']});await wait(150);
         await page(w,`document.querySelector('[aria-label="贴图"]').click()`);for(let i=0;i<30&&!exports.length;i++)await wait(100);
         const second=exports[0]?.frame.annotations;
@@ -656,24 +658,40 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         await page(w, `(() => { const button = document.querySelector('[aria-label="用于生图"]'); if (!button || button.disabled) throw Error('Editor generation entry is unavailable'); button.click(); })()`);
         for (let pass = 0; pass < 40 && !exports.length; pass++) await wait(100);
         if (exports.length !== 1 || exports[0].action !== 'media' || exports[0].format !== 'png') throw Error('Local-file editor did not emit exactly one fixture media output');
-        const output = exports[0].frame, png = Buffer.from(output.png);
-        if (png.length < 24 || png.readUInt32BE(16) !== output.crop.width || png.readUInt32BE(20) !== output.crop.height) throw Error('Editor fixture media output did not contain its flattened crop');
-        const pixels = nativeImage.createFromBuffer(png).toBitmap(), pixel = (80 * output.crop.width + 100) * 4;
-        if (![0, 1, 2].every(channel => pixels[pixel + channel] === 23) || pixels[pixel + 3] !== 255) throw Error('Editor fixture media output lost its privacy mask');
+        const output = exports[0].frame, pixels = Buffer.from(output.pixels);
+        if (pixels.byteLength !== output.crop.width * output.crop.height * 4) throw Error('Editor fixture media output did not contain its flattened crop');
+        const pixel = (80 * output.crop.width + 100) * 4;
+        if (pixels[pixel] !== 23 || pixels[pixel + 1] !== 23 || pixels[pixel + 2] !== 23 || pixels[pixel + 3] !== 255) throw Error('Editor fixture media output lost its privacy mask');
       }
       w.destroy();
     }
     ipcMain.removeHandler('ui-shots:state'); ipcMain.removeHandler('ui-shots:export');
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
-    const pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [], status: '拖选文字 · 空格拖动贴图', topmost: true, opacity: 1, passthrough: false };
+    const pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false };
+    const pinActions = [];
     ipcMain.removeHandler('ui-shots:pin'); ipcMain.handle('ui-shots:pin', () => pin);
+    ipcMain.removeHandler('ui-shots:pin-action'); ipcMain.handle('ui-shots:pin-action', (_event, action) => { pinActions.push(action); return { error: null }; });
     const p = new BrowserWindow({ x: 120, y: 120, width: 360, height: 225, frame: false, show: true, webPreferences: { preload: path.join(fixtures, 'pin-preload.cjs'), contextIsolation: true, sandbox: true } });
     await p.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'pin' } }); p.focus(); await wait(600);
     names.push(await save(p, 'pin'));
     for (const x of [150, 170, 190]) await move(p, x, 140);
     names.push(await save(p, 'pin-hover'));
+    await page(p, `(() => {
+      if (document.querySelector('.editor-text-layer')?.classList.contains('enabled')) throw Error('Pin should default to dragging image, not selecting text');
+      document.querySelector('button[aria-label="选择文字"]')?.click();
+    })()`); await wait(250);
+    if (!await page(p, `document.querySelector('.editor-text-layer')?.classList.contains('enabled') && document.querySelector('button[aria-label="选择文字"]')?.getAttribute('aria-pressed') === 'true'`)) {
+      throw Error('Clicking text-select button did not enable text selection mode on pin');
+    }
+    names.push(await save(p, 'pin-text-select'));
+    await page(p, `document.querySelector('button[aria-label="选择文字"]')?.click()`); await wait(200);
     await page(p, `document.querySelector('button[aria-label="贴图选项"]')?.click()`); await wait(400);
-    names.push(await save(p, 'pin-options')); p.destroy();
+    names.push(await save(p, 'pin-options'));
+    p.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'w', modifiers: ['meta'] });
+    p.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'w', modifiers: ['meta'] });
+    await wait(150);
+    if (!pinActions.includes('close')) throw Error('Command+W on pin did not trigger close action');
+    ipcMain.removeHandler('ui-shots:pin-action'); p.destroy();
     return names;
   }));
   console.log(`Saved ${saved.length} shots to outputs/ui-shots:\n` + saved.map(name => `  ${name}.png`).join('\n'));

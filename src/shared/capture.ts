@@ -23,7 +23,7 @@ export interface EditorCheckpoint {
   ocrMode: OCRMode;
   enhance: boolean;
 }
-export interface CaptureFrame { id: string; revision: number; crop: CaptureRect; png: Uint8Array; annotations?: AnnotationSnapshot }
+export interface CaptureFrame { id: string; revision: number; crop: CaptureRect; png?: Uint8Array; pixels?: Uint8Array; annotations?: AnnotationSnapshot }
 export type OCRMode = 'text' | 'code';
 export interface OCRRequest extends CaptureFrame { mode: OCRMode; enhance: boolean; force?: boolean }
 export type ExportAction = 'copy' | 'save' | 'image' | 'pin' | 'media';
@@ -37,7 +37,8 @@ export interface ScrollCaptureState { status: 'running' | 'paused' | 'review'; w
 export type ScrollCaptureAction = 'pause' | 'resume' | 'finish' | 'cancel' | 'undo' | 'edit';
 export interface EditableRegion { display:CaptureDisplayBinding; sourceSize:{width:number;height:number}; initialCrop:CaptureRect; currentCrop:CaptureRect; ratio:number|null }
 export interface ScreenshotState { checkpoint?: EditorCheckpoint; editableRegion?:EditableRegion; copyIntent?:number; pointer?: { x: number; y: number }; captureKind?: ScreenshotKind; presentation?: 'inline' | 'window'; pixelScale?: { x: number; y: number }; saveFormat?: 'png' | 'jpeg'; outputStatus?: string; outputError?: string; id: string; editId: string; imageCrop?: CaptureRect; imageFrame?: string; backdropFrame?: string; placement?: CaptureRect; mode?: 'rect' | 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; status: string; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
-export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean }
+export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean; editing?: boolean; editId?: string }
+export interface PinSource { editId: string; width: number; height: number; bgra: Uint8Array; annotations: AnnotationSnapshot; pixelScale?: { x: number; y: number }; saveFormat: 'png' | 'jpeg' }
 export type PinAction = 'recognize' | 'edit' | 'image' | 'copy' | 'close' | 'hide' | 'topmost' | 'opacity' | 'zoom-in' | 'zoom-out' | 'passthrough';
 /** Pin opacity steps; the options row cycles through them. */
 export const pinOpacities = [1, 0.85, 0.65, 0.4];
@@ -46,6 +47,10 @@ export interface PinAPI {
   onState(callback: (state: PinState) => void): () => void;
   action(action: PinAction): Promise<{error: string | null}>;
   text(text: string, send: boolean, revision: number): Promise<{error: string | null}>;
+  source(): Promise<PinSource>;
+  startDrag(): void;
+  drag(): void;
+  endDrag(): void;
 }
 export function pixelRect(r: CaptureRect, width: number, height: number, pixelWidth: number, pixelHeight: number): CaptureRect {
   const x=Math.round(r.x*pixelWidth/width),y=Math.round(r.y*pixelHeight/height);

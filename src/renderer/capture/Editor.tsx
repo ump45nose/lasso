@@ -1,6 +1,6 @@
 import { RegionControls } from './RegionControls';
 import { regionPoints,resizeRegion,moveRegion } from '../../shared/region-geometry';
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, ImagePlus, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Slash, Square, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
 import type { CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
@@ -24,7 +24,38 @@ const sizes = [16, 24, 32, 40, 48, 64, 96];
 const colors=['#e24a35','#eaaa31','#3a9866','#337cc1','#9b62b8','#171717','#ffffff']; // ui-check-ignore: annotation inks are image content, not UI
 /** OCR status text maps to a dot: running, ready, needs attention, or waiting for edits to finish. */
 const ocrTone = (status: string) => status.startsWith('正在') ? 'loading' : status.startsWith('拖选') || status.startsWith('已复制') ? 'ok' : status.includes('未') ? 'warn' : 'idle';
-export function Editor({state}:{state:ScreenshotState}){
+type Sample = NonNullable<ReturnType<AnnotationEditor['sample']>> & { left: number; top: number };
+interface PickerHandle { move(x: number, y: number, clientX: number, clientY: number): void; leave(): void; lock(x: number, y: number, clientX: number, clientY: number): string | null }
+const placeLoupe = (clientX: number, clientY: number) => ({ left: Math.max(8, Math.min(window.innerWidth - 148, clientX + 20)), top: Math.max(8, Math.min(window.innerHeight - 232, clientY + 20)) });
+const ColorLoupe = forwardRef<PickerHandle, { read: (x: number, y: number) => ReturnType<AnnotationEditor['sample']>; busy: boolean; copy: (text: string) => Promise<void>; fail: (message: string) => void }>(function ColorLoupe({ read, busy, copy, fail }, ref) {
+  const [sample, setSample] = useState<Sample | null>(null), [locked, setLocked] = useState(false), [format, setFormat] = useState<'hex' | 'rgb'>('hex'), [copied, setCopied] = useState(false);
+  const pixels = useRef<HTMLCanvasElement>(null), frame = useRef(0), pending = useRef<{ x: number; y: number; clientX: number; clientY: number } | null>(null), readRef = useRef(read);
+  readRef.current = read;
+  useEffect(() => setCopied(false), [sample?.color, sample?.x, sample?.y, format]);
+  useEffect(() => () => cancelAnimationFrame(frame.current), []);
+  useLayoutEffect(() => {
+    const canvas = pixels.current; if (!canvas || !sample) return;
+    const ctx = canvas.getContext('2d')!; ctx.imageSmoothingEnabled = false; ctx.clearRect(0, 0, 120, 120); ctx.drawImage(sample.image, 0, 0, 120, 120);
+  }, [sample]);
+  useImperativeHandle(ref, () => ({
+    move(x, y, clientX, clientY) {
+      if (locked) return; pending.current = { x, y, clientX, clientY };
+      if (frame.current) return;
+      frame.current = requestAnimationFrame(() => {
+        frame.current = 0; const next = pending.current; if (!next) return;
+        const value = readRef.current(next.x, next.y); setSample(value ? { ...value, ...placeLoupe(next.clientX, next.clientY) } : null);
+      });
+    },
+    leave() { if (!locked) setSample(null); },
+    lock(x, y, clientX, clientY) {
+      const value = readRef.current(x, y); if (!value) return null;
+      setLocked(true); setSample({ ...value, ...placeLoupe(clientX, clientY) }); return value.color;
+    }
+  }), [locked]);
+  if (!sample) return null;
+  return <aside className={'ed-loupe' + (locked ? ' locked' : '')} style={{ left: sample.left, top: sample.top }} aria-label="像素放大镜"><div className="ed-loupe-pixels"><canvas ref={pixels} width={120} height={120} /><i /></div><span className="ed-color-value"><b style={{ background: sample.color }} /><code className={format === 'rgb' ? 'ed-rgb' : undefined}>{format === 'hex' ? sample.color : sample.rgb.replaceAll(', ', ',')}</code></span><div className="ed-loupe-controls"><Segmented label="取色格式" value={format} onChange={setFormat} options={[['hex', 'HEX'], ['rgb', 'RGB']]} /><button className="ed-tool" aria-label="复制颜色" disabled={busy} onClick={() => void copy(format === 'hex' ? sample.color : sample.rgb).then(() => setCopied(true)).catch(e => fail((e as Error).message))}><Copy /></button></div><small role="status">{copied ? `已复制 ${format.toUpperCase()}` : `${sample.x}, ${sample.y} · ${locked ? '点击画面重选' : '点击固定取色'}`}</small></aside>;
+});
+export function Editor({state, source:given}:{state:ScreenshotState; source?:HTMLCanvasElement}){
   const canvasRef=useRef<HTMLCanvasElement>(null),viewportRef=useRef<HTMLDivElement>(null),textRef=useRef<HTMLDivElement>(null),engine=useRef<AnnotationEditor|null>(null);
   const [ready,setReady]=useState(false),[tool,setTool]=useState<Tool>('text-select'),[style,setStyle]=useState<Style>({color:colors[0],width:4,fontSize:32}),[revision,setRevision]=useState(0),[zoom,setZoom]=useState(1),[crop,setCrop]=useState<CaptureRect|null>(null),[preview,setPreview]=useState<CaptureRect|null>(null);
   const [lines,setLines]=useState<OCRLine[]>([]),[ocrStatus,setOCRStatus]=useState('正在识别文字…'),[selectedText,setSelectedText]=useState(''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[retry,setRetry]=useState(0),[format,setFormat]=useState<'png'|'jpeg'>(state.saveFormat??'png');
@@ -39,8 +70,7 @@ export function Editor({state}:{state:ScreenshotState}){
   const ocrCache=useRef<{content:string;mode:OCRMode;enhance:boolean;lines:OCRLine[]}|null>(null),forceOCR=useRef(false);
   const version=useRef(state.checkpoint?.revision ?? 0),mutating=useRef(false),exporting=useRef(false),selection=useRef(''),alive=useRef(true);
   const resize=useRef<{x:number;y:number;handle:string;original:CaptureRect;current:CaptureRect}|null>(null);
-  const [sample,setSample]=useState<(NonNullable<ReturnType<AnnotationEditor['sample']>>&{left:number;top:number})|null>(null);
-  const [sampleLocked,setSampleLocked]=useState(false),[colorFormat,setColorFormat]=useState<'hex'|'rgb'>('hex'),[colorCopied,setColorCopied]=useState(false);
+  const picker=useRef<PickerHandle>(null);
   const clearSelection=()=>{selection.current='';setSelectedText('');const s=window.getSelection();if(s?.anchorNode&&textRef.current?.contains(s.anchorNode))s.removeAllRanges();};
   const clearText=()=>{clearSelection();setLines([]);};
   const notifyOCR=()=>window.screenshot.invalidateOCR({id:state.editId,revision:version.current});
@@ -50,23 +80,28 @@ export function Editor({state}:{state:ScreenshotState}){
   useEffect(()=>{
     alive.current=true;let editor:AnnotationEditor|null=null;let canceled=false;
     void(async()=>{
-      if(!state.imageFrame)throw Error('截图图片已失效');
-      const input=await captureCanvas(state,state.imageFrame);
+      let source:HTMLCanvasElement,inputWidth=0,cropWidth=0;
+      if(given){source=given;inputWidth=given.width;cropWidth=given.width;}
+      else{
+        if(!state.imageFrame)throw Error('截图图片已失效');
+        const input=await captureCanvas(state,state.imageFrame);
+        if(canceled||!canvasRef.current)return;
+        const r=state.imageCrop??pixelRect(state.selection!,state.width,state.height,input.width,input.height);
+        const full=Boolean(region)||r.x===0&&r.y===0&&r.width===input.width&&r.height===input.height;
+        // The pixel cache also backs same-frame re-selection; the editor owns a separate canvas.
+        source=document.createElement('canvas');
+        source.width=full?input.width:r.width;source.height=full?input.height:r.height;
+        if(full)source.getContext('2d')!.drawImage(input,0,0);
+        else source.getContext('2d')!.drawImage(input,r.x,r.y,r.width,r.height,0,0,r.width,r.height);
+        if(state.backdropFrame)await captureCanvas(state,state.backdropFrame);
+        inputWidth=input.width;cropWidth=r.width;
+      }
       if(canceled||!canvasRef.current)return;
-      const r=state.imageCrop??pixelRect(state.selection!,state.width,state.height,input.width,input.height);
-      const full=Boolean(region)||r.x===0&&r.y===0&&r.width===input.width&&r.height===input.height;
-      // The pixel cache also backs same-frame re-selection; the editor owns a separate canvas.
-      const source=document.createElement('canvas');
-      source.width=full?input.width:r.width;source.height=full?input.height:r.height;
-      if(full)source.getContext('2d')!.drawImage(input,0,0);
-      else source.getContext('2d')!.drawImage(input,r.x,r.y,r.width,r.height,0,0,r.width,r.height);
-      if(state.backdropFrame)await captureCanvas(state,state.backdropFrame);
-      if(canceled)return;
       editor=new AnnotationEditor(canvasRef.current,source,changed,invalidate,setPreview,region?.initialCrop);engine.current=editor;
       if(state.checkpoint)await editor.restoreCheckpoint(state.checkpoint);
       else if(state.annotations)await editor.load(state.annotations);
       if(canceled)return;
-      const area=viewportRef.current!;setZoom(region?region.display.bounds.width/input.width:place?place.width/r.width:Math.min(1,Math.max(.05,Math.min((area.clientWidth-120)/r.width,(area.clientHeight-200)/r.height))));
+      const area=viewportRef.current!;setZoom(region?region.display.bounds.width/inputWidth:place?place.width/cropWidth:Math.min(1,Math.max(.05,Math.min((area.clientWidth-120)/source.width,(area.clientHeight-200)/source.height))));
       if(state.checkpoint){
         const saved=state.checkpoint;setZoom(saved.zoom);setFormat(saved.format);setOCRMode(saved.ocrMode);setEnhance(saved.enhance);setStyle({...saved.style});
         requestAnimationFrame(()=>{if(!canceled&&viewportRef.current){viewportRef.current.scrollLeft=saved.scrollLeft;viewportRef.current.scrollTop=saved.scrollTop;}});
@@ -107,25 +142,25 @@ export function Editor({state}:{state:ScreenshotState}){
     const update=()=>{const value=selectedOCRText(textRef.current);selection.current=value;setSelectedText(value);};
     document.addEventListener('selectionchange',update);return()=>document.removeEventListener('selectionchange',update);
   },[]);
-  const choose=(next:Tool)=>{if(exporting.current||!ready||(mutating.current&&!engine.current?.isEditingText))return;engine.current?.setTool(next);setTool(next);setSample(null);setSampleLocked(false);clearSelection();};
+  const choose=(next:Tool)=>{if(exporting.current||!ready||(mutating.current&&!engine.current?.isEditingText))return;engine.current?.setTool(next);setTool(next);clearSelection();if(next==='picker')requestAnimationFrame(()=>engine.current?.prepareSample());};
   const changeOCR=(mode:OCRMode,small:boolean,force=false)=>{if(engine.current?.isEditingText)(engine.current.canvas.getActiveObject() as import('fabric').IText).exitEditing();invalidate();mutating.current=false;forceOCR.current=force;setOCRMode(mode);setEnhance(small);setRevision(version.current);if(force)setRetry(n=>n+1);};
   const changeStyle=(next:Style)=>{setStyle(next);engine.current?.setStyle(next);};
-  async function frame(includeAnnotations=false):Promise<CaptureFrame>{
+  async function frame(includeAnnotations=false,encoded=false):Promise<CaptureFrame>{
     const editor=engine.current;if(!editor)throw Error('截图尚未加载');
     if(editor.isEditingText){(editor.canvas.getActiveObject() as import('fabric').IText).exitEditing();}
     if(mutating.current)throw Error('请先完成当前编辑。');
-    const current=version.current,png=await editor.pixels();if(current!==version.current)throw Error('图片已变化，请重试。');
-    return {id:state.editId,revision:current,crop:{...editor.crop},png,...(includeAnnotations?{annotations:editor.snapshot(Boolean(region))}:{})};
+    const current=version.current;
+    const image=encoded?{png:await editor.pixels()}:{pixels:editor.bitmap()};
+    if(current!==version.current)throw Error('图片已变化，请重试。');
+    return {id:state.editId,revision:current,crop:{...editor.crop},...image,...(includeAnnotations?{annotations:editor.snapshot(Boolean(region))}:{})};
   }
   async function output(action:ExportAction){
     if(exporting.current)return;exporting.current=true;setBusy(true);setError('');
-    try{const result=await window.screenshot.export(await frame(action==='pin'),action,format);if(result.error)setError(result.error);}
+    try{const result=await window.screenshot.export(await frame(action==='pin',action==='copy'),action,format);if(result.error)setError(result.error);}
     catch(e){setError((e as Error).message);}finally{exporting.current=false;if(alive.current)setBusy(false);}
   }
   useEffect(()=>{if(ready&&state.copyIntent&&state.copyIntent!==lastCopy.current){lastCopy.current=state.copyIntent;void output('copy');}},[ready,state.copyIntent]);
   async function copyText(){if(!selection.current||mutating.current)return;try{await window.screenshot.copyText({id:state.editId,revision:version.current,text:selection.current});setOCRStatus('已复制选中文字');}catch(e){setError((e as Error).message);}}
-  async function copyColor(){if(!sample||mutating.current||exporting.current)return;try{await window.screenshot.copyText({id:state.editId,revision:version.current,text:colorFormat==='hex'?sample.color:sample.rgb});if(alive.current)setColorCopied(true);}catch(e){setError((e as Error).message);}}
-  useEffect(()=>setColorCopied(false),[sample,colorFormat]);
   async function sendText(){if(!selection.current||mutating.current||exporting.current)return;exporting.current=true;setBusy(true);try{const result=await window.screenshot.sendText({id:state.editId,revision:version.current,text:selection.current});if(result.error)setError(result.error);}catch(e){setError((e as Error).message);}finally{exporting.current=false;if(alive.current)setBusy(false);}}
   useEffect(()=>{
     let composing=false;
@@ -203,7 +238,7 @@ export function Editor({state}:{state:ScreenshotState}){
       :<header className="ed-drag"><strong>图片编辑</strong><span className="mono">{crop?`${crop.width} × ${crop.height}`:'正在加载…'}</span></header>}
     <div className="ed-viewport" ref={viewportRef} inert={busy} onPointerDown={closeMenus}
       >
-      <div className="editor-stage ed-stage" style={{...(inline?{left:region?0:sel.x,top:region?0:sel.y}:{}),width:editor?editor.source.width*zoom:0,height:editor?editor.source.height*zoom:0}} onPointerMove={e=>{if(tool!=='picker'||busy||!editor||sampleLocked)return;const r=e.currentTarget.getBoundingClientRect(),value=editor.sample((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom);setSample(value?{...value,left:Math.max(8,Math.min(window.innerWidth-148,e.clientX+20)),top:Math.max(8,Math.min(window.innerHeight-232,e.clientY+20))}:null);}} onPointerLeave={()=>{if(!sampleLocked)setSample(null);}} onClick={e=>{if(tool!=='picker'||busy||!editor)return;const r=e.currentTarget.getBoundingClientRect(),value=editor.sample((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom);if(value){setSample({...value,left:Math.max(8,Math.min(window.innerWidth-148,e.clientX+20)),top:Math.max(8,Math.min(window.innerHeight-232,e.clientY+20))});setSampleLocked(true);changeStyle({...style,color:value.color});}}}>
+      <div className="editor-stage ed-stage" style={{...(inline?{left:region?0:sel.x,top:region?0:sel.y}:{}),width:editor?editor.source.width*zoom:0,height:editor?editor.source.height*zoom:0}} onPointerMove={e=>{if(tool!=='picker'||busy)return;const r=e.currentTarget.getBoundingClientRect();picker.current?.move((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom,e.clientX,e.clientY);}} onPointerLeave={()=>picker.current?.leave()} onClick={e=>{if(tool!=='picker'||busy)return;const r=e.currentTarget.getBoundingClientRect();const color=picker.current?.lock((e.clientX-r.left)/zoom,(e.clientY-r.top)/zoom,e.clientX,e.clientY);if(color)changeStyle({...style,color});}}>
         <div className="editor-pixels" style={{transform:`scale(${zoom},${region?region.display.bounds.height/region.sourceSize.height:zoom})`,...(region&&activeCrop?{clipPath:`inset(${activeCrop.y}px ${region.sourceSize.width-activeCrop.x-activeCrop.width}px ${region.sourceSize.height-activeCrop.y-activeCrop.height}px ${activeCrop.x}px)`}:{}),width:editor?.source.width,height:editor?.source.height}}>
           <canvas ref={canvasRef} aria-label="标注画布"/>
           <div ref={textRef} className={'editor-text-layer '+(tool==='text-select'?'enabled':'')} aria-label="识别文字"
@@ -251,12 +286,12 @@ export function Editor({state}:{state:ScreenshotState}){
           <button className="ed-tool" data-tip="用于生图 · 使用处理后的图片" aria-label="用于生图" disabled={!ready||busy} onClick={()=>void output('media')}><ImagePlus/></button>
           <button className="ed-text" disabled={!ready||busy} onClick={()=>void output('image')}><Send/>图片预设</button>
           <button className="ed-primary" disabled={!ready||busy} onClick={()=>void output('copy')}><Copy/>复制</button>
-          <button className="ed-tool" data-tip="关闭 Esc" aria-label="关闭截图编辑器" disabled={busy} onClick={()=>void window.screenshot.action('cancel')}><X/></button>
+          <button className="ed-tool" data-tip={state.origin==='pin'?'返回贴图 Esc':'关闭 Esc'} aria-label={state.origin==='pin'?'返回贴图':'关闭截图编辑器'} disabled={busy} onClick={()=>void window.screenshot.action('cancel')}><X/></button>
         </div>
       </div>
     </motion.div>
     {!inline&&<div className="ed-zoom"><button aria-label="缩小" onClick={()=>setZoom(z=>Math.max(.05,+(z-.1).toFixed(2)))}><Minus/></button><span className="mono">{Math.round(zoom*100)}%</span><button aria-label="放大" onClick={()=>setZoom(z=>Math.min(3,+(z+.1).toFixed(2)))}><Plus/></button></div>}
-    {tool==='picker'&&sample&&<aside className={'ed-loupe'+(sampleLocked?' locked':'')} style={{left:sample.left,top:sample.top}} aria-label="像素放大镜"><div className="ed-loupe-pixels"><img src={sample.image} alt="放大的原始像素"/><i/></div><span className="ed-color-value"><b style={{background:sample.color}}/><code className={colorFormat==='rgb'?'ed-rgb':undefined}>{colorFormat==='hex'?sample.color:sample.rgb.replaceAll(', ', ',')}</code></span><div className="ed-loupe-controls"><Segmented label="取色格式" value={colorFormat} onChange={setColorFormat} options={ [['hex','HEX'],['rgb','RGB']] }/><button className="ed-tool" aria-label="复制颜色" disabled={busy} onClick={()=>void copyColor()}><Copy/></button></div><small role="status">{colorCopied?`已复制 ${colorFormat.toUpperCase()}`:`${sample.x}, ${sample.y} · ${sampleLocked?'点击画面重选':'点击固定取色'}`}</small></aside>}
+    {tool==='picker'&&<ColorLoupe ref={picker} read={(x,y)=>engine.current?.sample(x,y)??null} busy={busy} copy={async text=>{await window.screenshot.copyText({id:state.editId,revision:version.current,text});}} fail={setError}/>}
     <AnimatePresence>{(error||state.outputError||state.outputStatus)&&<motion.div className={'ed-toast'+(!error&&!state.outputError?' ed-toast-success':'')} role={error||state.outputError?'alert':'status'} initial={{opacity:0,y:-6}} animate={{opacity:1,y:0}} exit={{opacity:0,transition:{duration:.12}}} transition={spring}>{[error,state.outputStatus,state.outputError].filter(Boolean).join('；')}{error&&!ready&&<button className="ed-text" onClick={()=>void window.screenshot.action('retry')}>重新加载图片</button>}{error&&<button aria-label="关闭提示" onClick={()=>setError('')}><X/></button>}</motion.div>}</AnimatePresence>
   </section>;
 }

@@ -1,9 +1,9 @@
 import { RegionStore } from './region-store';
 import { regionPixels,regionPoints,validPixelRegion } from '../../shared/region-geometry';
 import { validateRegionPreset,type RegionPreset,type CustomCaptureRequest } from '../../shared/capture-regions';
-import { encodeScreenshot, flattenBackground, saveAutomaticScreenshot, screenshotName } from './output';
+import { assertPng, copyImage, copyPng, decodeFrameImage, encodeScreenshot, flattenBackground, saveAutomaticScreenshot, screenshotName } from './output';
 import type { ScreenshotSettings } from '../../shared/screenshot-settings';
-import { app, BrowserWindow, clipboard, ClipboardItem, dialog, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
@@ -121,7 +121,7 @@ export class CaptureManager {
     this.native=loadNativeCapture(event=>this.nativeEvent(event));
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
-    this.pins=new PinManager((doc,id)=>this.openImage(doc.source,'pin',doc,id),receive,receiveText,after,changed,()=>this.settings().languages);
+    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,languages:()=>this.settings().languages,preferences:()=>this.settings(),canEdit:()=>!this.active});
     const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>Boolean(this.cachedWindow&&e.sender===this.cachedWindow.webContents&&e.senderFrame===this.cachedWindow.webContents.mainFrame);
     const assert=(e:IpcMainEvent|IpcMainInvokeEvent)=>{if(!owns(e))throw new Error('截图操作只允许截图窗口调用');};
     ipcMain.handle('screenshot:checkpoint',(e,editId:string,checkpoint:EditorCheckpoint|null)=>{assert(e);if(this.state?.editId===editId)this.checkpointReply?.(checkpoint);});
@@ -256,7 +256,7 @@ export class CaptureManager {
       throw error;
     }finally{this.waking=false;this.updateIdle();}
   }
-  closeFocused(){if(this.native.snapshot().focused){this.cancel();return true;}if(this.win&&BrowserWindow.getFocusedWindow()===this.win){this.win.close();return true;}return false;}
+  closeFocused(){if(this.native.snapshot().focused){this.cancel();return true;}if(this.pins.closeFocused())return true;if(this.win&&BrowserWindow.getFocusedWindow()===this.win){this.win.close();return true;}return false;}
   supportedLanguages(): string[] { return (this.vision??=require(join(__dirname,'native/capture-vision.node')) as VisionOCR).supportedLanguages(); }
   private configureNativeAppearance(){const settings=this.appearance?.();if(!settings)return;const key=JSON.stringify({fonts:settings.fonts,importedFonts:settings.importedFonts});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings);}}
   private assertCaptureDisplay(){if(!this.captureDisplay||!screen.getAllDisplays().some(display=>sameCaptureDisplay(this.captureDisplay!,bindDisplay(display))))throw new CaptureReselectRequiredError();}
@@ -588,7 +588,7 @@ export class CaptureManager {
   private async automaticResult(s:ScreenshotState,image:NativeImage,preferences:ScreenshotSettings,actions:{show:boolean;copy:boolean;save:boolean},pixelScale:{x:number;y:number}|undefined,editId:string){
     if(this.state!==s)return;
     const success:string[]=[],errors:string[]=[];
-    if(actions.copy){try{await clipboard.write([new ClipboardItem({'image/png':new Blob([new Uint8Array(image.toPNG())],{type:'image/png'})})]);success.push('已复制');}catch(error){errors.push('复制失败：'+(error as Error).message);}}
+    if(actions.copy){try{await copyImage(image);success.push('已复制');}catch(error){errors.push('复制失败：'+(error as Error).message);}}
     if(actions.save){try{const bytes=encodeScreenshot(image,preferences,preferences.format,pixelScale);const path=await saveAutomaticScreenshot(bytes,preferences.directory,preferences.format);success.push('已保存到 '+path);}catch(error){errors.push('保存失败：'+(error as Error).message);}}
     if(this.state!==s||s.editId!==editId||s.phase!=='result'){if(errors.length)this.notice([...success,...errors].join('；'));return;}
     s.outputStatus=success.join('；');s.outputError=errors.join('；');
@@ -647,30 +647,32 @@ export class CaptureManager {
     if(!Number.isSafeInteger(revision)||revision<0||revision<this.editRevision)throw Error('图片已变化，请重试');
   }
   private acceptVersion(id:string,revision:number){this.assertVersion(id,revision);this.editRevision=revision;}
-  private frameImage(frame:CaptureFrame){
+  private assertCrop(frame:CaptureFrame){
     this.assertVersion(frame?.id,frame?.revision);
     const r=frame.crop,s=this.state!,base=s.editableRegion?.sourceSize??pixelRect(s.selection!,s.width,s.height,s.pixelWidth,s.pixelHeight);
     if(!r||![r.x,r.y,r.width,r.height].every(Number.isSafeInteger)||r.x<0||r.y<0||r.width<(s.editableRegion?2:1)||r.height<(s.editableRegion?2:1)||r.x+r.width>base.width||r.y+r.height>base.height)throw Error('无效的裁剪范围');
-    if(!(frame.png instanceof Uint8Array)||frame.png.byteLength<24||frame.png.byteLength>64*1024*1024)throw Error('无效的合成图片');
-    const png=Buffer.from(frame.png);
-    if(!png.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))||png.readUInt32BE(16)!==r.width||png.readUInt32BE(20)!==r.height)throw Error('合成图片尺寸与裁剪范围不符');
-    const image=nativeImage.createFromBuffer(png),size=image.getSize();
-    if(image.isEmpty()||size.width!==r.width||size.height!==r.height)throw Error('图片合成失败');
+    return r;
+  }
+  private frameImage(frame:CaptureFrame){
+    this.assertCrop(frame);
+    const image=decodeFrameImage(frame);
     this.acceptVersion(frame.id,frame.revision);
     return image;
   }
   private recognize(frame:OCRRequest):Promise<OCRResult>{
-    if(!frame||!['text','code'].includes(frame.mode)||typeof frame.enhance!=='boolean'||(frame.force!==undefined&&typeof frame.force!=='boolean'))throw Error('无效的识别选项');
-    const image=this.frameImage(frame);
-    return this.ocr.recognize({id:frame.id,revision:frame.revision,png:image.toPNG(),mode:frame.mode,enhance:frame.enhance,force:frame.force,languages:this.settings().languages});
+    if(!frame||!['text','code'].includes(frame.mode)||typeof frame.enhance!=='boolean'||(frame.force!==undefined&&typeof frame.force!=='boolean')||!(frame.png instanceof Uint8Array))throw Error('无效的识别选项');
+    this.frameImage(frame);
+    return this.ocr.recognize({id:frame.id,revision:frame.revision,png:Buffer.from(frame.png),mode:frame.mode,enhance:frame.enhance,force:frame.force,languages:this.settings().languages});
   }
   private async exportFrame(frame:CaptureFrame,action:ExportAction,format:'png'|'jpeg'){
     if(this.exporting)throw Error('正在输出图片');
     if(!['copy','save','image','pin','media'].includes(action)||!['png','jpeg'].includes(format))throw Error('不支持的输出操作');
+    // A copied PNG is already encoded by the editor. Other actions need the bitmap.
+    if(action==='copy'&&frame.png instanceof Uint8Array){const r=this.assertCrop(frame),png=assertPng(frame.png,r.width,r.height);this.acceptVersion(frame.id,frame.revision);this.exporting=true;try{await copyPng(png);if(this.state?.editId===frame.id)this.cancel();}finally{this.exporting=false;}return;}
     const image=this.frameImage(frame),id=frame.id;this.exporting=true;
+    let pinnedId:string|undefined;
     try{
-      // All destinations use the same flattened pixels; no raw-image fallback.
-      if(action==='copy'){await clipboard.write([new ClipboardItem({'image/png':new Blob([new Uint8Array(image.toPNG())],{type:'image/png'})})]);}
+      if(action==='copy')await copyImage(image);
       else if(action==='image')await this.receive(image);
       else if(action==='media') { if(!this.receiveMedia)throw Error('图片生成尚未接入');await this.receiveMedia(image); }
       else if(action==='pin'){
@@ -688,7 +690,7 @@ export class CaptureManager {
         }
         this.acceptVersion(id,frame.revision);
         const c=this.state?.editableRegion;
-        await this.pins.put({source,image,annotations,pixelScale:c?{x:c.sourceSize.width/c.display.bounds.width,y:c.sourceSize.height/c.display.bounds.height}:this.state?.pixelScale},this.state?.pinId);
+        pinnedId=await this.pins.put({source,image,annotations,pixelScale:c?{x:c.sourceSize.width/c.display.bounds.width,y:c.sourceSize.height/c.display.bounds.height}:this.state?.pixelScale},this.state?.pinId);
       }
       else{
         const ext=format==='jpeg'?'jpg':'png';
@@ -700,6 +702,7 @@ export class CaptureManager {
         if(source)await saveLocalImageCopy(source,filePath,bytes);else await writeFile(filePath,bytes);
       }
       if(this.state?.editId===id)this.cancel();
+      if(pinnedId)this.pins.focus(pinnedId);
     }finally{this.exporting=false;}
   }
   private async action(a:string){
