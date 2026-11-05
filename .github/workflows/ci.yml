@@ -35,17 +35,6 @@ jobs:
         run: npm run check:ui
       # No standalone test script is currently defined in package.json.
       # ui:shots needs the running macOS app and is verified separately.
-      - name: Build renderer
-        run: npx --no-install vite build --configLoader runner
-      - name: Build main, preloads and workers
-        # Mirror the JS bundles in npm run build; build-capture.mjs requires
-        # Xcode and macOS frameworks, so native compilation stays on macOS.
-        run: |
-          npx --no-install esbuild src/main/index.ts --bundle --platform=node --external:electron --external:selection-hook --format=cjs --outfile=dist/main.cjs
-          npx --no-install esbuild src/preload/index.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/preload.cjs
-          npx --no-install esbuild src/preload/action-bar.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/action-bar-preload.cjs
-          npx --no-install esbuild src/main/capture/regions-worker.ts --bundle --platform=node --format=cjs --outfile=dist/regions-worker.cjs
-          npx --no-install esbuild src/main/capture/scroll-worker.ts --bundle --platform=node --format=cjs --outfile=dist/scroll-worker.cjs
-          npx --no-install esbuild src/preload/capture.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/capture-preload.cjs
-          npx --no-install esbuild src/preload/pin.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/pin-preload.cjs
-          npx --no-install esbuild src/preload/media.ts --bundle --platform=node --external:electron --format=cjs --outfile=dist/media-preload.cjs
+      - name: Build JS
+        # Native compilation requires Xcode and macOS frameworks.
+        run: npm run build:js
