@@ -52,6 +52,14 @@
 2. **截图**：按 [截图方案第 7 节](screenshot-implementation-plan.md#7-集中验收清单) 逐项检查，补负坐标、混合缩放、热插拔和拒绝屏幕录制权限，S1 结论在新实现上重测；按 [编辑器性能与贴图](plans/editor-performance-and-pin.md) 手测拖动跟手、剪贴板、⌘W 和贴图内编辑。
 3. **常驻套件**：按 [系统工具集计划](plans/system-suite-and-nook-bridge.md) 第一、二批的验收标准检查。⌃⌥ 键若已被 Rectangle 等占用，注册失败不会提示（代码静默忽略）。
 4. **录屏、滚动截图、生图、WebDAV、历史与贴图工作区**：没有计划文档，按 AGENTS.md 在打包版手测。
+5. **2026-11-06 清理轮**（只经过类型检查和构建）：
+   - Finder 面板：现在在 Finder 查询返回后才显示，检查 ⌃⌥F 后能否取得焦点并带出当前目录和选中项。
+   - 窗口录屏：被录窗口关闭、最小化或切到其他桌面时应停止。
+   - 忽略应用：快捷键和截图候选两个范围的规则仍生效；文件名里的 `{app}` 取前台应用。
+   - ⌘W：截图编辑器、贴图、录屏面板都能关闭；录屏面板不再响应 ⌘⇧W。
+   - 界面复用：编辑器经「图片预设」出图（「用于生图」已删）；三个设置页的保存栏；标注撤销/重做；刘海岛的 25m 专注按钮。
+   - 录屏面板和托盘的实时状态、贴图工作区与悬浮工具栏。
+   - 翻译：去掉 `sourceText`/`translatedText` 两个请求字段后，仍应拿到完整译文。
 
 ### P1：补完原路径集中验收
 
@@ -72,15 +80,16 @@
 | --- | --- |
 | `index.ts` | 启动装配、小窗/托盘/菜单、权限与远程页安全、设置与预设持久化、预设路由（网页/CLI/API/生图）、主窗口 IPC；不持有任务状态。 |
 | `action-shortcuts.ts`、`recording-panel.ts`、`capture-library.ts` | 由 `4566db7` 从 index 拆出：可配置全局快捷键；录制面板与托盘子菜单；截图历史与贴图工作区 IPC。 |
-| `ipc.ts`、`files.ts` | 本地窗口加固（`sealLocal`：禁止开新窗口和导航）、发送方主框架校验（`fromMainFrame`）与 `{ error }` 结果包装（`result`）；持久化文件统一先写 `.tmp` 再改名（`writeFileAtomic`，0600）。 |
+| `ipc.ts`、`files.ts` | 本地窗口加固（`sealLocal`：禁止开新窗口和导航）、⌘W 关闭本窗口而不走应用菜单（`closeOnCommandW`）、发送方主框架校验（`fromMainFrame`）与 `{ error }` 结果包装（`result`）；持久化文件统一先写 `.tmp` 再改名（`writeFileAtomic`，0600）。 |
 | `tasks.ts`、`task-policy.ts` | TaskManager 唯一管理任务、待命页、标签投影、网页/CLI 资源、待提交输入、回收及恢复。 |
 | `adapters/` | 网站选择器、完整填入、附件、单次发送、模型/深度选择与状态识别。网站变化在这里修。 |
 | `agents/` | Codex 共享 app-server 和独立 thread；Pi 每任务一个 RPC 进程；原生审批/交互与会话恢复。 |
 | `selection.ts`、`action-bar.ts` | selection-hook、冻结选区及来源、忽略应用、录屏的按键/点击事件；动作条、··· 菜单与快速 API 卡片。 |
+| `native-ax.ts` | `capture-ax.node` 的唯一加载点与类型：AX 命中查询、窗口列表（带 bundle id，供忽略应用过滤）、录屏用的单窗口在屏检查、前台应用，以及刘海岛的分屏、光效、Nook 桥与刘海几何。前台应用和 bundle id 都在进程内读取，不再调用 osascript。 |
 | `images.ts`、`presets.ts`、`settings.ts` | 待处理图片；预设与设置的读写、校验、迁移；受控脚本在 vm worker 中运行。 |
 | `media-service.ts`、`media-window.ts` | 生图请求、凭据、结果与版本，生图窗口；也给快速卡片提供流式调用。 |
 | `sync-webdav.ts` | 配置包导出/导入、WebDAV 推拉与冲突判定；密码另存。 |
-| `island.ts`、`island-notes.ts`、`island-finder.ts` | 刘海岛窗口：番茄钟与提醒、四边光效、Nook 通知桥、分屏和固定 ⌃⌥ 快捷键；持有 EdgeNotes 抽屉与 Finder 面板两个子模块，三个表面共用一个来源校验。贴顶靠 `enableLargerThanScreen`，原生层只补 Stationary / IgnoresCycle。 |
+| `island.ts`、`island-window.ts`、`island-notes.ts`、`island-finder.ts` | 刘海岛窗口：番茄钟与提醒、四边光效、Nook 通知桥、分屏和固定 ⌃⌥ 快捷键；持有 EdgeNotes 抽屉与 Finder 面板两个子模块，三个表面用 `createIslandWindow` 建窗并共用一个来源校验。Finder 面板打开时异步查询 Finder 当前目录与选中项，查询返回后再显示。贴顶靠 `enableLargerThanScreen`，原生层只补 Stationary / IgnoresCycle。 |
 | `capture/index.ts` | CaptureManager：截图会话、原生取图、候选（窗口/AX/边缘/颜色）、编辑窗口与闲置休眠、滚动截图、录屏取帧；持有 `pins`、`history`。取消释放图片与 worker，不处理 AI 任务。 |
 | `capture/native.ts`、`candidates.ts`、`regions-worker.ts`、`region-store.ts`、`efficiency-control.ts`、`scroll-*.ts` | 原生取图加载；候选排序；边缘、颜色与滚动拼接在 worker；记住的区域与尺寸预设；延时与重截。 |
 | `capture/editor-services.ts` | 截图编辑和贴图编辑共用的 OCR、智能识别、文字复制/发送与 OCR 失效（`3e0b60e`）。 |
@@ -90,7 +99,7 @@
 | `capture/recording.ts`、`recording-media.ts` | 录屏会话、可恢复会话与编码。 |
 | `idle-sleep.ts`、`motion.ts`、`position.ts`、`window-presence.ts`、`fonts.ts`、`app-icons.ts` | 闲置计时、显隐动效、定位、Dock 策略、字体协议、应用图标。 |
 | `native/`（仓库根） | 六个原生模块，`scripts/build-capture.mjs` 编译：ScreenCaptureKit 取图与选区层；窗口/AX、分屏、刘海几何与常驻窗口行为、光效、Nook 通知；Vision；音视频采集；Finder 服务；应用图标。 |
-| `src/renderer/`、`src/preload/` | 单一渲染入口按 `?surface=` 区分十类窗口，各有 preload 与校验来源的窄 IPC。远程网站没有 Node 或本地 preload。 |
+| `src/renderer/`、`src/preload/` | 单一渲染入口按 `?surface=` 区分十类窗口，各有 preload 与校验来源的窄 IPC；事件订阅和贴图工作区调用共用 `src/preload/bridge.ts`。远程网站没有 Node 或本地 preload。 |
 
 网页任务过了闲置阈值，且已完成、无草稿/附件/待确认、可恢复、不是临时对话，才回收；释放前用临时隐藏页核对历史与最新回答，失败保留原页。Pi 用 session 文件，Codex 用 thread 恢复原目录；恢复不重发。生成中、等待审批、草稿与未知状态均保留。退出不持久化本次任务列表。截图编辑器闲置时写入 `capture-sleep/` 后释放窗口；贴图和历史各自持久化，不套用任务回收规则。
 
