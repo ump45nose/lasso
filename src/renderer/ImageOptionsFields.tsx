@@ -74,3 +74,20 @@ function ModelChoices({ models, choose }: { models: string[]; choose(patch: Part
     {open && <div className="l-image-model-list">{models.map(model => <div className="l-field-row" key={model}><span className="mono">{model}</span><button className="l-btn small" onClick={() => { choose({ generationModel: model }); setOpen(false); }}>用于生成</button><button className="l-btn small" onClick={() => { choose({ editModel: model }); setOpen(false); }}>用于改图</button></div>)}</div>}
   </div>;
 }
+
+export function ApiTextFields({ model, onChange }: { model: string; onChange(model: string): void }) {
+  const [models, setModels] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  return <>
+    <ImageConnection onModels={setModels} />
+    <div className="l-field">
+      <label htmlFor="api-chat-model">快速对话／翻译模型</label>
+      <input id="api-chat-model" className="l-input mono" value={model} placeholder="gpt-4.1-mini" onChange={event => onChange(event.target.value)} />
+      <p className="l-field-help">划词动作条触发时将在原位展开流式卡片，支持一键替换选中文本或复制。</p>
+    </div>
+    {models.length > 0 && <div className="l-field">
+      <button className="l-text-btn" aria-expanded={open} onClick={() => setOpen(!open)}>从服务模型列表选择</button>
+      {open && <div className="l-image-model-list">{models.map(item => <div className="l-field-row" key={item}><span className="mono">{item}</span><button className="l-btn small" onClick={() => { onChange(item); setOpen(false); }}>选用此模型</button></div>)}</div>}
+    </div>}
+  </>;
+}

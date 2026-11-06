@@ -11,6 +11,9 @@ const loaders = {
   'quick-image': () => import('./media/QuickImage').then(m => ({ default: m.QuickImage })),
   screenshot: () => import('./capture/Screenshot').then(m => ({ default: m.Screenshot })),
   'action-bar': () => import('./ActionBar').then(m => ({ default: m.ActionBar })),
+  island: () => import('./island/NotchIsland').then(m => ({ default: m.NotchIsland })),
+  'edge-notes': () => import('./island/EdgeNotes').then(m => ({ default: m.EdgeNotes })),
+  'finder-panel': () => import('./island/FinderPanel').then(m => ({ default: m.FinderPanel })),
   pin: () => import('./capture/Pinned').then(m => ({ default: m.Pinned })),
   main: () => import('./App')
 };

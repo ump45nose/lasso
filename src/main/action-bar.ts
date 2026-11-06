@@ -1,13 +1,22 @@
-import { BrowserWindow, ipcMain, screen } from 'electron';
-import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
+import { BrowserWindow, clipboard, ipcMain, screen } from 'electron';
+import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
 import { join } from 'node:path';
 import { WindowMotion } from './motion';
 import { fitToWorkArea } from './position';
-import { BAR_MENU, barMenuHeight, type ActionBarLayout, type ActionBarState, type Preset, type SelectionContext, type Settings } from '../shared/contracts';
+import { composePrompt } from './presets';
+import { BAR_MENU, barMenuHeight, type ActionBarLayout, type ActionBarState, type AppPrompt, type FastApiCardState, type Preset, type SelectionContext, type Settings } from '../shared/contracts';
 
 // The window is transparent: the 40px capsule sits between two tip bands, with side room for its CSS shadow.
-// While the ··· menu is open, the band on the menu side grows to hold it.
-const BAR = 40, TIP = 36, SIDE = 16, GAP = 10, HEIGHT = TIP * 2 + BAR, VISIBLE = 4, MENU_EDGE = 6;
+// While the ··· menu or inline fast-API card is open, the band on the menu side grows to hold it.
+const BAR = 40, TIP = 36, SIDE = 16, GAP = 10, HEIGHT = TIP * 2 + BAR, VISIBLE = 4, MENU_EDGE = 6, FAST_WIDTH = 412;
+
+export interface ActionBarFastCallbacks {
+  stream(input: { model?: string; prompt: string; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
+  paste(): void;
+  pin(image: NativeImage): Promise<void>;
+  toast?(text: string, badge?: string): void;
+  appPrompts(): AppPrompt[];
+}
 
 export class ActionBar {
   readonly window: BrowserWindow;
@@ -17,10 +26,18 @@ export class ActionBar {
   private fonts: ActionBarState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
   private busy = false;
   private width = 340;
-  private bar = { x: 0, top: 0 };
+  private bar = { x: 240, top: 320 };
   private layout: ActionBarLayout = { tip: 'above', menu: 'above' };
   private menuOpen = false;
-  constructor(private run: (id: string, selection: SelectionContext) => Promise<void>, private settings: () => void) {
+  private fastCard: FastApiCardState | null = null;
+  private fastCardHeight = 0;
+  private fastAbort: AbortController | null = null;
+
+  constructor(
+    private run: (id: string, selection: SelectionContext) => Promise<void>,
+    private settings: () => void,
+    private fast?: ActionBarFastCallbacks
+  ) {
     this.window = new BrowserWindow({
       width: this.width + SIDE * 2, height: HEIGHT, frame: false, show: false, resizable: false, movable: false,
       focusable: false, skipTaskbar: true, alwaysOnTop: true, acceptFirstMouse: true,
@@ -37,8 +54,17 @@ export class ActionBar {
       if (event.sender !== this.window.webContents || event.senderFrame !== this.window.webContents.mainFrame) throw new Error('动作条来源不匹配');
     };
     ipcMain.handle('bar:state', event => { check(event); return this.snapshot(); });
-    ipcMain.handle('bar:run', async (event, id: string) => { check(event); if (this.selection && !this.busy) await this.run(id, this.selection); });
-    ipcMain.on('bar:menu', (event, open: boolean) => { check(event); this.menuOpen = open === true; this.place(); });
+    ipcMain.handle('bar:run', async (event, id: string) => {
+      check(event);
+      if (!this.selection || this.busy) return;
+      const preset = this.presets.find(p => p.id === id && p.enabled);
+      if (preset && preset.target === 'api' && preset.kind !== 'image' && this.fast) {
+        await this.startFastCard(preset, this.selection, 'auto');
+        return;
+      }
+      await this.run(id, this.selection);
+    });
+    ipcMain.on('bar:menu', (event, open: boolean) => { check(event); this.menuOpen = open === true; if (this.menuOpen) this.closeFast(); this.place(); });
     ipcMain.on('bar:settings', event => { check(event); this.hide(); this.settings(); });
     ipcMain.on('bar:hit', (event, inside: boolean) => { check(event); this.window.setIgnoreMouseEvents(!inside, { forward: true }); });
     ipcMain.on('bar:resize', (event, width: number) => {
@@ -48,39 +74,170 @@ export class ActionBar {
         if (this.selection) this.position(this.selection); else this.place();
       }
     });
+    ipcMain.on('bar:card-height', (event, height: number) => {
+      check(event);
+      if (typeof height === 'number' && Number.isFinite(height)) {
+        this.fastCardHeight = height > 20 ? Math.min(480, Math.ceil(height)) : 0;
+        this.place();
+      }
+    });
+    ipcMain.on('bar:fast-close', event => { check(event); this.closeFast(); this.publish(); this.place(); });
+    ipcMain.handle('bar:fast-retry', async (event, targetLang?: 'auto' | 'zh' | 'en') => {
+      check(event);
+      if (!this.fastCard || !this.selection) return;
+      const preset = this.presets.find(p => p.id === this.fastCard!.presetId);
+      if (preset) await this.startFastCard(preset, this.selection, targetLang || this.fastCard.targetLang);
+    });
+    ipcMain.handle('bar:fast-copy', async (event, text: string) => {
+      check(event);
+      if (typeof text === 'string' && text.trim()) {
+        clipboard.writeText(text);
+        const ms = this.fastCard?.firstTokenMs;
+        this.hide();
+        this.fast?.toast?.('已复制结果到剪贴板', ms ? `${ms}ms` : undefined);
+      }
+    });
+    ipcMain.handle('bar:fast-replace', async (event, text: string) => {
+      check(event);
+      if (typeof text === 'string' && text.trim()) {
+        const previous = await Promise.resolve(clipboard.readText());
+        await Promise.resolve(clipboard.writeText(text));
+        this.hide(true);
+        setTimeout(() => {
+          this.fast?.paste();
+          this.fast?.toast?.('已替换选中文本', '↵');
+          setTimeout(() => {
+            void Promise.resolve(clipboard.readText()).then(current => {
+              if (current === text) void Promise.resolve(clipboard.writeText(previous));
+            });
+          }, 280);
+        }, 60);
+      }
+    });
+    ipcMain.handle('bar:fast-pin', async (event, text: string) => {
+      check(event);
+      if (!this.fast || typeof text !== 'string' || !text.trim()) return;
+      const b = this.window.getBounds();
+      const cardY = this.layout.menu === 'above' ? Math.max(0, b.height - (TIP + BAR + BAR_MENU.gap) - this.fastCardHeight) : TIP + BAR + BAR_MENU.gap;
+      const rect = { x: SIDE, y: Math.max(0, cardY), width: Math.min(FAST_WIDTH, b.width - SIDE * 2), height: Math.min(this.fastCardHeight, b.height - cardY) };
+      const image = await this.window.webContents.capturePage(rect);
+      this.hide();
+      if (!image.isEmpty()) {
+        await this.fast.pin(image);
+        this.fast.toast?.('已钉为桌面贴图', 'Pin');
+      }
+    });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'action-bar' } });
   }
+
   private snapshot(): ActionBarState {
     const enabled = this.presets.filter(p => p.enabled).map(({ id, name, target, mode }) => ({ id, name, target, mode }));
-    return { presets: enabled.slice(0, VISIBLE), more: enabled.slice(VISIBLE), busy: this.busy, fonts: this.fonts };
+    return { presets: enabled.slice(0, VISIBLE), more: enabled.slice(VISIBLE), busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
   }
+
+  private publish() {
+    if (!this.window.isDestroyed()) this.window.webContents.send('bar:changed', this.snapshot());
+  }
+
   update(presets: Preset[], busy: boolean, settings: Settings) {
     this.presets = presets; this.busy = busy; this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
-    this.window.webContents.send('bar:changed', this.snapshot());
+    this.publish();
     if (!presets.some(p => p.enabled)) this.hide();
   }
-  /** Places the capsule above the selection (below when there is no room) and picks the free sides for the tip and the menu. */
+
+  private closeFast() {
+    this.fastAbort?.abort();
+    this.fastAbort = null;
+    this.fastCard = null;
+    this.fastCardHeight = 0;
+  }
+
+  /** Opens the inline streaming card directly attached to the action bar (or summons the bar near cursor for OCR/palette runs). */
+  async startFastCard(preset: Preset, selection: SelectionContext, targetLang: 'auto' | 'zh' | 'en' = 'auto') {
+    if (!this.fast) return;
+    this.closeFast();
+    this.menuOpen = false;
+    this.selection = selection;
+    const isTranslation = preset.id === 'translate' || /翻译|translate/i.test(preset.name);
+    let prompt = composePrompt(preset, selection, this.fast.appPrompts());
+    if (isTranslation && targetLang !== 'auto') {
+      prompt += targetLang === 'zh' ? '\n\n请将上述内容准确翻译为简体中文，只输出译文。' : '\n\nPlease translate the content above into natural English and output only the translation.';
+    }
+    const model = preset.model?.trim() || 'gpt-4.1-mini';
+    this.fastCard = {
+      presetId: preset.id,
+      presetName: preset.name,
+      model,
+      status: 'streaming',
+      text: '',
+      error: null,
+      firstTokenMs: null,
+      isTranslation,
+      targetLang
+    };
+    const wasVisible = this.window.isVisible();
+    if (!wasVisible) {
+      this.position(selection);
+      this.motion.show(true);
+      this.window.webContents.send('bar:enter', this.layout);
+    } else {
+      this.place();
+    }
+    this.window.setIgnoreMouseEvents(false);
+    this.publish();
+
+    const controller = new AbortController();
+    this.fastAbort = controller;
+    try {
+      const result = await this.fast.stream(
+        { model, prompt, signal: controller.signal },
+        (text, firstTokenMs) => {
+          if (this.fastAbort !== controller || !this.fastCard) return;
+          this.fastCard = { ...this.fastCard, text, firstTokenMs };
+          this.publish();
+        }
+      );
+      if (this.fastAbort !== controller || !this.fastCard) return;
+      this.fastCard = { ...this.fastCard, status: 'done', text: result.text, model: result.model, firstTokenMs: result.firstTokenMs };
+      this.publish();
+    } catch (error) {
+      if (this.fastAbort !== controller || !this.fastCard || controller.signal.aborted) return;
+      this.fastCard = { ...this.fastCard, status: 'error', error: (error as Error).message || '快速 API 调用失败' };
+      this.publish();
+    }
+  }
+
+  /** Places the capsule above the selection (below when there is no room) and picks the free sides for the tip and the menu/card. */
   private position(selection: SelectionContext) {
     const a = selection.anchor;
     const area = screen.getDisplayNearestPoint({ x: a.x, y: a.y }).workArea;
     const above = a.y - BAR - GAP >= area.y;
     const barY = above ? a.y - BAR - GAP : a.y + a.height + GAP;
-    // Only the capsule has to stay on screen; the transparent bands may hang past the work area.
-    const bounds = fitToWorkArea({ x: a.x - SIDE, y: barY - TIP, width: this.width + SIDE * 2, height: HEIGHT }, { ...area, y: area.y - TIP, height: area.height + TIP * 2 });
+    const targetWidth = Math.max(this.width, this.fastCard ? FAST_WIDTH : 0);
+    const bounds = fitToWorkArea({ x: a.x - SIDE, y: barY - TIP, width: targetWidth + SIDE * 2, height: HEIGHT }, { ...area, y: area.y - TIP, height: area.height + TIP * 2 });
     const top = bounds.y + TIP, room = (side: 'above' | 'below', need: number) => side === 'above' ? top - need >= area.y : top + BAR + need <= area.y + area.height;
     const away = above ? 'above' : 'below', toward = above ? 'below' : 'above';
-    const menu = BAR_MENU.gap + barMenuHeight(this.snapshot().more.length);
+    const menuNeed = BAR_MENU.gap + Math.max(barMenuHeight(this.snapshot().more.length), this.fastCardHeight);
     this.bar = { x: bounds.x, top };
-    this.layout = { tip: room(away, TIP) ? away : toward, menu: room(away, menu) || !room(toward, menu) ? away : toward };
+    this.layout = { tip: room(away, TIP) ? away : toward, menu: room(away, menuNeed) || !room(toward, menuNeed) ? away : toward };
     this.place();
   }
-  /** Sizes the window around the capsule, growing the menu-side band while the menu is open. */
+
+  /** Sizes the window around the capsule, growing the menu-side band while the menu or fast card is open. */
   private place() {
-    const extra = this.menuOpen ? Math.max(0, BAR_MENU.gap + barMenuHeight(this.snapshot().more.length) + MENU_EDGE - TIP) : 0;
-    const width = Math.max(this.width, this.menuOpen ? BAR_MENU.width : 0) + SIDE * 2;
+    const cardH = this.fastCard ? (this.fastCardHeight || 196) : this.fastCardHeight;
+    const activeExtraHeight = cardH > 0
+      ? BAR_MENU.gap + cardH + MENU_EDGE
+      : this.menuOpen
+        ? BAR_MENU.gap + barMenuHeight(this.snapshot().more.length) + MENU_EDGE
+        : 0;
+    const extra = Math.max(0, activeExtraHeight - TIP);
+    const width = Math.max(this.width, cardH > 0 ? FAST_WIDTH : this.menuOpen ? BAR_MENU.width : 0) + SIDE * 2;
     this.window.setBounds({ x: this.bar.x, y: this.bar.top - TIP - (this.layout.menu === 'above' ? extra : 0), width, height: HEIGHT + extra });
   }
+
   show(selection: SelectionContext) {
+    this.closeFast();
     this.selection = selection;
     if (!this.presets.some(p => p.enabled) || this.busy) return;
     this.menuOpen = false;
@@ -88,14 +245,28 @@ export class ActionBar {
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.motion.show(true);
     this.window.webContents.send('bar:enter', this.layout);
+    this.publish();
   }
-  /** Hit-tests the capsule, or the whole window while the menu is open; a click elsewhere counts as outside. */
+
+  /** Hit-tests the capsule, or the whole window while the menu or fast card is open; a click elsewhere counts as outside. */
   contains(point: { x: number; y: number }) {
     const b = this.window.getBounds();
     if (!this.window.isVisible()) return false;
-    if (this.menuOpen) return point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height;
+    if (this.menuOpen || this.fastCard) return point.x >= b.x && point.x <= b.x + b.width && point.y >= b.y && point.y <= b.y + b.height;
     return point.x >= this.bar.x + SIDE && point.x <= this.bar.x + SIDE + this.width && point.y >= this.bar.top && point.y <= this.bar.top + BAR;
   }
-  hide(immediate = false) { this.selection = null; this.menuOpen = false; this.window.setIgnoreMouseEvents(true, { forward: true }); this.motion.hide(immediate); }
-  destroy() { this.motion.dispose(); this.window.destroy(); }
+
+  hide(immediate = false) {
+    this.closeFast();
+    this.selection = null;
+    this.menuOpen = false;
+    this.window.setIgnoreMouseEvents(true, { forward: true });
+    this.motion.hide(immediate);
+  }
+
+  destroy() {
+    this.closeFast();
+    this.motion.dispose();
+    this.window.destroy();
+  }
 }

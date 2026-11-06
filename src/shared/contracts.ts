@@ -169,8 +169,25 @@ export interface DesktopAPI {
   removeFont(file: string): Promise<{ error: string | null }>;
   onState(callback: (state: ShellState) => void): () => void;
 }
+export interface FastApiCardState {
+  presetId: string;
+  presetName: string;
+  model: string;
+  status: 'streaming' | 'done' | 'error';
+  text: string;
+  error: string | null;
+  firstTokenMs: number | null;
+  isTranslation: boolean;
+  targetLang: 'auto' | 'zh' | 'en';
+}
 /** `presets` fill the capsule; `more` are the remaining enabled presets, listed in the ··· menu. */
-export interface ActionBarState { presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; more: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[]; busy: boolean; fonts: Pick<Settings, 'fonts' | 'importedFonts'> }
+export interface ActionBarState {
+  presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[];
+  more: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[];
+  busy: boolean;
+  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+  fastCard?: FastApiCardState | null;
+}
 /** A side of the capsule, away from the selection when the screen allows. */
 export type ActionBarTip = 'above' | 'below';
 /** Where the hover tip and the ··· menu open; the capsule stays anchored to the other edge. */
@@ -186,9 +203,112 @@ export interface ActionBarAPI {
   settings(): void;
   /** Width of the capsule itself; main adds the transparent margins. */
   resize(width: number): void;
+  /** Height of the inline fast-API result card when open (0 when closed). */
+  cardHeight(height: number): void;
+  closeFastCard(): void;
+  retryFastCard(targetLang?: 'auto' | 'zh' | 'en'): Promise<void>;
+  copyFastResult(text: string): Promise<void>;
+  replaceSelection(text: string): Promise<void>;
+  pinFastResult(text: string): Promise<void>;
   /** The pointer entered or left the capsule; outside it the window lets clicks through. */
   hit(inside: boolean): void;
   onState(callback: (state: ActionBarState) => void): () => void;
   /** Fired on every show so the capsule can replay its entrance. */
   onEnter(callback: (layout: ActionBarLayout) => void): () => void;
+}
+
+export type IslandMode = 'idle' | 'focus' | 'focus-hover' | 'slacking' | 'nook-alert' | 'toast' | 'board';
+export interface IslandAlertItem {
+  id: string;
+  kind: 'task' | 'reset' | 'launchd' | 'custom';
+  title: string;
+  subtitle: string;
+  target?: string;
+}
+export interface IslandTaskItem {
+  id: string;
+  title: string;
+  listTitle: string;
+}
+export interface IslandState {
+  mode: IslandMode;
+  glow: boolean;
+  pomodoro: {
+    active: boolean;
+    paused: boolean;
+    kind: 'focus' | 'slacking';
+    taskId: string | null;
+    taskTitle: string;
+    remainingSeconds: number;
+    totalSeconds: number;
+  } | null;
+  toast: { id: string; text: string; badge?: string } | null;
+  alerts: IslandAlertItem[];
+  nookTasks: IslandTaskItem[];
+  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+}
+export type SnapSlot =
+  | 'left-half'
+  | 'right-half'
+  | 'top-half'
+  | 'bottom-half'
+  | 'maximize'
+  | 'center'
+  | 'coding-ai'
+  | 'equal-split';
+
+export interface EdgeNoteItem {
+  id: string;
+  title: string;
+  fileName: string;
+  pinned: boolean;
+  updatedAt: string;
+  content: string;
+}
+
+export interface EdgeNotesState {
+  open: boolean;
+  folder: string;
+  activeId: string;
+  notes: EdgeNoteItem[];
+  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+}
+
+export interface FinderPanelState {
+  folder: string;
+  selection: string[];
+  frontmostApp: string;
+  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+}
+
+export interface IslandAPI {
+  getState(): Promise<IslandState>;
+  setMode(mode: IslandMode): void;
+  hit(inside: boolean): void;
+  startPomodoro(task?: { id: string | null; title: string }, minutes?: number, kind?: 'focus' | 'slacking'): Promise<void>;
+  togglePausePomodoro(): Promise<void>;
+  stopPomodoro(): Promise<void>;
+  completeTask(taskId: string): Promise<void>;
+  snoozeAlert(alertId: string, minutes?: number): Promise<void>;
+  dismissAlert(alertId: string): Promise<void>;
+  restartService(label: string): Promise<void>;
+  quickAction(action: 'screenshot-area' | 'open-main' | 'open-settings' | 'toggle-notes' | 'open-finder-panel'): Promise<void>;
+  setGlow(enabled: boolean): Promise<void>;
+  snapWindow(slot: SnapSlot): Promise<void>;
+  onState(callback: (state: IslandState) => void): () => void;
+  // EdgeNotes surface API
+  getNotesState(): Promise<EdgeNotesState>;
+  setNotesOpen(open: boolean): void;
+  notesHit(inside: boolean): void;
+  selectNote(id: string): Promise<void>;
+  saveNote(id: string, content: string): Promise<void>;
+  createNote(title?: string): Promise<void>;
+  pinNoteToDesktop(id: string): Promise<void>;
+  onNotesState(callback: (state: EdgeNotesState) => void): () => void;
+  // Finder Super Action Panel surface API
+  getFinderState(): Promise<FinderPanelState>;
+  finderCreateFile(ext: 'md' | 'txt' | 'py' | 'json' | 'sh'): Promise<void>;
+  finderRunAction(action: 'copy-path' | 'open-terminal' | 'open-cursor' | 'open-vscode' | 'send-to-lasso'): Promise<void>;
+  finderClose(): void;
+  onFinderState(callback: (state: FinderPanelState) => void): () => void;
 }

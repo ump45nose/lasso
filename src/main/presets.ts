@@ -48,7 +48,7 @@ export function validatePresets(value: unknown): asserts value is Preset[] {
     if ((p.model !== undefined && typeof p.model !== 'string') || (p.effort !== undefined && typeof p.effort !== 'string')) throw new Error('模型与思考强度必须是有效选项');
     if (p.temporaryChat !== undefined && typeof p.temporaryChat !== 'boolean') throw new Error('网页会话方式无效');
     if (p.kind !== undefined && !['chat', 'image'].includes(p.kind)) throw Error('预设类型无效');
-    if (p.kind === 'image' ? !['chatgpt', 'gemini', 'api'].includes(p.target) || !validImageOptions(p.image) : p.target === 'api' || p.image !== undefined) throw Error('生图预设配置无效');
+    if (p.kind === 'image' ? !['chatgpt', 'gemini', 'api'].includes(p.target) || !validImageOptions(p.image) : p.image !== undefined) throw Error('生图预设配置无效');
     ids.add(p.id);
   }
 }

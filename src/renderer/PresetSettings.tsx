@@ -1,5 +1,5 @@
 import { defaultImageOptions } from '../shared/media';
-import { ImageOptionsFields } from './ImageOptionsFields';
+import { ApiTextFields, ImageOptionsFields } from './ImageOptionsFields';
 import { promptSources } from '../shared/prompt-templates';
 import { Fragment, useRef, useState } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
@@ -67,7 +67,7 @@ function PresetEditor({ preset, isNew, save, remove, back, error }: { preset: Pr
   return <>
     <div className="l-editor-head"><button className="l-text-btn l-back" onClick={() => dirty && confirm !== 'leave' ? setConfirm('leave') : back()}><ChevronLeft size={14} />{confirm === 'leave' ? '再点一次放弃更改' : '全部预设'}</button></div>
     <div className="l-set-body l-editor">
-      <div className="l-field"><span className="l-field-label">功能</span><Segmented label="预设功能" value={draft.kind || 'chat'} onChange={kind => { if (kind === (draft.kind || 'chat')) return; set({ kind, ...(kind === 'image' && isNew && draft.template === '{{selection}}' ? { name: '图片生成', template: '请直接生成图片。有参考图时结合参考图完成。\n\n{{selection}}' } : {}), image: kind === 'image' ? defaultImageOptions() : undefined, target: kind === 'image' ? (draft.target === 'gemini' ? 'gemini' : 'chatgpt') : draft.target === 'api' ? 'chatgpt' : draft.target, model: '', effort: '' }); }} options={ [['chat', '提问'], ['image', '图片生成']] } /></div>
+      <div className="l-field"><span className="l-field-label">功能</span><Segmented label="预设功能" value={draft.kind || 'chat'} onChange={kind => { if (kind === (draft.kind || 'chat')) return; set({ kind, ...(kind === 'image' && isNew && draft.template === '{{selection}}' ? { name: '图片生成', template: '请直接生成图片。有参考图时结合参考图完成。\n\n{{selection}}' } : {}), image: kind === 'image' ? defaultImageOptions() : undefined, target: kind === 'image' ? (draft.target === 'gemini' || draft.target === 'api' ? draft.target : 'chatgpt') : draft.target, model: '', effort: '' }); }} options={ [['chat', '提问'], ['image', '图片生成']] } /></div>
       <div className="l-field"><label htmlFor="preset-name">名称</label><input id="preset-name" className="l-input" value={draft.name} onChange={e => set({ name: e.target.value })} /></div>
       <div className="l-field">
         <div className="l-field-row"><label htmlFor="preset-template" className="l-field-label">提示词</label><button className="l-btn small" onClick={insert}>插入选区位置</button></div>
@@ -76,13 +76,14 @@ function PresetEditor({ preset, isNew, save, remove, back, error }: { preset: Pr
         <p className="l-field-help"><span className="mono">{'{{selection}}'}</span> 处放选中文字；没有这个位置时，选中文字附在末尾。应用背景会放在最前面。{draft.kind === 'image' && <>用 <span className="mono">{'{{aspect}}'}</span> 插入图片比例。</>}</p>
       </div>
       <div className="l-field"><span className="l-field-label">目标</span>
-        <Segmented label="目标" value={draft.target} onChange={target => set({ target, model: '', effort: '', ...(['codex', 'pi', 'api'].includes(target) ? { temporaryChat: undefined } : {}) })} options={(draft.kind === 'image' ? ['chatgpt', 'gemini', 'api'] as const : targets).map(id => [id, targetLabels[id]] as const)} /></div>
+        <Segmented label="目标" value={draft.target} onChange={target => set({ target, model: '', effort: '', ...(['codex', 'pi', 'api'].includes(target) ? { temporaryChat: undefined } : {}) })} options={(draft.kind === 'image' ? ['chatgpt', 'gemini', 'api'] as const : [...targets, 'api'] as const).map(id => [id, targetLabels[id]] as const)} /></div>
       {(draft.target === 'chatgpt' || draft.target === 'gemini') && <div className="l-field">
         <span className="l-field-label">网页会话</span>
         <Segmented label="网页会话" value={draft.temporaryChat ? 'temporary' : 'normal'} onChange={mode => set({ temporaryChat: mode === 'temporary' ? true : undefined })} options={[['normal', '普通提问'], ['temporary', '临时提问']]} />
         {draft.temporaryChat && <p className="l-field-help">不进入网页历史；标签保持驻留，关闭或重载后无法恢复。{draft.target === 'gemini' && '需要个人 Google 账号，临时对话不能使用关联应用。'}</p>}
       </div>}
       {draft.target !== 'api' && <ExecutionFields key={draft.target + '-execution'} target={draft.target} profile={draft} update={set} />}
+      {draft.kind !== 'image' && draft.target === 'api' && <ApiTextFields key="api-text" model={draft.model || ''} onChange={model => set({ model })} />}
       {draft.kind === 'image' && <ImageOptionsFields key={draft.target + '-image'} value={draft.image!} update={image => set({ image })} api={draft.target === 'api'} />}
       <div className="l-field"><span className="l-field-label">执行方式</span>
         <Segmented label="执行方式" value={draft.mode} onChange={mode => set({ mode })} options={[['edit', '先填入，再编辑'], ['send', '填入后直接发送']]} /></div>

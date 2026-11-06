@@ -94,6 +94,75 @@ export class MediaService {
     return [...new Set(value.data.map(model => model.id).filter((id): id is string => typeof id === 'string'))].sort();
   }
 
+  /** Fast direct SSE chat completion for inline translation, polishing and explanation presets. */
+  async streamChat(
+    input: { model?: string; prompt: string; signal?: AbortSignal },
+    onDelta: (text: string, firstTokenMs: number) => void
+  ): Promise<{ text: string; model: string; firstTokenMs: number }> {
+    const config = this.config;
+    if (!config.baseURL) throw Error('请先在「设置 → 预设 → New API」填写并保存服务地址与凭据');
+    const model = input.model?.trim() || 'gpt-4.1-mini';
+    const headers: Record<string, string> = { ...this.headers(config), 'Content-Type': 'application/json', Accept: 'text/event-stream' };
+    const started = performance.now();
+    let firstTokenMs = 0;
+    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000);
+    const response = await this.fetchOnce(
+      this.endpoint('chat/completions', config),
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: input.prompt }] }),
+        signal
+      },
+      '快速 API 请求'
+    );
+    if (!response.ok) throw await this.responseError('快速 API 请求失败', response, config);
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('text/event-stream') || !response.body) {
+      const bytes = await this.readLimited(response, 4 * 1024 * 1024, '读取快速 API 响应');
+      const payload = JSON.parse(bytes.toString('utf8')) as { choices?: { message?: { content?: unknown } }[] };
+      const text = typeof payload.choices?.[0]?.message?.content === 'string' ? payload.choices[0].message.content.trim() : '';
+      if (!text) throw Error('服务未返回有效文本内容');
+      firstTokenMs = Math.round(performance.now() - started);
+      onDelta(text, firstTokenMs);
+      return { text, model, firstTokenMs };
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let full = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split(/\r?\n/);
+        buffer = lines.pop() || '';
+        for (const raw of lines) {
+          const line = raw.trim();
+          if (!line.startsWith('data:')) continue;
+          const data = line.slice(5).trim();
+          if (!data || data === '[DONE]') continue;
+          try {
+            const parsed = JSON.parse(data) as { choices?: { delta?: { content?: unknown }; message?: { content?: unknown } }[] };
+            const chunk = parsed.choices?.[0]?.delta?.content ?? parsed.choices?.[0]?.message?.content;
+            if (typeof chunk === 'string' && chunk) {
+              if (!firstTokenMs) firstTokenMs = Math.round(performance.now() - started);
+              full += chunk;
+              onDelta(full, firstTokenMs);
+            }
+          } catch {}
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
+    const text = full.trim();
+    if (!text) throw Error('服务未返回有效文本内容');
+    if (!firstTokenMs) firstTokenMs = Math.round(performance.now() - started);
+    return { text, model, firstTokenMs };
+  }
+
   /** Accept an explicitly selected local image or the editor's final composited PNG. */
   addReference(png: Buffer): MediaServiceState {
     const normalized = this.normalize(png);

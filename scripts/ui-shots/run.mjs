@@ -328,7 +328,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     return names;
   }));
 
-  // Selection action bar: hover on the first preset, then the ··· menu with its first row hovered.
+  // Selection action bar: hover on the first preset, then the ··· menu with its first row hovered, plus inline Fast API card and system suite surfaces.
   saved.push(...await main(async () => {
     const { find, page, wait, move, center, save } = global.uiShots, w = find('action-bar'), names = [];
     w.setOpacity(1); w.showInactive(); w.webContents.send('bar:enter', { tip: 'above', menu: 'above' }); await wait(500);
@@ -337,7 +337,97 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(w, "document.querySelector('[aria-haspopup=menu]').click()"); await wait(450);
     const row = await center(w, '.ab-menu button'); if (row) await move(w, ...row);
     names.push(await save(w, 'action-bar-menu'));
-    await page(w, "document.querySelector('[aria-haspopup=menu]').click()"); w.hide();
+    await page(w, "document.querySelector('[aria-haspopup=menu]').click()"); await wait(200);
+    const barState = await page(w, 'window.actionBar.getState()');
+    w.setBounds({ x: 180, y: 180, width: 456, height: 340 });
+    w.webContents.send('bar:changed', {
+      ...barState,
+      fastCard: {
+        presetId: 'translate',
+        presetName: '翻译',
+        model: 'gpt-4.1-mini',
+        status: 'done',
+        text: '划词后直接通过 New API 流式输出译文，按回车即可原地替换选中文本，或一键钉为桌面贴图。',
+        error: null,
+        firstTokenMs: 186,
+        isTranslation: true,
+        targetLang: 'zh'
+      }
+    });
+    await wait(450);
+    names.push(await save(w, 'action-bar-fast-card'));
+    w.webContents.send('bar:changed', { ...barState, fastCard: null });
+    w.hide();
+
+    const isl = find('island');
+    if (isl) {
+      isl.setOpacity(1); isl.showInactive();
+      const baseIsl = await page(isl, 'window.island.getState()');
+      isl.webContents.send('island:changed', {
+        ...baseIsl,
+        mode: 'focus-hover',
+        glow: false,
+        pomodoro: {
+          active: true,
+          paused: false,
+          kind: 'focus',
+          taskId: 'nook-1',
+          taskTitle: '核对 New API 翻译流式延迟与回填',
+          remainingSeconds: 1125,
+          totalSeconds: 1500
+        }
+      });
+      await wait(450);
+      names.push(await save(isl, 'island-focus'));
+
+      isl.webContents.send('island:changed', {
+        ...baseIsl,
+        mode: 'nook-alert',
+        glow: true,
+        alerts: [
+          { id: 'alert-1', kind: 'task', title: '下午 16:00 复盘 Nook 提醒桥接', subtitle: 'Nook · 今日重点待办', target: 'nook-1' },
+          { id: 'alert-2', kind: 'launchd', title: 'com.personalhub.app 异常退出 (Exit 1)', subtitle: '~/Library/LaunchAgents · 点击一键重启', target: 'com.personalhub.app' }
+        ]
+      });
+      await wait(450);
+      names.push(await save(isl, 'island-alert'));
+
+      isl.webContents.send('island:changed', {
+        ...baseIsl,
+        mode: 'board',
+        glow: true
+      });
+      await wait(450);
+      names.push(await save(isl, 'island-board'));
+      isl.hide();
+    }
+
+    const notesWin = find('edge-notes');
+    if (notesWin) {
+      notesWin.setOpacity(1); notesWin.showInactive();
+      const baseNotes = await page(notesWin, 'window.island.getNotesState()');
+      notesWin.webContents.send('notes:changed', { ...baseNotes, open: true });
+      await wait(450);
+      names.push(await save(notesWin, 'edge-notes'));
+      notesWin.webContents.send('notes:changed', { ...baseNotes, open: false });
+      notesWin.hide();
+    }
+
+    const finderWin = find('finder-panel');
+    if (finderWin) {
+      finderWin.setOpacity(1); finderWin.showInactive();
+      const baseFinder = await page(finderWin, 'window.island.getFinderState()');
+      finderWin.webContents.send('finder:changed', {
+        ...baseFinder,
+        folder: '/Users/sm5145/WorkSpace/Code/Github/mac-ai-prompt',
+        selection: ['/Users/sm5145/WorkSpace/Code/Github/mac-ai-prompt/src/main/island.ts']
+      });
+      await wait(450);
+      names.push(await save(finderWin, 'finder-panel'));
+      finderWin.hide();
+    }
+    const mainWin = find();
+    if (mainWin) { mainWin.show(); mainWin.focus(); }
     return names;
   }));
 

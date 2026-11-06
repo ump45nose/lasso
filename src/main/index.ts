@@ -20,6 +20,7 @@ import { WindowMotion } from './motion';
 import { initializeWindowPresence, setWindowPresence } from './window-presence';
 import { validMemorySettings, type MemorySettings } from '../shared/memory';
 import { ActionBar } from './action-bar';
+import { NotchIsland } from './island';
 import { TaskManager } from './tasks';
 import { readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
 import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
@@ -67,6 +68,7 @@ app.on('open-file', (event, path) => { event.preventDefault(); void receiveMedia
 let inputImage: ImageInput | null = null;
 let capture: SelectionCapture;
 let actionBar: ActionBar;
+let island: NotchIsland;
 let lastSelection: SelectionContext | null = null;
 let smallBounds: Rectangle | null = null;
 let blurTimer: ReturnType<typeof setTimeout>;
@@ -81,6 +83,7 @@ function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send('shell:changed', snapshot());
   actionBar?.update(state.presets, false, state.settings);
+  island?.updateSettings(state.settings);
 }
 function layout() {
   if (!win || win.isDestroyed() || !tasks) return;
@@ -225,6 +228,17 @@ function updateTray() {
     ] },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
     { label: '运行预设…', click: () => void openPalette('all') },
+    { label: 'EdgeNotes 边缘便签', accelerator: 'Control+Option+N', click: () => island?.toggleNotesDrawer(true) },
+    { label: 'Finder 超级动作面板…', accelerator: 'Control+Option+F', click: () => island?.summonFinderPanel() },
+    { label: '窗口分屏与工作区', submenu: [
+      { label: '左半屏', accelerator: 'Control+Option+Left', click: () => island?.snapWindow('left-half') },
+      { label: '右半屏', accelerator: 'Control+Option+Right', click: () => island?.snapWindow('right-half') },
+      { label: '最大化', accelerator: 'Control+Option+Up', click: () => island?.snapWindow('maximize') },
+      { label: '居中阅读窗', accelerator: 'Control+Option+Down', click: () => island?.snapWindow('center') },
+      { type: 'separator' },
+      { label: '一键 2/3 研发 + 1/3 AI 双栏', accelerator: 'Control+Option+Return', click: () => island?.snapWindow('coding-ai') },
+      { label: '50/50 对半分屏', click: () => island?.snapWindow('equal-split') }
+    ] },
     { label: '暂停划词', type: 'checkbox', checked: !state.settings.selectionEnabled, click: () => { const result = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback }); if (result.error) dialog.showErrorBox('未能保存划词设置', result.error); } },
     { label: '置顶', type: 'checkbox', checked: state.pinned, click: setPin },
     { type: 'separator' },
@@ -293,6 +307,15 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   const text = composePrompt(preset, selection, state.settings.appPrompts);
   const target = options.target || preset.target;
   if (target === 'api') {
+    if (preset.kind !== 'image') {
+      const anchor = selection?.anchor.x || selection?.anchor.y
+        ? selection.anchor
+        : { ...screen.getCursorScreenPoint(), width: 12, height: 18 };
+      const ctx: SelectionContext = { text: selection?.text || text, sourceApp: selection?.sourceApp || '', anchor };
+      state.inputText = null; state.inputOpen = false; closePalette(false); motion.hide(); publish();
+      await actionBar.startFastCard({ ...preset, target: 'api' }, ctx, 'auto');
+      return { error: null };
+    }
     try {
       await media.prepare(preset, text, options.imageId ? nativeImage.createFromPath(inputImage!.path) : undefined);
       if (options.imageId) { images.remove(inputImage); inputImage = null; state.inputImage = null; }
@@ -639,7 +662,31 @@ async function boot() {
   state.shortcutError = registerShortcut(state.settings.shortcut);
   state.settingsOpen = Boolean(state.shortcutError);
   await win.loadFile(join(__dirname, 'renderer/index.html'));
-  actionBar = new ActionBar(async (id, selection) => { await runPreset(id, selection); }, openSettings);
+  const pinImage = async (image: Electron.NativeImage) => {
+    const size = image.getSize();
+    await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
+  };
+  island = new NotchIsland({
+    onQuickAction: action => {
+      if (action === 'screenshot-area') void startScreenshot('area');
+      else if (action === 'open-settings') openSettings();
+      else showWindow();
+    },
+    onPinImage: pinImage,
+    onSendTextToLasso: receiveText
+  });
+  island.updateSettings(state.settings);
+  actionBar = new ActionBar(
+    async (id, selection) => { await runPreset(id, selection); },
+    openSettings,
+    {
+      stream: (input, onDelta) => media.service.streamChat(input, onDelta),
+      paste: () => island.pasteSelection(),
+      pin: pinImage,
+      toast: (text, badge) => island.toast(text, badge),
+      appPrompts: () => state.settings.appPrompts
+    }
+  );
   capture = new SelectionCapture(selection => {
     if (screenshots?.active) return;
     lastSelection = selection;
@@ -690,11 +737,11 @@ async function boot() {
 if (!hasLock) app.quit();
 else {
   app.on('second-instance', showWindow);
-  app.on('activate', () => { if (!BrowserWindow.getAllWindows().some(window => window.isVisible() || window.isMinimized())) showWindow(); });
+  app.on('activate', () => { if (!win || (!win.isVisible() && !win.isMinimized())) showWindow(); });
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
   app.on('before-quit', () => { quitting = true; screenshots?.dispose(); });
-  app.on('will-quit', () => { fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
+  app.on('will-quit', () => { fileServices?.stop();stopCaptureEfficiency?.();media?.dispose(); motion?.dispose(); tasks?.dispose(); images?.dispose(); capture?.cleanup(); actionBar?.destroy(); island?.destroy(); clearTimeout(blurTimer); globalShortcut.unregisterAll(); tray?.destroy(); });
   void app.whenReady().then(boot).catch(error => {
     dialog.showErrorBox('Lasso 无法启动', String(error));
     quitting = true;
