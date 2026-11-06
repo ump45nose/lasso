@@ -168,7 +168,6 @@ export interface DesktopAPI {
   saveVisionConfig(input: VisionServiceInput): Promise<VisionServiceConfig>;
   saveMediaConfig(input: MediaConfigInput): Promise<MediaConfig>;
   mediaModels(): Promise<string[]>;
-  openImagePresets(): Promise<void>;
   attachImage(prompt?: string): Promise<{ error: string | null }>;
   openLink(url: string): Promise<void>;
   getState(): Promise<ShellState>;

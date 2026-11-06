@@ -444,7 +444,6 @@ function installIPC() {
       return { error: null };
     } catch (error) { return { error: (error as Error).message }; } finally { nativeDialogs--; }
   });
-  ipcMain.handle('shell:image-presets', event => { assertLocal(event); return openPalette('images'); });
   ipcMain.handle('shell:external', (event, url: string) => { assertLocal(event); if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) return shell.openExternal(url); });
   ipcMain.handle('shell:config-export',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.exportConfig();}finally{nativeDialogs--;}});
   ipcMain.handle('shell:config-import',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.importConfig();}finally{nativeDialogs--;}});

@@ -35,7 +35,6 @@ const api: DesktopAPI = {
   saveVisionConfig: input => ipcRenderer.invoke('shell:vision-config-save', input),
   saveMediaConfig: input => ipcRenderer.invoke('shell:media-config-save', input),
   mediaModels: () => ipcRenderer.invoke('shell:media-models'),
-  openImagePresets: () => ipcRenderer.invoke('shell:image-presets'),
   openLink: url => ipcRenderer.invoke('shell:external', url),
   getState: () => ipcRenderer.invoke('shell:state'),
   act: action => ipcRenderer.invoke('shell:action', action),

@@ -10,17 +10,12 @@ static LassoFileServices *provider = nil;
 @implementation LassoFileServices
 - (void)generateImage:(NSPasteboard *)pasteboard userData:(NSString *)userData error:(NSString **)error {
   NSArray<NSURL *> *urls = [pasteboard readObjectsForClasses:@[[NSURL class]] options:@{NSPasteboardURLReadingFileURLsOnlyKey:@YES}];
-  NSMutableArray<NSString *> *paths = [NSMutableArray array];
-  for (NSURL *url in urls) if (url.fileURL) [paths addObject:url.path];
-  if (!paths.count) {
-    id files = [pasteboard propertyListForType:NSFilenamesPboardType];
-    if ([files isKindOfClass:[NSArray class]]) for (id file in files) if ([file isKindOfClass:[NSString class]]) [paths addObject:file];
-  }
-  if (paths.count != 1 || ![@[@"png", @"jpg", @"jpeg"] containsObject:paths.firstObject.pathExtension.lowercaseString]) {
+  NSString *file = urls.count == 1 ? urls.firstObject.path : nil;
+  if (!file || ![@[@"png", @"jpg", @"jpeg"] containsObject:file.pathExtension.lowercaseString]) {
     if (error) *error = @"请一次选择一张 PNG 或 JPEG 图片。";
     return;
   }
-  auto *path = new std::string(paths.firstObject.UTF8String);
+  auto *path = new std::string(file.UTF8String);
   if (!callback || napi_call_threadsafe_function(callback, path, napi_tsfn_nonblocking) != napi_ok) {
     delete path; if (error) *error = @"Lasso 正忙，请稍后重试。";
   }

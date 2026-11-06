@@ -413,7 +413,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     names.push(await save(m, 'preset-return-confirm'));
     await page(m, `document.querySelector('.l-editor-head button').click()`); await wait(250);
     await page(m, "window.desktop.act('close-settings')"); await wait(300);
-    await page(m, "window.desktop.openImagePresets()"); await wait(350); names.push(await save(m, 'palette-images'));
+    await page(m, "window.desktop.openPalette('images')"); await wait(350); names.push(await save(m, 'palette-images'));
     await page(m, 'window.desktop.closePalette()');
     const imageState = await page(m, 'window.desktop.getState()');
     const thumbnail = (await m.webContents.capturePage()).resize({width:300}).toDataURL();
