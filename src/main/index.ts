@@ -836,8 +836,7 @@ async function boot() {
   island = new NotchIsland({
     onQuickAction: action => {
       if (action === 'screenshot-area') void startScreenshot('area');
-      else if (action === 'open-settings') openSettings();
-      else showWindow();
+      else openSettings();
     },
     onPinImage: pinImage,
     onSendTextToLasso: receiveText

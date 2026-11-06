@@ -360,6 +360,15 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
   color: rgba(250, 249, 245, 0.5);
 }
 
+.isl-task-empty {
+  margin: 0;
+  padding: 6px 8px;
+  border-radius: 9px;
+  background: rgba(250, 249, 245, 0.04);
+  font-size: 12px;
+  color: rgba(250, 249, 245, 0.5);
+}
+
 .isl-quick-bar {
   padding-top: 6px;
   border-top: 0.5px solid rgba(250, 249, 245, 0.1);

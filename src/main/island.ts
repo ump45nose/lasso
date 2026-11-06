@@ -65,11 +65,7 @@ function readNookTasks(): IslandTaskItem[] {
       // ignore malformed cache file
     }
   }
-  return [
-    { id: 'nook-default-1', title: '核对 New API 翻译流式延迟与回填', listTitle: 'Lasso · 今日重点' },
-    { id: 'nook-default-2', title: '检查 launchd 守护服务状态与错误日志', listTitle: 'Nook · 运维巡检' },
-    { id: 'nook-default-3', title: '整理本周设计规范与截图回归', listTitle: 'Lasso · 工程验收' }
-  ];
+  return [];
 }
 
 function resolveNotesFolder(): string {
@@ -120,8 +116,12 @@ function loadNotesFromDisk(folder: string): EdgeNoteItem[] {
   return items;
 }
 
+function defaultFinderFolder(): string {
+  return app.getPath('desktop');
+}
+
 function queryFinderContext(frontAppName: string): { folder: string; selection: string[]; frontmostApp: string } {
-  const fallback = { folder: join(homedir(), 'WorkSpace/Code/Github/mac-ai-prompt'), selection: [], frontmostApp: frontAppName || 'Finder' };
+  const fallback = { folder: defaultFinderFolder(), selection: [], frontmostApp: frontAppName || 'Finder' };
   if (process.env.LASSO_DATA_ROOT) return fallback;
   try {
     const script = `
@@ -154,7 +154,7 @@ function queryFinderContext(frontAppName: string): { folder: string; selection: 
 }
 
 export interface NotchIslandCallbacks {
-  onQuickAction: (action: 'screenshot-area' | 'open-main' | 'open-settings') => void;
+  onQuickAction: (action: 'screenshot-area' | 'open-settings') => void;
   onPinImage: (image: NativeImage) => Promise<void>;
   onSendTextToLasso: (text: string) => Promise<void>;
 }
@@ -180,6 +180,7 @@ export class NotchIsland {
   private activeNoteId = 'Scratchpad';
 
   private finderState: FinderPanelState;
+  private readonly onDisplayMetricsChanged = () => this.placeWindows();
 
   constructor(private callbacks: NotchIslandCallbacks) {
     this.ax = loadNativeAx();
@@ -188,7 +189,7 @@ export class NotchIsland {
     this.notesList = loadNotesFromDisk(this.notesFolder);
     if (this.notesList[0]) this.activeNoteId = this.notesList[0].id;
     this.finderState = {
-      folder: join(homedir(), 'WorkSpace/Code/Github/mac-ai-prompt'),
+      folder: defaultFinderFolder(),
       selection: [],
       frontmostApp: 'Finder',
       fonts: this.fonts
@@ -264,7 +265,7 @@ export class NotchIsland {
     });
 
     this.placeWindows();
-    screen.on('display-metrics-changed', () => this.placeWindows());
+    screen.on('display-metrics-changed', this.onDisplayMetricsChanged);
 
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
       const valid = [this.window.webContents, this.notesWindow.webContents, this.finderWindow.webContents];
@@ -315,7 +316,7 @@ export class NotchIsland {
       check(event);
       this.restartService(label);
     });
-    ipcMain.handle('island:quick', (event, action: 'screenshot-area' | 'open-main' | 'open-settings' | 'toggle-notes' | 'open-finder-panel') => {
+    ipcMain.handle('island:quick', (event, action: 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel') => {
       check(event);
       if (this.mode === 'board') {
         this.mode = this.resolveBaseMode();
@@ -826,6 +827,7 @@ export class NotchIsland {
   }
 
   destroy() {
+    screen.off('display-metrics-changed', this.onDisplayMetricsChanged);
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.ax.setGlow?.(false);

@@ -269,6 +269,7 @@ export function NotchIsland() {
                 <span>Nook 待办联动</span>
                 <span className="mono">{nookTasks.length} OPEN</span>
               </div>
+              {nookTasks.length === 0 && <p className="isl-task-empty">暂无 Nook 待办，可直接开始 25m 专注</p>}
               <ul className="isl-task-list">
                 {nookTasks.slice(0, 4).map(task => (
                   <li key={task.id} className="isl-task-row">

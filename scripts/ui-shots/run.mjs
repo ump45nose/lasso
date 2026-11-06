@@ -58,6 +58,13 @@ try {
   symlinkSync(join(root, 'dist/native'), join(runtime, 'native'), 'dir');
   // Fixture runs must never start global selection hooks or ask for accessibility permission.
   writeFileSync(join(runtimePaths.userData, 'settings.json'), JSON.stringify({ shortcut: '', selectionEnabled: false, clipboardFallback: false }));
+  // The Island reads open tasks from the Nook cache under userData when LASSO_DATA_ROOT is set.
+  mkdirSync(join(runtimePaths.userData, 'nook-cache'));
+  writeFileSync(join(runtimePaths.userData, 'nook-cache/google.json'), JSON.stringify({ taskLists: [
+    { title: 'Lasso · 今日重点', items: [{ id: 'nook-1', title: '核对 New API 翻译流式延迟与回填', status: 'open' }] },
+    { title: 'Nook · 运维巡检', items: [{ id: 'nook-2', title: '检查 launchd 守护服务状态与错误日志', status: 'open' }] },
+    { title: 'Lasso · 工程验收', items: [{ id: 'nook-3', title: '整理本周设计规范与截图回归', status: 'open' }] }
+  ] }));
   // Electron uses the bootstrap directory as app.getAppPath(); keep icon reads local.
   symlinkSync(join(root, 'assets'), join(runtime, 'assets'), 'dir');
   // This runs before the real entrypoint. LASSO_DATA_ROOT and LASSO_PROFILE derive

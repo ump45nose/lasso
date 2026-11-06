@@ -334,7 +334,7 @@ export interface IslandAPI {
   snoozeAlert(alertId: string, minutes?: number): Promise<void>;
   dismissAlert(alertId: string): Promise<void>;
   restartService(label: string): Promise<void>;
-  quickAction(action: 'screenshot-area' | 'open-main' | 'open-settings' | 'toggle-notes' | 'open-finder-panel'): Promise<void>;
+  quickAction(action: 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel'): Promise<void>;
   setGlow(enabled: boolean): Promise<void>;
   snapWindow(slot: SnapSlot): Promise<void>;
   onState(callback: (state: IslandState) => void): () => void;
