@@ -336,11 +336,10 @@ html.ab-html, body.ab-body { background: transparent; overflow: hidden; user-sel
 .ab-sep { width: 1px; height: 16px; margin: 0 3px; background: rgba(250, 249, 245, 0.2); }
 .ab-sending { display: inline-flex; align-items: center; height: 30px; padding: 0 11px 0 4px; font-size: 14px; color: var(--on-ink); }
 .ab-progress { position: absolute; left: 12px; right: 12px; bottom: 0; height: 2px; border-radius: 1px; background: var(--clay); transform-origin: left; }
-.ab-tip { position: absolute; left: 16px; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 5px; border-radius: 8px; background: var(--surface); border: 0.5px solid var(--line-strong);
-  box-shadow: 0 6px 14px -8px rgba(20, 20, 19, 0.35); font-family: var(--font-ui); font-size: 12px; color: var(--ink-2); white-space: nowrap; pointer-events: none; translate: -50% 0; }
+.ab-tip { position: absolute; left: 16px; display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px 0 5px; border-radius: 8px; background: var(--surface); border: 0.5px solid var(--clay-line);
+  box-shadow: 0 6px 14px -8px rgba(20, 20, 19, 0.35); font-family: var(--font-ui); font-size: 12px; color: var(--clay-ink); white-space: nowrap; pointer-events: none; translate: -50% 0; }
 .ab-tip.above { bottom: calc(50% + 26px); }
 .ab-tip.below { top: calc(50% + 26px); }
-.ab-tip { border-color: var(--clay-line); color: var(--clay-ink); }
 .ab-tip-dim { color: var(--ink-4); }
 .ab-menu { position: absolute; display: flex; flex-direction: column; border-radius: 12px; background: var(--ink); font-family: var(--font-ui); white-space: nowrap;
   box-shadow: inset 0 0 0 0.5px rgba(250, 249, 245, 0.1), 0 16px 32px -14px rgba(20, 20, 19, 0.65), 0 2px 6px rgba(20, 20, 19, 0.2); }

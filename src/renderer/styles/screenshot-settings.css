@@ -29,8 +29,6 @@
 .l-shot-settings #screenshot-advanced li > span:first-child { flex: 1; }
 .l-general-controls .l-seg, #screenshot-advanced .l-seg { max-width: 100%; flex-wrap: wrap; }
 .l-general-controls .l-seg-thumb, #screenshot-advanced .l-seg-thumb { border-radius: 7px; }
-.l-set-nav { flex-shrink: 0; overflow-x: auto; }
-.l-set-nav button { white-space: nowrap; }
 .l-set-subnav { flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 8px 20px; border-bottom: 0.5px solid var(--line); background: var(--sunken); overflow-x: auto; overflow-y: hidden; }
 .l-set-subnav button { height: 26px; flex-shrink: 0; display: inline-flex; align-items: center; padding: 0 10px; border: 0.5px solid transparent; border-radius: 7px; background: transparent; font-family: var(--font-ui); font-size: 12.5px; color: var(--ink-3); white-space: nowrap; transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast); }
 .l-set-subnav button:hover { background: var(--clay-wash); color: var(--clay-ink); }
