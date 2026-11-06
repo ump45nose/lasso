@@ -19,11 +19,15 @@ export interface NativeCapture {
   windowID(handle: Buffer): number;
   snapshot(): { visible: number; focused: number; frameCount: number; windowId: number; session: string; mode: string; selection: CaptureRect; bounds: CaptureRect; color: string; position: string; loupe: CaptureRect; loupePicture: CaptureRect; loupeCenter: CaptureRect; colorBounds: CaptureRect; colorTextWidth: number; showCrosshair: number; crosshairVisible: number; showLoupeGrid: number; loupeGridVisible: number; loupeGrid: CaptureRect; loupeGridStep: number; loupeGridOffset: number; loupeGridLineWidth: number; loupeRasterScale: number; loupeMagnification: number; loupeColorFormat: string };
 }
-export function loadNativeCapture(callback: (event: NativeCaptureEvent) => void): NativeCapture {
-  const native = require(join(__dirname, 'native/capture-native.node')) as NativeCapture;
+function requireNative() { return require(join(__dirname, 'native/capture-native.node')) as NativeCapture; }
+function nativeTheme() {
   const theme = JSON.parse(readFileSync(join(__dirname, 'native/capture-theme.json'), 'utf8'));
   theme.icons = Object.fromEntries(Object.entries(theme.icons).map(([name, path]) => [name, join(__dirname, 'native', path as string)]));
-  native.warmup(theme, callback);
+  return theme;
+}
+export function loadNativeCapture(callback: (event: NativeCaptureEvent) => void): NativeCapture {
+  const native = requireNative();
+  native.warmup(nativeTheme(), callback);
   return native;
 }
 /** Register actual Lasso surface windows, preserving normal windows such as pins. */
@@ -35,18 +39,14 @@ export function excludedCaptureWindows(native: NativeCapture): number[] {
 }
 
 export function updateNativeAppearance(native:NativeCapture,settings:Pick<Settings,'fonts'|'importedFonts'>,screenshot:NativeCapturePreferences){
-  const theme=JSON.parse(readFileSync(join(__dirname,'native/capture-theme.json'),'utf8'));
-  theme.icons=Object.fromEntries(Object.entries(theme.icons).map(([name,path])=>[name,join(__dirname,'native',path as string)]));
+  const theme=nativeTheme();
   if(settings.fonts.ui)theme.uiFonts.unshift(settings.fonts.ui);
   if(settings.fonts.mono)theme.monoFonts.unshift(settings.fonts.mono);
   theme.fontFiles=settings.importedFonts.map(font=>join(app.getPath('userData'),'fonts',font.file));
   Object.assign(theme,{showCrosshair:screenshot.showCrosshair,showLoupeGrid:screenshot.showLoupeGrid,loupeMagnification:screenshot.loupeMagnification,loupeColorFormat:screenshot.loupeColorFormat});
-  native.warmup(theme,()=>{});
+  native.warmup(theme);
 }
 
 export function prewarmNativeCapture(){
-  const native=require(join(__dirname,'native/capture-native.node')) as NativeCapture;
-  const theme=JSON.parse(readFileSync(join(__dirname,'native/capture-theme.json'),'utf8'));
-  theme.icons=Object.fromEntries(Object.entries(theme.icons).map(([name,path])=>[name,join(__dirname,'native',path as string)]));
-  native.warmup(theme);
+  requireNative().warmup(nativeTheme());
 }

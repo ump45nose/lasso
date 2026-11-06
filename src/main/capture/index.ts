@@ -29,7 +29,7 @@ import { setWindowPresence } from '../window-presence';
 import { ignoresApplication } from '../selection';
 import { nativeAx, type NativeAx, type WindowRect } from '../native-ax';
 import { IdleSleep } from '../idle-sleep';
-import { fromMainFrame, result, sealLocal } from '../ipc';
+import { closeOnCommandW, fromMainFrame, result, sealLocal } from '../ipc';
 import type { MemorySettings } from '../../shared/memory';
 import type { IntelligenceService } from './intelligence';
 const bindDisplay=(display:Electron.Display):CaptureDisplayBinding=>({id:display.id,bounds:{...display.bounds},scaleFactor:display.scaleFactor,rotation:display.rotation});
@@ -192,13 +192,7 @@ export class CaptureManager {
     this.cachedWindow=win;
     win.on('show',this.appVisibility);win.on('hide',this.appVisibility);win.on('minimize',this.appVisibility);win.on('restore',this.appVisibility);win.on('blur',this.appVisibility);
     sealLocal(win.webContents);
-    // The application menu binds Cmd+W to the launcher. Close this session instead,
-    // including when an annotation text field has keyboard focus.
-    win.webContents.on('before-input-event',(event,input)=>{
-      if(input.type==='keyDown'&&input.meta&&!input.control&&!input.alt&&!input.shift&&input.key.toLowerCase()==='w'){
-        event.preventDefault();win.close();
-      }
-    });
+    closeOnCommandW(win);
     win.on('close',event=>{if(!this.disposed){event.preventDefault();this.cancel(this.state?.origin==='clipboard');}});
     win.on('closed',()=>{if(this.win===win)this.release();if(this.cachedWindow===win){this.cachedWindow=null;this.windowReady=null;}});
     this.updateIdle();

@@ -14,7 +14,7 @@ import { OCRService } from './ocr';
 import { assertPng, contentImage, decorateScreenshot, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, deliverImage, encodeScreenshot, exportMode, formatScreenshotName, runAfterSaveAction, saveRecordingOutput } from './output';
 import { fitToWorkArea } from '../position';
 import { writeFileAtomic } from '../files';
-import { fromMainFrame, result, sealLocal } from '../ipc';
+import { closeOnCommandW, fromMainFrame, result, sealLocal } from '../ipc';
 import type { IntelligenceService } from './intelligence';
 import { editorSettings, handleEditorServices, validCrop, type EditorSession } from './editor-services';
 
@@ -362,9 +362,7 @@ export class PinManager {
     win.on('focus',()=>app.focus({steal:true}));
     win.on('page-title-updated',event=>event.preventDefault());
     sealLocal(win.webContents);
-    win.webContents.on('before-input-event',(event,input)=>{
-      if(input.type==='keyDown'&&input.meta&&!input.control&&!input.alt&&!input.shift&&input.key.toLowerCase()==='w'){event.preventDefault();win.close();}
-    });
+    closeOnCommandW(win);
     const pin:Pin={win,document,storedDocument:saved?.document??serializePinnedDocument(document),bytes,visible:saved?.visible??true,normalBounds,state:{id:pinId,kind:payload.kind,payload,title,groupId,locked:saved?.locked??false,thumbnail:saved?.thumbnail??false,zoomPercent:saved?.zoomPercent??100,wheelAction:this.settings.wheelAction,groups:structuredClone(this.settings.groups),revision:0,image:document.image.toDataURL(),...size,lines:[],status:payload.kind==='image'?'正在识别文字…':'',topmost:saved?.topmost??true,opacity:saved?.opacity??1,passthrough:false,editing:false},ocr:undefined!,editorRevision:0};
     pin.ocr=new OCRService((ocrId,revision)=>pin.state.editing?pin.state.editId===ocrId&&pin.editorRevision===revision:this.pins.get(ocrId)===pin&&pin.state.revision===revision);
     this.pins.set(pinId,pin);

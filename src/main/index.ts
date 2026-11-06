@@ -773,10 +773,7 @@ async function boot() {
   const mediaDirectory = join(app.getPath('userData'), 'generated-media');
   mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
   state.presets = migrateImagePresets(presetsPath, mediaDirectory);
-  media = new MediaWindow(mediaDirectory, image => screenshots.openImage(image), async image => {
-    const size = image.getSize();
-    await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
-  }, () => state.settings, () => openPalette('images'));
+  media = new MediaWindow(mediaDirectory, image => screenshots.openImage(image), pinImage, () => state.settings, () => openPalette('images'));
   intelligence=new IntelligenceService(join(app.getPath('userData'),'vision-service'),{
     secrets:{available:()=>safeStorage.isEncryptionAvailable(),encrypt:value=>safeStorage.encryptString(value),decrypt:value=>safeStorage.decryptString(value)},
     mediaConnection:()=>media.service.connection(),

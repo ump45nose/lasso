@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import type { RecordingAction, RecordingFormat, RecordingSessionState } from '../shared/recording';
 import type { RecordingManager } from './capture/recording';
 import type { CaptureManager } from './capture';
-import { fromMainFrame, sealLocal } from './ipc';
+import { closeOnCommandW, fromMainFrame, sealLocal } from './ipc';
 import { fitToWorkArea } from './position';
 
 export interface RecordingPanelDeps {
@@ -43,7 +43,7 @@ export class RecordingPanel {
       sealLocal(panel.webContents);
       panel.on('close', event => { if (!this.deps.quitting()) { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });
       panel.on('closed', () => { if (this.panel === panel) { this.panel = null; this.ready = null; } });
-      panel.webContents.on('before-input-event', (event, input) => { if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });
+      closeOnCommandW(panel);
       this.ready = panel.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'recording' } }).catch(error => { panel.destroy(); throw error; });
     }
     await this.ready;
