@@ -6,15 +6,15 @@ import { assertPng, contentImage, decorateScreenshot, copyFile, copyImage, copyP
 import { validateAnnotationMemory, type AnnotationStyleMemory, type ScreenshotSettings, type ScreenshotOutputFormat, type ScreenshotExportContentMode } from '../../shared/screenshot-settings';
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, shell, systemPreferences } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
-import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { rmSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import type { CaptureFrame, CaptureMode, CaptureRect, EditorCheckpoint, ExportAction, RegionCandidate, ScreenshotState, ScrollCaptureAction } from '../../shared/capture';
+import type { CaptureFrame, CaptureMode, CaptureRect, EditorCheckpoint, ExportAction, ScreenshotState, ScrollCaptureAction } from '../../shared/capture';
 import { pixelRect } from '../../shared/capture';
 import { updateNativeAppearance, loadNativeCapture, excludedCaptureWindows, type NativeCapture, type NativeFrame, type NativeCaptureEvent } from './native';
-import { clip, contains, rank } from './candidates';
+import { clip, contains } from './candidates';
+import { CandidateDetection } from './candidate-detection';
 import { OCRService, visionOCR } from './ocr';
 import { editorSettings, handleEditorServices, validCrop, type EditorSession } from './editor-services';
 import { imageDocument, normalizeRegionAnnotations, validateAnnotations, type PinnedDocument } from './document';
@@ -27,7 +27,7 @@ import type { Settings } from '../../shared/contracts';
 import type { CaptureDisplayBinding, SuccessfulCaptureArea } from '../../shared/capture-efficiency';
 import { setWindowPresence } from '../window-presence';
 import { ignoresApplication } from '../selection';
-import { nativeAx, type NativeAx, type WindowRect } from '../native-ax';
+import { nativeAx, type NativeAx } from '../native-ax';
 import { IdleSleep } from '../idle-sleep';
 import { closeOnCommandW, fromMainFrame, result, sealLocal } from '../ipc';
 import type { MemorySettings } from '../../shared/memory';
@@ -56,7 +56,6 @@ export class CaptureManager {
   private checkpointReply: ((value:EditorCheckpoint|null)=>void) | null=null;
   private suspended: {directory:string;bounds:Electron.Rectangle;sources:{key:string;file:string;rect?:CaptureRect}[]} | null=null;
   private sleepDirectory=join(app.getPath('userData'),'capture-sleep');
-  private worker: Worker | null=null;
   private state: ScreenshotState | null=null;
   private image: NativeImage | null=null;
   private imageTask: Promise<NativeImage>|null=null;
@@ -65,7 +64,6 @@ export class CaptureManager {
   private screenFrame: NativeFrame | null=null;
   private ownedFrames=new Set<string>();
   private pixelSources=new Map<string,{frame:NativeFrame;rect?:CaptureRect}>();
-  private detectionStarting=false;
   private handoff: (()=>Promise<void>) | null=null;
   private appearanceKey='';
   private startedAt=0;
@@ -79,21 +77,9 @@ export class CaptureManager {
   private bounds: CaptureRect={x:0,y:0,width:1,height:1};
   private displayId: number | null=null;
   private captureDisplay: CaptureDisplayBinding | null=null;
-  private windows: WindowRect[]=[];
-  private fixed: RegionCandidate[]=[];
-  private elements: RegionCandidate[]=[];
-  private colors: RegionCandidate[]=[];
-  private edges: RegionCandidate[]=[];
   private ax: NativeAx;
-  private seq=0;
+  private detection: CandidateDetection;
   private busy=false;
-  private pending: {x:number;y:number}|null=null;
-  private hoverTimer: ReturnType<typeof setTimeout>|null=null;
-  private colorBusy=false;
-  private axBusy=false;
-  private colorSeq=-1;
-  private axSeq=-1;
-  private hoverPoint={x:-100,y:-100};
   private disposed=false;
   private epoch=0;
   private editRevision=0;
@@ -134,6 +120,7 @@ export class CaptureManager {
     if(this.regionsStore.last)this.efficiency.restoreArea(this.regionsStore.last);
     this.ax=nativeAx();
     this.native=loadNativeCapture(event=>this.nativeEvent(event));
+    this.detection=new CandidateDetection({native:this.native,ax:this.ax,state:()=>this.state,bounds:()=>this.bounds});
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
     this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
@@ -361,50 +348,21 @@ export class CaptureManager {
       const id=randomUUID();
       if(this.disposed||epoch!==this.epoch)return false;
       this.state={id,editId:randomUUID(),width:this.bounds.width,height:this.bounds.height,pixelWidth:0,pixelHeight:0,candidates:[],windows:[],mode:mode==='rect'?'rect':mode==='window'?'window':'area',captureKind:request?.area?.kind??mode,saveFormat:this.preferences.format,phase:'selecting',selection:null,origin:'screen'};
-      if(front){this.windows=[front];this.state.windows=[{...front,x:front.x-this.bounds.x,y:front.y-this.bounds.y}];await this.captureWindow(front.id,this.preferences.shadow);return Boolean(this.state?.imageFrame);}
+      if(front){this.state.windows=[{...front,x:front.x-this.bounds.x,y:front.y-this.bounds.y}];await this.captureWindow(front.id,this.preferences.shadow);return Boolean(this.state?.imageFrame);}
       const exclude=excludedCaptureWindows(this.native);this.timing.queued=performance.now()-this.startedAt;
       const frame=await this.native.capture({displayId:display.id,bounds:this.bounds,includeCursor:this.settings().includeCursor,exclude});
       if(this.disposed||epoch!==this.epoch){this.native.release(frame.id);return false;}
       this.ownedFrames.add(frame.id);this.assertCaptureDisplay();this.screenFrame=frame;
       this.timing.captured=performance.now()-this.startedAt;this.timing.capture=frame.captureMs;this.timing.nativeQueue=frame.queueMs;this.timing.nativeCompletion=frame.completionMs;this.timing.nativeWork=frame.workMs;
-      this.windows=mode==='rect'||mode==='screen'||request?.area?[]:this.candidateWindows();
-      const local=(r:CaptureRect):CaptureRect=>({x:r.x-this.bounds.x,y:r.y-this.bounds.y,width:r.width,height:r.height});
-      this.fixed=this.windows.map(r=>clip(local(r),{x:0,y:0,width:this.bounds.width,height:this.bounds.height})).filter((r):r is CaptureRect=>Boolean(r)).map(r=>({...r,source:'window'}));
-      if(mode!=='rect')this.fixed.push({x:0,y:0,width:this.bounds.width,height:this.bounds.height,source:'screen'});
-      this.elements=[];this.edges=[];this.colors=[];this.hoverPoint={x:-100,y:-100};
-      const windows=this.windows.map(w=>({id:w.id,...local(w)})).filter(w=>clip(w,{x:0,y:0,width:this.bounds.width,height:this.bounds.height}));
-      Object.assign(this.state,{pixelWidth:frame.width,pixelHeight:frame.height,candidates:this.fixed,windows});
+      const {candidates,windows}=this.detection.begin(mode==='rect'||mode==='screen'||request?.area?[]:this.candidateWindows(),mode!=='rect');
+      Object.assign(this.state,{pixelWidth:frame.width,pixelHeight:frame.height,candidates,windows});
       if(custom){if(custom.width>frame.width||custom.height>frame.height)throw Error('预设尺寸超过此显示器，请换显示器或编辑尺寸');if(bound){await this.select(bound.rect);return true;}this.native.show({frameId:frame.id,session:id,mode:'rect',windows:[],candidates:[],fixedSize:{width:custom.width*this.bounds.width/frame.width,height:custom.height*this.bounds.height/frame.height}});return true;}
       if(request?.area){await this.select(request.area.rect);return true;}
       if(mode==='screen'){this.state.captureKind='screen';await this.select({x:0,y:0,width:this.bounds.width,height:this.bounds.height},false);return true;}
-      this.native.show({frameId:frame.id,session:id,mode:this.state.mode!,windows,candidates:this.fixed});return true;
+      this.native.show({frameId:frame.id,session:id,mode:this.state.mode!,windows,candidates});return true;
     } catch(error){if(this.disposed||epoch!==this.epoch)return false;this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';this.cancel(true);throw error;}
     finally{request?.signal.removeEventListener('abort',abort);this.busy=false;}
   }
-  private async startDetection(){
-      const id=this.state?.id,frame=this.screenFrame;
-      if(!id||this.state?.phase!=='selecting'||(this.state.mode==='rect'||this.state.mode==='window')||!frame||this.worker||this.detectionStarting)return;
-      this.detectionStarting=true;
-      let reduced;
-      try{reduced=await this.native.pixels(frame.id,{format:'rgba',maxWidth:1440});}
-      finally{if(this.state?.id===id)this.detectionStarting=false;}
-      if(this.state?.id!==id||this.state.phase!=='selecting')return;
-      const size={width:reduced.width,height:reduced.height},bitmap=new Uint8Array(reduced.data);
-      const sx=this.bounds.width/size.width,sy=this.bounds.height/size.height;
-      const worker=new Worker(join(__dirname,'regions-worker.cjs'));this.worker=worker;
-      worker.on('message',m=>{if(this.worker!==worker||this.state?.id!==id)return;
-        const mapped=m.regions.map((r:RegionCandidate)=>({...r,x:r.x*sx,y:r.y*sy,width:r.width*sx,height:r.height*sy}));
-        if(m.type==='edges')this.edges=mapped;
-        if(m.type==='color'){this.colorBusy=false;if(m.seq===this.seq)this.colors=mapped;}
-        this.updateCandidates();if(this.pending)this.scheduleHover();
-      });
-      const workerStopped=()=>{if(this.worker!==worker)return;this.worker=null;this.colorBusy=false;if(this.pending)this.scheduleHover();};
-      worker.on('error',error=>{console.warn('[screenshot] region worker',error.message);workerStopped();});
-      worker.on('exit',workerStopped);
-      worker.postMessage({type:'init',bytes:bitmap,width:size.width,height:size.height});
-      this.detectScale={x:1/sx,y:1/sy};
-  }
-  private detectScale={x:1,y:1};
   /** State notifications carry metadata; immutable pixels are read once by frame reference. */
   private editorState(){
     if(this.state)Object.assign(this.state,editorSettings(this.settings(),this.appearance()));
@@ -425,7 +383,6 @@ export class CaptureManager {
     try{const result=await this.efficiency.start('area');if('error' in result)this.scrollRequested=false;return result;}
     catch(error){this.scrollRequested=false;throw error;}
   }
-  private stopDetection(){this.seq++;this.pending=null;this.fixed=[];this.windows=[];this.elements=[];this.edges=[];this.colors=[];this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;}
   private keepFrame(frame:NativeFrame,rect?:CaptureRect){this.ownedFrames.add(frame.id);const id=randomUUID();this.pixelSources.set(id,{frame,rect});return id;}
   private importFrame(image:NativeImage,bounds?:CaptureRect){const size=image.getSize(),frame=this.native.createFrame({...size,data:image.toBitmap(),...(bounds?{logicalX:bounds.x,logicalY:bounds.y,logicalWidth:bounds.width,logicalHeight:bounds.height}:{})});this.ownedFrames.add(frame.id);return frame;}
   syncRegionPreferences(){this.regionsStore.save();}
@@ -493,10 +450,10 @@ export class CaptureManager {
       this.timing.nativeReady=performance.now()-this.startedAt;console.info('[capture-timing]',JSON.stringify(this.timing));
       // Native selection is already interactive. Prepare the editor in a later main-loop turn.
       setImmediate(()=>{if(this.state===s&&Object.values(this.preferences.actions).some(action=>action.show))void this.prepareWindow().catch(error=>console.warn('[memory] editor preparation',error.message));});
-      void this.startDetection().catch(error=>console.warn('[capture-detection]',error));return;
+      void this.detection.start(this.screenFrame).catch(error=>console.warn('[capture-detection]',error));return;
     }
-    if(event.type==='hover'){this.hover(event.x!,event.y!);return;}
-    if(event.type==='mode'){s.mode=event.mode;if(event.mode!=='window')void this.startDetection().catch(error=>console.warn('[capture-detection]',error));return;}
+    if(event.type==='hover'){this.detection.hover(event.x!,event.y!);return;}
+    if(event.type==='mode'){s.mode=event.mode;if(event.mode!=='window')void this.detection.start(this.screenFrame).catch(error=>console.warn('[capture-detection]',error));return;}
     if(event.type==='cancel'){this.cancel();return;}
     const operation=async()=>{
       if(event.type==='retry'){this.refreshPixelReferences();if(this.handoff){this.win?.hide();this.presented=false;await this.handoff();}else this.native.update({session:s.id,resume:true});return;}
@@ -551,7 +508,7 @@ export class CaptureManager {
       if(epoch!==this.epoch||this.state!==s||!unchanged())throw Error('截图会话或显示器已变化');
       await session.pause();
       if(epoch!==this.epoch||this.state!==s||!unchanged())throw Error('截图会话或显示器已变化');
-      this.native.hide();win.hide();this.stopDetection();this.ocr.reset();this.image=null;this.imageTask=null;this.imageLoader=null;
+      this.native.hide();win.hide();this.detection.stop();this.ocr.reset();this.image=null;this.imageTask=null;this.imageLoader=null;
       this.scroll=session;committed=true;this.scrollRequested=false;
       const m=session.metadata;
       Object.assign(s,{captureKind:'scroll',editableRegion:undefined,annotations:undefined,pixelScale:{x:frame.width/this.bounds.width,y:frame.height/this.bounds.height},phase:'scrolling',placement:undefined,candidates:[],windows:[],selection:null,scroll:{status:'paused',width:m.width,height:m.height,segments:m.segments,seams:m.seams,direction:m.direction,segmentSizes:m.segmentSizes,reversedTrimmed:m.reversedTrimmed,message:session.message}});
@@ -641,7 +598,7 @@ export class CaptureManager {
       if(epoch!==this.epoch)throw Error('截图会话已结束');
       return nativeImage.createFromBitmap(Buffer.from(pixels.data.buffer,pixels.data.byteOffset,pixels.data.byteLength),{width:pixels.width,height:pixels.height});
     }:null;
-    const size=image?image.getSize():{width:sourceRect?.width??source!.width,height:sourceRect?.height??source!.height};this.stopDetection();this.ocr.reset();this.editRevision=0;
+    const size=image?image.getSize():{width:sourceRect?.width??source!.width,height:sourceRect?.height??source!.height};this.detection.stop();this.ocr.reset();this.editRevision=0;
     const inline=s.captureKind==='rect'||s.captureKind==='area';
     Object.assign(s,{editId:randomUUID(),imageFrame:inline&&s.backdropFrame?s.backdropFrame:this.keepFrame(source??this.importFrame(image!),sourceRect),imageCrop:inline?sourceRect:undefined,width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,pixelScale:{x:size.width/placement.width,y:size.height/placement.height},saveFormat:this.preferences.format,candidates:[],windows:[],selection:{x:0,y:0,...size},placement:inline?placement:undefined,backdropFrame:inline?s.backdropFrame:undefined,presentation:inline?'inline':'window',phase:'result'});
     this.completeResult();
@@ -712,38 +669,6 @@ export class CaptureManager {
       this.configureResult();this.publish();
     }catch(error){if(epoch===this.epoch)this.cancel();throw error;}finally{this.busy=false;}
   }
-  private updateCandidates(){if(!this.state)return;this.state.candidates=rank([...this.fixed,...this.elements,...this.edges,...this.colors],this.hoverPoint.x,this.hoverPoint.y);if(this.state.phase==='selecting')this.native.update({session:this.state.id,candidates:this.state.candidates});}
-  private hover(x:number,y:number){
-    if(!this.state||this.state.phase!=='selecting'||this.state.mode==='rect')return;
-    if(Math.hypot(x-this.hoverPoint.x,y-this.hoverPoint.y)<5)return;
-    this.hoverPoint={x,y};this.pending={x,y};this.seq++;
-    // Keep still-hit regions until their replacement is ready, rather than
-    // briefly flashing the whole window on every hover query.
-    this.colors=this.colors.filter(r=>contains(r,x,y));this.elements=this.elements.filter(r=>contains(r,x,y));this.updateCandidates();
-    this.scheduleHover();
-  }
-  private scheduleHover(){if(this.hoverTimer)return;this.hoverTimer=setTimeout(()=>{this.hoverTimer=null;void this.queryHover();},110);}
-  private queryHover(){
-    if(!this.pending||!this.state||this.state.phase!=='selecting')return;
-    const {x,y}=this.pending;const seq=this.seq,id=this.state.id;
-    const global={x:x+this.bounds.x,y:y+this.bounds.y};
-    const owner=this.windows.find(w=>contains(w,global.x,global.y));
-    const localBounds=owner?clip({x:owner.x-this.bounds.x,y:owner.y-this.bounds.y,width:owner.width,height:owner.height},{x:0,y:0,width:this.bounds.width,height:this.bounds.height}):{x:0,y:0,width:this.bounds.width,height:this.bounds.height};
-    // AX and visual queries have independent queues: a slow app must not hold
-    // back color candidates at a new pointer position (or vice versa).
-    let waiting=false;
-    if(this.worker&&localBounds&&this.colorSeq!==seq){
-      if(this.colorBusy)waiting=true;
-      else {this.colorBusy=true;this.colorSeq=seq;this.worker.postMessage({type:'color',seq,x:Math.round(x*this.detectScale.x),y:Math.round(y*this.detectScale.y),bounds:{x:localBounds.x*this.detectScale.x,y:localBounds.y*this.detectScale.y,width:localBounds.width*this.detectScale.x,height:localBounds.height*this.detectScale.y}});}
-    }
-    if(owner&&systemPreferences.isTrustedAccessibilityClient(false)&&this.axSeq!==seq){
-      if(this.axBusy)waiting=true;
-      else {this.axBusy=true;this.axSeq=seq;void this.ax.query(owner.pid,global.x,global.y).then(result=>{
-        if(this.state?.id===id&&seq===this.seq){this.elements=result.rects.map(r=>clip({x:r.x-this.bounds.x,y:r.y-this.bounds.y,width:r.width,height:r.height},{x:0,y:0,width:this.bounds.width,height:this.bounds.height})).filter((r):r is CaptureRect=>Boolean(r)).map(r=>({...r,source:'element'}));this.updateCandidates();}
-      }).catch(error=>{console.warn('[screenshot] AX query',String(error));}).finally(()=>{if(this.state?.id===id){this.axBusy=false;if(this.pending)this.scheduleHover();}});}
-    }
-    if(waiting)this.scheduleHover();else this.pending=null;
-  }
   private assertVersion(id:string,revision:number){
     if(!this.state?.selection||this.state.phase!=='result'||id!==this.state.editId)throw Error('截图编辑会话已结束');
     if(!Number.isSafeInteger(revision)||revision<0||revision<this.editRevision)throw Error('图片已变化，请重试');
@@ -813,7 +738,7 @@ export class CaptureManager {
     throw Error('不支持的截图操作');
   }
   private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}
-  private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.detectionStarting=false;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.stopDetection();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
+  private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.detection.release();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
   cancel(restore=false){this.release(restore);}
   dispose(){this.releaseRecording();this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:export','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:ready'])ipcMain.removeAllListeners(name);this.stopEditorServices();}
 }
