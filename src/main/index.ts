@@ -124,6 +124,7 @@ function closePalette(restore = true) {
   if (!palette) return;
   palette = null;
   if (!win.isDestroyed()) win.webContents.send('shell:palette', { scope: null, backdrop: null } satisfies PaletteEvent);
+  clearSelection();
   if (restore) { layout(); if (!state.settingsOpen && !state.inputOpen) tasks.focus(); }
 }
 function showWindow() {
@@ -752,8 +753,9 @@ async function boot() {
     if (state.capture?.status !== status.status) console.info('[selection]', status.status);
     state.capture = status; publish();
   }, point => {
-    if (!actionBar.contains(point)) { actionBar.hide(); clearSelection(); }
-  }, () => { actionBar.hide(); clearSelection(); });
+    // Typing and clicks inside the open palette act on its selection; closePalette() clears it instead.
+    if (!actionBar.contains(point)) { actionBar.hide(); if (!palette) clearSelection(); }
+  }, () => { actionBar.hide(); if (!palette) clearSelection(); });
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
