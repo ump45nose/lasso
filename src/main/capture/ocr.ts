@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { join } from 'node:path';
 import type { BarcodeItem, OCRLine, OCRMode, OCRResult } from '../../shared/capture';
 
 export interface VisionResult { lines: OCRLine[]; barcodes: BarcodeItem[] }
@@ -11,6 +12,8 @@ export interface VisionOCR {
 type Input = {id: string; revision: number; png: Buffer; mode: OCRMode; enhance: boolean; force?: boolean; languages: string[]};
 type Job = Input & {key: string; token: number; canceled: boolean; settle(result: OCRResult): void; fail(error: unknown): void};
 let nextToken=0;
+let vision: VisionOCR | undefined;
+export const visionOCR=():VisionOCR=>vision??=require(join(__dirname,'native/capture-vision.node'));
 
 /** One running request and one replaceable pending request, scoped to an editor.
  * The cache contains only flattened-image OCR and is erased when that editor ends. */
@@ -20,7 +23,7 @@ export class OCRService {
   private cache=new Map<string, VisionResult & {bytes:number}>();
   private cacheBytes=0;
   get busy(){return Boolean(this.active||this.pending);}
-  constructor(private driver:()=>VisionOCR, private current:(id:string,revision:number)=>boolean){}
+  constructor(private current:(id:string,revision:number)=>boolean){}
   recognize(input:Input):Promise<OCRResult>{
     const key=createHash('sha256').update(input.png).update(input.mode+Number(input.enhance)).update(JSON.stringify(input.languages)).digest('hex');
     if(!this.current(input.id,input.revision))return Promise.resolve({id:input.id,revision:input.revision,lines:[]});
@@ -41,14 +44,14 @@ export class OCRService {
   private drop(job:Job|null){
     if(!job||job.canceled)return;job.canceled=true;
     job.settle({id:job.id,revision:job.revision,lines:[]});
-    if(this.active===job){try{this.driver().cancel(job.token);}catch{/* Completion still discards this request. */}}
+    if(this.active===job){try{visionOCR().cancel(job.token);}catch{/* Completion still discards this request. */}}
   }
   private pump(){
     if(this.active||!this.pending)return;
     const job=this.pending;this.pending=null;this.active=job;
     void(async()=>{
       try{
-        const result=await this.driver().recognize(job.png,job.token,job.mode,job.enhance,job.languages);
+        const result=await visionOCR().recognize(job.png,job.token,job.mode,job.enhance,job.languages);
         if(job.canceled||!this.current(job.id,job.revision)){job.settle({id:job.id,revision:job.revision,lines:[]});return;}
         const bytes=JSON.stringify(result).length*2;
         if(bytes<=2_000_000){const previous=this.cache.get(job.key);if(previous)this.cacheBytes-=previous.bytes;this.cache.delete(job.key);this.cache.set(job.key,{...result,bytes});this.cacheBytes+=bytes;

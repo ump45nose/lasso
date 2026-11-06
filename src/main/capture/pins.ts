@@ -1,23 +1,21 @@
 import type { RecordingSessionState } from '../../shared/recording';
 import { encodeRecordingGif, type RecordingOutput } from './recording';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, shell, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { constants, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { copyFile as copyDiskFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pinOpacities, type CaptureFrame, type ExportAction, type OCRRequest, type PinAction, type PinState } from '../../shared/capture';
+import { pinOpacities, type CaptureFrame, type ExportAction, type PinAction, type PinState } from '../../shared/capture';
 import type { AnnotationStyleMemory, ScreenshotSettings, ScreenshotOutputFormat, ScreenshotExportContentMode } from '../../shared/screenshot-settings';
-import type { EditorShortcutMap } from '../../shared/shortcuts';
 import { pinWorkspaceDefaults, validatePinWorkspaceSettings, type PinArrangeMode, type PinContentPayload, type PinKind, type PinWorkspaceSettings, type PinWorkspaceState } from '../../shared/history-sync';
 import { deserializePinnedDocument, imageDocument, serializePinnedDocument, validateAnnotations, type PinnedDocument, type SerializedPinnedDocument } from './document';
 import { FloatingPinBar } from './floating-bar';
-import { OCRService, type VisionOCR } from './ocr';
+import { OCRService } from './ocr';
 import { assertPng, contentImage, decorateScreenshot, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, deliverImage, encodeScreenshot, exportMode, formatScreenshotName, runAfterSaveAction, saveRecordingOutput } from './output';
 import { fitToWorkArea } from '../position';
-import { exportTableXlsx, renderFormula, type IntelligenceService } from './intelligence';
-import { webURL } from '../../shared/intelligence';
-type AnalyzeRequest = Parameters<import('../../shared/capture').ScreenshotAPI['analyze']>[0];
+import type { IntelligenceService } from './intelligence';
+import { editorSettings, handleEditorServices, validCrop, type EditorSession } from './editor-services';
 
 type SavedPin = {id:string;document:SerializedPinnedDocument;payload:PinContentPayload;title:string;groupId:string;locked:boolean;thumbnail:boolean;topmost:boolean;visible:boolean;opacity:number;zoomPercent:number;bounds:Rectangle;normalBounds?:Rectangle;updatedAt:number};
 type DiskPin=Omit<SavedPin,'document'>&{documentFile:string};
@@ -29,13 +27,11 @@ type PinOptions = {
   text:(text:string)=>Promise<void>;
   suppress:()=>void;
   changed:()=>void;
-  languages:()=>string[];
   preferences:()=>ScreenshotSettings;
-  editorShortcuts:()=>EditorShortcutMap|undefined;
-  generalSettings:()=>Pick<import('../../shared/contracts').Settings,'toolbarTools'|'mouseActions'>|undefined;
+  generalSettings:()=>Pick<import('../../shared/contracts').Settings,'editorShortcuts'|'toolbarTools'|'mouseActions'>|undefined;
   saveAnnotationMemory:(memory:AnnotationStyleMemory)=>void;
   canEdit:()=>boolean;
-  intelligence?:()=>IntelligenceService;
+  intelligence:()=>IntelligenceService;
   saveWorkspaceSettings?:(settings:PinWorkspaceSettings)=>void;
   recordHistory?:(document:PinnedDocument,id?:string)=>Promise<void>;
 };
@@ -60,7 +56,6 @@ function thumbnailBounds(bounds:Rectangle,area:Rectangle){return fitToWorkArea({
 
 export class PinManager {
   private pins=new Map<string,Pin>();
-  private vision:VisionOCR|null=null;
   private serial=0;
   private closed:SavedPin[]=[];
   private settings:PinWorkspaceSettings;
@@ -70,6 +65,7 @@ export class PinManager {
   private disposed=false;
   private loading=true;
   private floating=new FloatingPinBar();
+  private stopEditorServices:()=>void;
   readonly ready:Promise<void>;
   constructor(private options:PinOptions){
     this.settings=structuredClone(options.preferences().pinWorkspace??pinWorkspaceDefaults());
@@ -100,23 +96,20 @@ export class PinManager {
       if(!pin.state.editing||!pin.state.editId)throw Error('贴图未在编辑');
       const size=pin.document.source.getSize(),data=pin.document.source.toBitmap();
       if(data.byteLength!==size.width*size.height*4)throw Error('图片像素不完整');
-      return {editId:pin.state.editId,width:size.width,height:size.height,bgra:data,annotations:pin.document.annotations,pixelScale:pin.document.pixelScale,saveFormat:this.options.preferences().format,annotationMemory:this.options.preferences().annotationMemory,editorShortcuts:this.options.editorShortcuts(),screenshotSettings:this.options.preferences(),toolbarTools:this.options.generalSettings()?.toolbarTools,mouseActions:this.options.generalSettings()?.mouseActions};
+      const settings=this.options.preferences();
+      return {editId:pin.state.editId,width:size.width,height:size.height,bgra:data,annotations:pin.document.annotations,pixelScale:pin.document.pixelScale,saveFormat:settings.format,...editorSettings(settings,this.options.generalSettings())};
     });
     ipcMain.handle('pin:editor-export',async(e,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode)=>{const pin=this.owner(e);try{await this.exportEdit(pin,frame,action,format,contentMode);return {error:null};}catch(error){return {error:(error as Error).message};}});
-    ipcMain.handle('pin:editor-recognize',(e,frame:OCRRequest)=>{
-      const pin=this.owner(e);
-      if(!frame||!['text','code'].includes(frame.mode)||typeof frame.enhance!=='boolean'||(frame.force!==undefined&&typeof frame.force!=='boolean')||!(frame.png instanceof Uint8Array))throw Error('无效的识别选项');
-      this.editorFrame(pin,frame);
-      return pin.ocr.recognize({id:frame.id,revision:frame.revision,png:Buffer.from(frame.png),mode:frame.mode,enhance:frame.enhance,force:frame.force,languages:this.options.languages()});
-    });
-    ipcMain.handle('pin:editor-analyze',async(e,request:AnalyzeRequest)=>{const pin=this.owner(e);try{this.editorFrame(pin,request);const result=await this.intelligenceService().analyze(request);this.assertEditor(pin,request.id,request.revision);if(this.pins.get(pin.state.id)!==pin||pin.editorRevision!==request.revision)throw Error('图片已变化，请重试');return {result,error:null};}catch(error){return {result:null,error:(error as Error).message};}});
-    ipcMain.handle('pin:editor-vision-language',e=>{const pin=this.owner(e);this.assertEditor(pin,pin.state.editId!,pin.editorRevision);return this.intelligenceService().connection().targetLanguage;});
-    ipcMain.handle('pin:editor-preview-formula',(e,r:{id:string;revision:number;latex:string})=>{const pin=this.owner(e);try{this.assertEditor(pin,r?.id,r?.revision);return {svg:renderFormula(r.latex),error:null};}catch(error){return {svg:null,error:(error as Error).message};}});
-    ipcMain.handle('pin:editor-open-url',async(e,r:{id:string;revision:number;url:string})=>{const pin=this.owner(e);try{this.assertEditor(pin,r?.id,r?.revision);const url=typeof r.url==='string'&&webURL(r.url);if(!url)throw Error('只能打开 HTTP 或 HTTPS 链接');await shell.openExternal(url);return {error:null};}catch(error){return {error:(error as Error).message};}});
-    ipcMain.handle('pin:editor-export-table',(e,rows:string[][])=>{const pin=this.owner(e);this.assertEditor(pin,pin.state.editId!,pin.editorRevision);return exportTableXlsx(rows,this.options.preferences().directory);});
-    ipcMain.handle('pin:editor-pin-formula',async(e,latex:string)=>{const pin=this.owner(e);try{this.assertEditor(pin,pin.state.editId!,pin.editorRevision);const id=pin.state.editId,revision=pin.editorRevision;await this.intelligenceService().pinFormula(latex,()=>this.pinFrom(e)===pin&&pin.state.editing===true&&pin.state.editId===id&&pin.editorRevision===revision);return {error:null};}catch(error){return {error:(error as Error).message};}});
-    ipcMain.handle('pin:editor-copy-text',async(e,request:{id:string;revision:number;text:string})=>{const pin=this.owner(e);this.assertEditor(pin,request?.id,request?.revision);if(typeof request.text!=='string'||!request.text.trim()||request.text.length>100000)throw Error('没有可复制的文字');pin.editorRevision=request.revision;this.options.suppress();await clipboard.writeText(request.text);});
-    ipcMain.handle('pin:editor-send',async(e,request:{id:string;revision:number;text:string})=>{const pin=this.owner(e);try{this.assertEditor(pin,request?.id,request?.revision);if(typeof request.text!=='string'||!request.text.trim()||request.text.length>100000)throw Error('请先选择图中文字');pin.editorRevision=request.revision;this.options.suppress();await this.options.text(request.text);this.showPin(pin);return {error:null};}catch(error){return {error:(error as Error).message};}});
+    const session=(e:IpcMainEvent|IpcMainInvokeEvent):EditorSession=>{const pin=this.owner(e);return {
+      edit:()=>{if(!pin.state.editing)throw Error('贴图编辑已结束');return {id:pin.state.editId!,revision:pin.editorRevision};},
+      check:(id,revision)=>this.assertEditor(pin,id,revision),
+      accept:(id,revision)=>{this.assertEditor(pin,id,revision);pin.editorRevision=revision;},
+      frame:frame=>this.editorFrame(pin,frame),
+      current:(id,revision)=>this.pinFrom(e)===pin&&pin.state.editing===true&&pin.state.editId===id&&pin.editorRevision===revision,
+      ocr:pin.ocr,
+      textSent:id=>{if(pin.state.editing&&pin.state.editId===id)this.showPin(pin);}
+    };};
+    this.stopEditorServices=handleEditorServices({recognize:'pin:editor-recognize',analyze:'pin:editor-analyze',visionLanguage:'pin:editor-vision-language',previewFormula:'pin:editor-preview-formula',openURL:'pin:editor-open-url',exportTable:'pin:editor-export-table',pinFormula:'pin:editor-pin-formula',copyText:'pin:editor-copy-text',sendText:'pin:editor-send',invalidateOCR:'pin:editor-invalidate'},session,{settings:this.options.preferences,intelligence:this.options.intelligence,suppress:this.options.suppress,text:this.options.text});
     ipcMain.handle('pin:editor-action',async(e,action:string)=>{const pin=this.owner(e);try{
       if(!pin.state.editing)throw Error('贴图未在编辑');
       if(action==='cancel')this.showPin(pin);
@@ -124,7 +117,6 @@ export class PinManager {
       else throw Error('不支持的贴图编辑操作');
       return {error:null};
     }catch(error){return {error:(error as Error).message};}});
-    ipcMain.on('pin:editor-invalidate',this.invalidate);
     ipcMain.on('pin:drag-start',this.startDrag);
     ipcMain.on('pin:drag-move',this.moveDrag);
     ipcMain.on('pin:drag-end',this.endDrag);
@@ -279,24 +271,17 @@ export class PinManager {
   closeFocused(){const focused=BrowserWindow.getFocusedWindow(),pin=[...this.pins.values()].find(item=>!item.win.isDestroyed()&&(item.win===focused||item.win.isFocused()));if(!pin)return false;pin.win.close();return true;}
   private keepsSize(){return this.options.preferences().pinKeepsSize;}
   private pinFrom(event:IpcMainEvent|IpcMainInvokeEvent){return [...this.pins.values()].find(pin=>!pin.win.isDestroyed()&&event.sender===pin.win.webContents&&event.senderFrame===pin.win.webContents.mainFrame);}
-  private owner(event:IpcMainInvokeEvent){const pin=this.pinFrom(event);if(!pin)throw Error('贴图操作只允许对应贴图窗口调用');return pin;}
+  private owner(event:IpcMainEvent|IpcMainInvokeEvent){const pin=this.pinFrom(event);if(!pin)throw Error('贴图操作只允许对应贴图窗口调用');return pin;}
   private startDrag=(event:IpcMainEvent)=>{const pin=this.pinFrom(event);if(!pin||pin.state.locked||pin.state.editing||pin.win.isDestroyed())return;app.focus({steal:true});pin.win.focus();pin.drag={cursor:screen.getCursorScreenPoint(),bounds:pin.win.getBounds()};};
   private moveDrag=(event:IpcMainEvent)=>{const pin=this.pinFrom(event);if(!pin?.drag||pin.state.locked||pin.state.editing||pin.win.isDestroyed())return;const cursor=screen.getCursorScreenPoint();pin.win.setPosition(pin.drag.bounds.x+cursor.x-pin.drag.cursor.x,pin.drag.bounds.y+cursor.y-pin.drag.cursor.y,false);};
   private endDrag=(event:IpcMainEvent)=>{const pin=this.pinFrom(event);if(pin){pin.drag=undefined;this.changed(pin);}};
-  private invalidate=( (event:IpcMainEvent,request:{id:string;revision:number})=>{
-    const pin=this.pinFrom(event);
-    if(!pin?.state.editing||request?.id!==pin.state.editId||!Number.isSafeInteger(request.revision)||request.revision<pin.editorRevision)return;
-    pin.editorRevision=request.revision;pin.ocr.invalidate(request.id,request.revision);
-  });
   private assertEditor(pin:Pin,id:string,revision:number){
     if(!pin.state.editing||id!==pin.state.editId)throw Error('贴图编辑已结束');
     if(!Number.isSafeInteger(revision)||revision<0||revision<pin.editorRevision)throw Error('图片已变化，请重试');
   }
-  private intelligenceService(){if(!this.options.intelligence)throw Error('智能识别尚未接入');return this.options.intelligence();}
   private editorFrame(pin:Pin,frame:CaptureFrame){
     this.assertEditor(pin,frame?.id,frame?.revision);
-    const size=pin.document.source.getSize(),crop=frame.crop;
-    if(!crop||crop.x+crop.width>size.width||crop.y+crop.height>size.height)throw Error('无效的裁剪范围');
+    validCrop(frame.crop,pin.document.source.getSize());
     decodeFrameImage(frame);pin.editorRevision=frame.revision;
   }
   private fit=()=>{for(const pin of this.pins.values()){
@@ -386,7 +371,7 @@ export class PinManager {
       if(input.type==='keyDown'&&input.meta&&!input.control&&!input.alt&&!input.shift&&input.key.toLowerCase()==='w'){event.preventDefault();win.close();}
     });
     const pin:Pin={win,document,storedDocument:saved?.document??serializePinnedDocument(document),bytes,visible:saved?.visible??true,updatedAt:saved?.updatedAt??Date.now(),normalBounds,state:{id:pinId,kind:payload.kind,payload,title,groupId,locked:saved?.locked??false,thumbnail:saved?.thumbnail??false,zoomPercent:saved?.zoomPercent??100,wheelAction:this.settings.wheelAction,groups:structuredClone(this.settings.groups),revision:0,image:document.image.toDataURL(),...size,lines:[],status:payload.kind==='image'?'正在识别文字…':'',topmost:saved?.topmost??true,opacity:saved?.opacity??1,passthrough:false,editing:false},ocr:undefined!,editorRevision:0};
-    pin.ocr=new OCRService(()=>this.vision??=require(join(__dirname,'native/capture-vision.node')),(ocrId,revision)=>pin.state.editing?pin.state.editId===ocrId&&pin.editorRevision===revision:this.pins.get(ocrId)===pin&&pin.state.revision===revision);
+    pin.ocr=new OCRService((ocrId,revision)=>pin.state.editing?pin.state.editId===ocrId&&pin.editorRevision===revision:this.pins.get(ocrId)===pin&&pin.state.revision===revision);
     this.pins.set(pinId,pin);
     let closing:SavedPin|undefined;
     win.on('close',()=>{if(!this.disposed)closing=this.snapshot(pin);});
@@ -398,7 +383,7 @@ export class PinManager {
   private recognize(pin:Pin){
     if(pin.state.kind!=='image')return;
     pin.ocr.reset();const {id,revision}=pin.state;
-    void pin.ocr.recognize({id,revision,png:pin.document.image.toPNG(),mode:'text',enhance:false,languages:this.options.languages()}).then(result=>{
+    void pin.ocr.recognize({id,revision,png:pin.document.image.toPNG(),mode:'text',enhance:false,languages:this.options.preferences().languages}).then(result=>{
       if(this.pins.get(id)!==pin||pin.state.revision!==revision||pin.state.editing)return;
       const crop=pin.document.annotations.crop;
       const effects=pin.document.annotations.effects;
@@ -449,8 +434,7 @@ export class PinManager {
   private async exportEdit(pin:Pin,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode){
     const preferences=this.options.preferences(),mode=exportMode(action,format,contentMode??preferences.exportContentMode);
     this.assertEditor(pin,frame?.id,frame?.revision);
-    const size=pin.document.source.getSize(),crop=frame?.crop;
-    if(!crop||![crop.x,crop.y,crop.width,crop.height].every(Number.isSafeInteger)||crop.x<0||crop.y<0||crop.width<1||crop.height<1||crop.x+crop.width>size.width||crop.y+crop.height>size.height)throw Error('无效的裁剪范围');
+    const crop=validCrop(frame.crop,pin.document.source.getSize());
     const historyDocument=frame.annotations?{...pin.document,image:decodeFrameImage(frame),annotations:validateAnnotations(frame.annotations,pin.document.source,crop)}:undefined;
     pin.editorRevision=frame.revision;this.options.suppress();
     if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!preferences.cornerRadius&&!preferences.borderWidth){await copyPng(assertPng(frame.png,frame.outputSize?.width??crop.width,frame.outputSize?.height??crop.height));if(historyDocument)await this.options.recordHistory?.(historyDocument,pin.state.id);this.showPin(pin);return;}
@@ -529,5 +513,5 @@ export class PinManager {
     {label:'隐藏全部贴图',enabled:this.size>0,click:()=>{for(const pin of this.pins.values()){pin.visible=false;pin.win.hide();}this.changed();}},
     ...[...this.pins.values()].map(pin=>({label:pin.win.getTitle()+(pin.state.passthrough?' · 穿透':!pin.win.isVisible()?' · 已隐藏':''),click:()=>this.restore(pin)}))
   ];}
-  dispose(){if(this.disposed)return;if(this.persistTimer)clearTimeout(this.persistTimer);this.persist();this.disposed=true;this.floating.dispose();screen.removeListener('display-removed',this.fit);screen.removeListener('display-metrics-changed',this.fit);for(const channel of ['pin:editor-invalidate','pin:drag-start','pin:drag-move','pin:drag-end'])ipcMain.removeAllListeners(channel);for(const pin of [...this.pins.values()]){pin.ocr.reset();pin.win.destroy();}for(const channel of ['pin:state','pin:action','pin:text','pin:source','pin:editor-export','pin:editor-recognize','pin:editor-analyze','pin:editor-vision-language','pin:editor-preview-formula','pin:editor-open-url','pin:editor-export-table','pin:editor-pin-formula','pin:editor-copy-text','pin:editor-send','pin:editor-action','pin:set-opacity','pin:set-zoom','pin:set-group','pin:update-text'])ipcMain.removeHandler(channel);}
+  dispose(){if(this.disposed)return;if(this.persistTimer)clearTimeout(this.persistTimer);this.persist();this.disposed=true;this.floating.dispose();screen.removeListener('display-removed',this.fit);screen.removeListener('display-metrics-changed',this.fit);for(const channel of ['pin:drag-start','pin:drag-move','pin:drag-end'])ipcMain.removeAllListeners(channel);this.stopEditorServices();for(const pin of [...this.pins.values()]){pin.ocr.reset();pin.win.destroy();}for(const channel of ['pin:state','pin:action','pin:text','pin:source','pin:editor-export','pin:editor-action','pin:set-opacity','pin:set-zoom','pin:set-group','pin:update-text'])ipcMain.removeHandler(channel);}
 }
