@@ -20,7 +20,7 @@ export interface RecordingManagerOptions {
   settings: () => RecordingSettings;
   prepareCapture: (mode: RecordingMode, bounds?: CaptureRect) => Promise<{ bounds: CaptureRect; displayId: number }>;
   captureFrame: (mode: RecordingMode, bounds: CaptureRect) => Promise<{ image: NativeImage; hostTimeMs: number }>;
-  releaseCapture: () => Promise<void> | void;
+  releaseCapture: () => void;
   subscribeInput: (handlers: RecordingInputHandlers) => Promise<() => void>;
   exportOutput: (output: RecordingOutput, action: RecordingExportAction) => Promise<string | null>;
   onChange: (state: RecordingSessionState | null) => void;
@@ -137,7 +137,7 @@ export class RecordingManager {
     this.releaseInput = undefined;
     if (this.capturePrepared) {
       this.capturePrepared = false;
-      try { await this.options.releaseCapture(); } catch (error) { failure ??= error; }
+      try { this.options.releaseCapture(); } catch (error) { failure ??= error; }
     }
     if (failure) throw failure;
   }
@@ -480,19 +480,17 @@ function jpegMovie(images: NativeImage[], delays: number[], quality: number, dur
   const minf = atom('minf', atom('vmhd', Buffer.from([0,0,0,1]), Buffer.alloc(8)), atom('dinf', dref), atom('stbl',stsd,stts,stsc,stsz,stco));
   return Buffer.concat([ftyp, atom('mdat', ...samples), atom('moov', mvhd, atom('trak', atom('tkhd', tkhdData), atom('mdia', mdhd, hdlr, minf)))]);
 }
-export async function encodeRecording(images: NativeImage[], delays: number[], format: RecordingFormat, workDirectory: string, quality: RecordingSettings['quality'] = 'high', encoding?: { media: RecordingMedia; manifest: RecordingMediaManifest; trimStartMs: number; trimEndMs: number }): Promise<Buffer> {
+export async function encodeRecording(images: NativeImage[], delays: number[], format: RecordingFormat, workDirectory: string, quality: RecordingSettings['quality'], encoding: { media: RecordingMedia; manifest: RecordingMediaManifest; trimStartMs: number; trimEndMs: number }): Promise<Buffer> {
   if (!images.length || images.length !== delays.length || delays.some(d => !Number.isFinite(d) || d <= 0)) throw Error('录制帧或时长无效');
   if (format === 'gif') return encodeRecordingGif(images, delays);
   if (format === 'webp') return encodeRecordingWebp(images, delays);
   if (format !== 'mp4') throw Error('录制格式无效');
   await mkdir(workDirectory, { recursive: true });
   const id = randomUUID(), source = join(workDirectory, `${id}.mov`), output = join(workDirectory, `${id}.mp4`);
-  const durationMs = encoding ? encoding.trimEndMs - encoding.trimStartMs : delays.reduce((sum, delay) => sum + delay, 0);
-  const media = encoding?.media ?? new NativeRecordingMedia();
-  const manifest = encoding?.manifest ?? { version: 1, sessionId: id, durationMs, intervals: [], audio: [] };
+  const { media, manifest, trimStartMs, trimEndMs } = encoding, durationMs = trimEndMs - trimStartMs;
   try {
     await writeFile(source, jpegMovie(images, delays, quality === 'high' ? 95 : quality === 'medium' ? 80 : 60, durationMs));
-    await media.muxMp4({ directory: workDirectory, videoPath: source, manifest, trimStartMs: encoding?.trimStartMs ?? 0, trimEndMs: encoding?.trimEndMs ?? durationMs, outputPath: output });
+    await media.muxMp4({ directory: workDirectory, videoPath: source, manifest, trimStartMs, trimEndMs, outputPath: output });
     return await readFile(output);
   } finally { await Promise.all([rm(source, { force: true }), rm(output, { force: true })]); }
 }

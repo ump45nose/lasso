@@ -9,7 +9,7 @@ export interface IntelligenceServiceAdapters {
   secrets: { available(): boolean; encrypt(value: string): Buffer; decrypt(value: Buffer): string };
   mediaConnection(): { baseURL: string; hasCredential: boolean };
   mediaCredential: () => string | undefined;
-  pinFormula: (latex: string, svg: string, current?: () => boolean) => Promise<void>;
+  pinFormula: (latex: string, svg: string, current: () => boolean) => Promise<void>;
 }
 type SavedConfig = Omit<VisionServiceConfig, 'hasCredential'> & { credential?: string };
 const pngSignature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
@@ -99,8 +99,8 @@ export class IntelligenceService {
     });
     return { kind: 'translate', blocks, sourceText: blocks.map(block => block.original).join('\n'), translatedText: blocks.map(block => block.translated).join('\n') };
   }
-  async pinFormula(latex: string, current?: () => boolean): Promise<void> {
-    if (current && !current()) throw Error('截图已更新，请重新识别公式');
+  async pinFormula(latex: string, current: () => boolean): Promise<void> {
+    if (!current()) throw Error('截图已更新，请重新识别公式');
     const normalized = normalizeLatex(latex), svg = renderFormula(normalized);
     await this.adapters.pinFormula(normalized, svg, current);
   }

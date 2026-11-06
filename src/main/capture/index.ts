@@ -115,7 +115,7 @@ export class CaptureManager {
       const acquired=await this.start(request.mode==='repeat'?'area':request.mode,request);
       return request.signal.aborted||!acquired?null:{};
     }
-  },area=>{this.regionsStore?.remember(area);if(this.customRequest?.presetId)this.regionsStore?.place(this.customRequest.presetId,area);});
+  },area=>{this.regionsStore.remember(area);if(this.customRequest?.presetId)this.regionsStore.place(this.customRequest.presetId,area);});
   private displayAdded=()=>{this.native.invalidate();};
   private displayRemoved=(_event:Electron.Event,display:Electron.Display)=>{if(display.id===this.displayId)this.displayChanged();else this.native.invalidate();};
   private displayMetrics=(_event:Electron.Event,display:Electron.Display,metrics:string[])=>{if(metrics.some(metric=>['bounds','scaleFactor','rotation'].includes(metric))){if(display.id===this.displayId)this.displayChanged();else this.native.invalidate();}};

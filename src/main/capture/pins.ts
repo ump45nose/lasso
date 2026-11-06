@@ -321,7 +321,7 @@ export class PinManager {
     if(existing){const origin=existing.restBounds??existing.normalBounds??existing.win.getBounds();existing.document=document;existing.storedDocument=serializePinnedDocument(document);existing.bytes=bytes;existing.state.revision++;existing.state.image=document.image.toDataURL();existing.state.editing=false;existing.state.editId=undefined;existing.restBounds=undefined;Object.assign(existing.state,document.image.getSize(),{lines:[],barcodes:[],status:'正在识别文字…'});this.restoreImageSize(existing,origin);this.publish(existing);this.focus(existing.state.id);this.recognize(existing);this.changed(existing);this.persist();return existing.state.id;}
     return this.open(document);
   }
-  async pinFormula(latex:string,svg:string,current?:()=>boolean){
+  async pinFormula(latex:string,svg:string,current:()=>boolean){
     await this.ready;
     const root=svg.match(/<svg\b[^>]*>/)?.[0],bounds={width:Number(root?.match(/\swidth="(\d+)px"/)?.[1])+32,height:Number(root?.match(/\sheight="(\d+)px"/)?.[1])+32};
     if(!Number.isSafeInteger(bounds.width)||!Number.isSafeInteger(bounds.height)||bounds.width<33||bounds.height<33||bounds.width*bounds.height>40_000_000||Math.max(bounds.width,bounds.height)>8192)throw Error('公式预览尺寸无效或过大');
@@ -339,7 +339,7 @@ export class PinManager {
         preview.once('closed',closed);preview.webContents.on('paint',paint);preview.webContents.invalidate();
       });
       if(image.isEmpty())throw Error('公式预览未能生成');
-      if(current&&!current())throw Error('图片已变化，请重试');
+      if(!current())throw Error('图片已变化，请重试');
       await this.open(imageDocument(image),undefined,{kind:'image',text:latex});
     }finally{if(!preview.isDestroyed())preview.destroy();}
   }

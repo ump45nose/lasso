@@ -226,9 +226,6 @@ export class MediaService {
     return this.publish();
   }
 
-  /** Test/host shutdown observation only. Hiding or closing a window never calls this. */
-  async waitForIdle(): Promise<void> { await this.active; }
-
   private async run(job: MediaJob, config: SavedConfig): Promise<void> {
     try {
       const model = job.referenceId ? job.editModel : job.generationModel;

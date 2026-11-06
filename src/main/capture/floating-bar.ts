@@ -18,7 +18,6 @@ export class FloatingPinBar {
     const bounds=this.win.getBounds(),area=screen.getDisplayMatching(bounds).workArea;
     this.win.setBounds(fitToWorkArea({...bounds,height:Math.max(52,Math.min(280,Math.round(height)))},area));
   };
-  get state(){return {enabled:this.enabled,ready:this.attached,visible:!!this.win&&!this.win.isDestroyed()&&this.win.isVisible()};}
   setEnabled(enabled:boolean){
     this.enabled=enabled;
     if(!enabled){this.win?.destroy();this.win=null;this.attached=false;return;}

@@ -215,7 +215,6 @@ export class TaskManager {
       }
     }
   }
-  get size() { return this.tasks.size; }
   private get active() { return this.activeId ? this.tasks.get(this.activeId) : undefined; }
   private status(task: Task): TaskActivity {
     if (task.agent) return task.agent.state.activity;

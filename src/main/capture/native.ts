@@ -34,12 +34,12 @@ export function excludedCaptureWindows(native: NativeCapture): number[] {
   }).map(window => native.windowID(window.getNativeWindowHandle()));
 }
 
-export function updateNativeAppearance(native:NativeCapture,settings:Pick<Settings,'fonts'|'importedFonts'>|undefined,screenshot:NativeCapturePreferences){
+export function updateNativeAppearance(native:NativeCapture,settings:Pick<Settings,'fonts'|'importedFonts'>,screenshot:NativeCapturePreferences){
   const theme=JSON.parse(readFileSync(join(__dirname,'native/capture-theme.json'),'utf8'));
   theme.icons=Object.fromEntries(Object.entries(theme.icons).map(([name,path])=>[name,join(__dirname,'native',path as string)]));
-  if(settings?.fonts.ui)theme.uiFonts.unshift(settings.fonts.ui);
-  if(settings?.fonts.mono)theme.monoFonts.unshift(settings.fonts.mono);
-  theme.fontFiles=settings?.importedFonts.map(font=>join(app.getPath('userData'),'fonts',font.file))??[];
+  if(settings.fonts.ui)theme.uiFonts.unshift(settings.fonts.ui);
+  if(settings.fonts.mono)theme.monoFonts.unshift(settings.fonts.mono);
+  theme.fontFiles=settings.importedFonts.map(font=>join(app.getPath('userData'),'fonts',font.file));
   Object.assign(theme,{showCrosshair:screenshot.showCrosshair,showLoupeGrid:screenshot.showLoupeGrid,loupeMagnification:screenshot.loupeMagnification,loupeColorFormat:screenshot.loupeColorFormat});
   native.warmup(theme,()=>{});
 }
