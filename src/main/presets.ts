@@ -1,8 +1,9 @@
 import { join } from 'node:path';
 import { defaultImageOptions, validImageOptions, imagePromptOptions } from '../shared/media';
 import { questionTemplate, questionWithoutContext, explanationTemplate, summaryTemplate } from '../shared/prompt-templates';
-import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import type { Preset, SelectionContext, AppPrompt } from '../shared/contracts';
+import { writeFileAtomic } from './files';
 
 const legacyTranslationTemplate = '请翻译以下内容：外文译为中文，中文译为英文。保留原意与格式，只输出译文。\n\n{{selection}}';
 // baoyu-translate's translation workflow, self-contained for both web and CLI targets.
@@ -72,8 +73,7 @@ export function readPresets(path: string): Preset[] {
 }
 export function writePresets(path: string, presets: Preset[]) {
   validatePresets(presets);
-  writeFileSync(path + '.tmp', JSON.stringify(presets, null, 2) + '\n', { mode: 0o600 });
-  renameSync(path + '.tmp', path);
+  writeFileAtomic(path, JSON.stringify(presets, null, 2) + '\n');
 }
 export function renderPrompt(preset: Preset, selection: string, appPrompt = '') {
   let template = !selection && preset.template === questionTemplate ? questionWithoutContext : preset.template;
@@ -132,9 +132,9 @@ export function migrateImagePresets(path: string, directory: string): Preset[] {
       job.generationModel ??= options.generationModel; job.editModel ??= options.editModel;
       if (job.presetId && !job.presetId.startsWith('image-preset-')) job.presetId = 'image-preset-' + job.presetId;
     }
-    writeFileSync(resultsPath + '.tmp', JSON.stringify(saved, null, 2) + '\n', { mode: 0o600 }); renameSync(resultsPath + '.tmp', resultsPath);
+    writeFileAtomic(resultsPath, JSON.stringify(saved, null, 2) + '\n');
   }
   const connection = { schemaVersion: 2, baseURL: legacy.baseURL || '', ...(legacy.credential ? { credential: legacy.credential } : {}) };
-  writeFileSync(configPath + '.tmp', JSON.stringify(connection, null, 2) + '\n', { mode: 0o600 }); renameSync(configPath + '.tmp', configPath);
+  writeFileAtomic(configPath, JSON.stringify(connection, null, 2) + '\n');
   return next;
 }

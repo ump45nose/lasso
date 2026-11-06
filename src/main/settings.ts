@@ -2,13 +2,14 @@ import { Worker } from 'node:worker_threads';
 import { app } from 'electron';
 import { join } from 'node:path';
 import { migrateScreenshotSettings, screenshotDefaults } from '../shared/screenshot-settings';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { defaultFonts, type GeneralSettings, type Settings } from '../shared/contracts';
 import { memoryDefaults, validMemorySettings } from '../shared/memory';
 import { captureModes } from '../shared/capture';
 import { defaultEditorShortcuts } from '../shared/shortcuts';
 import { normalizeVisionConfig, visionDefaults } from '../shared/intelligence';
+import { writeFileAtomic } from './files';
 
 /** New action entries win; absent entries migrate from their legacy aliases. */
 function syncActionShortcuts(settings: Settings): Settings {
@@ -49,7 +50,7 @@ export function readSettings(path: string): Settings {
   return existsSync(path) ? migrateSettings(JSON.parse(readFileSync(path, 'utf8')), defaultSettings()) : defaultSettings();
 }
 export function writeSettings(path: string, settings: Settings) {
-  writeFileSync(path, JSON.stringify(syncActionShortcuts(settings), null, 2) + '\n');
+  writeFileAtomic(path, JSON.stringify(syncActionShortcuts(settings), null, 2) + '\n');
 }
 
 export function validateGeneralSettings(value: GeneralSettings): void {

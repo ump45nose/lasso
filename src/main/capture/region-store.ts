@@ -1,6 +1,7 @@
-import { readFileSync, writeFileSync, existsSync, renameSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import type { SuccessfulCaptureArea } from '../../shared/capture-efficiency';
 import { validCaptureArea } from './efficiency-control';
+import { writeFileAtomic } from '../files';
 
 /** Device geometry is local state, separate from portable preset definitions. */
 export class RegionStore {
@@ -33,8 +34,6 @@ export class RegionStore {
   }
   /** Call after the persistence preference changes; in-memory repeat stays available. */
   save() {
-    const tmp = this.path + '.tmp';
-    writeFileSync(tmp, JSON.stringify({ last: this.persistent() ? this.last : null, placements: this.placements }) + '\n', { mode: 0o600 });
-    renameSync(tmp, this.path);
+    writeFileAtomic(this.path, JSON.stringify({ last: this.persistent() ? this.last : null, placements: this.placements }) + '\n');
   }
 }

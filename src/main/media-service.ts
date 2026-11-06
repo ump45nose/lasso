@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { validImageOptions, validImageSize, imageRequestSize, type ImageOptions, type MediaConfig, type MediaConfigInput, type MediaJob, type MediaReference } from '../shared/media';
+import { writeFileAtomic } from './files';
 
 /** Appearance comes from the host's current settings and is never stored with image jobs. */
 export interface MediaServiceState { jobs: MediaJob[]; reference: MediaReference | null }
@@ -83,7 +84,7 @@ export class MediaService {
         catch { throw Error('系统安全存储未能加密凭据，未保存配置'); }
       } else delete config.credential;
     }
-    this.atomic('config.json', JSON.stringify(config, null, 2) + '\n'); this.config = config;
+    writeFileAtomic(join(this.directory, 'config.json'), JSON.stringify(config, null, 2) + '\n'); this.config = config;
     return this.connection();
   }
 
@@ -300,7 +301,7 @@ export class MediaService {
     return normalized;
   }
   private saveImage(id: string, image: NormalizedMediaImage): MediaReference {
-    this.atomic(join('images', id + '.png'), image.png);
+    writeFileAtomic(this.imagePath(id), image.png);
     return { id, width: image.width, height: image.height, thumbnail: image.thumbnail };
   }
   private readImage(id: string): Buffer {
@@ -381,17 +382,13 @@ export class MediaService {
       for (const image of job.images || []) used.add(image.id);
     }
     const references = [...this.references.values()].filter(image => used.has(image.id));
-    this.atomic('results.json', JSON.stringify({ version: 1, jobs, references, referenceId: this.referenceId } satisfies SavedMedia, null, 2) + '\n');
+    writeFileAtomic(join(this.directory, 'results.json'), JSON.stringify({ version: 1, jobs, references, referenceId: this.referenceId } satisfies SavedMedia, null, 2) + '\n');
     this.jobs = jobs;
     // Commit metadata before removing bytes, so a failed write never destroys a recoverable input.
     for (const id of this.references.keys()) if (!used.has(id)) {
       this.references.delete(id);
       if (existsSync(this.imagePath(id))) unlinkSync(this.imagePath(id));
     }
-  }
-  private atomic(file: string, data: string | Buffer) {
-    const path = join(this.directory, file), temporary = path + '.tmp';
-    writeFileSync(temporary, data, { mode: 0o600 }); renameSync(temporary, path);
   }
   private publish(): MediaServiceState { const snapshot = this.snapshot(); this.adapters.changed?.(snapshot); return snapshot; }
 }

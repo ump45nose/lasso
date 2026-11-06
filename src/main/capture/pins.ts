@@ -2,7 +2,7 @@ import type { RecordingSessionState } from '../../shared/recording';
 import { encodeRecordingGif, type RecordingOutput } from './recording';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
 import { randomUUID } from 'node:crypto';
-import { constants, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { constants, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { copyFile as copyDiskFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +14,7 @@ import { FloatingPinBar } from './floating-bar';
 import { OCRService } from './ocr';
 import { assertPng, contentImage, decorateScreenshot, copyFile, copyImage, copyPath, copyPng, decodeFrameImage, deliverImage, encodeScreenshot, exportMode, formatScreenshotName, runAfterSaveAction, saveRecordingOutput } from './output';
 import { fitToWorkArea } from '../position';
+import { writeFileAtomic } from '../files';
 import type { IntelligenceService } from './intelligence';
 import { editorSettings, handleEditorServices, validCrop, type EditorSession } from './editor-services';
 
@@ -149,11 +150,10 @@ export class PinManager {
     const directory=dirname(this.storage),records=[...this.pins.values()].map(pin=>this.snapshot(pin)),kept=new Set([...records,...this.closed].map(pin=>pin.id));
     const store=(pin:SavedPin):DiskPin=>{
       const {document,...metadata}=pin,documentFile=pin.id+'.document.json';
-      if(this.savedDocuments.get(pin.id)!==document){const path=join(directory,documentFile);writeFileSync(path+'.tmp',JSON.stringify(document),{mode:0o600});renameSync(path+'.tmp',path);this.savedDocuments.set(pin.id,document);}
+      if(this.savedDocuments.get(pin.id)!==document){writeFileAtomic(join(directory,documentFile),JSON.stringify(document));this.savedDocuments.set(pin.id,document);}
       return {...metadata,documentFile};
     };
-    const temporary=this.storage+'.tmp';
-    writeFileSync(temporary,JSON.stringify({schemaVersion:1,active:records.map(store),closed:this.closed.map(store)}),{mode:0o600});renameSync(temporary,this.storage);
+    writeFileAtomic(this.storage,JSON.stringify({schemaVersion:1,active:records.map(store),closed:this.closed.map(store)}));
     for(const id of this.savedDocuments.keys())if(!kept.has(id)){rmSync(join(directory,id+'.document.json'),{force:true});this.savedDocuments.delete(id);}
     for(const file of readdirSync(directory)){const match=file.match(/^([\da-f-]{36})\.document\.json$/i);if(match&&!kept.has(match[1]))rmSync(join(directory,file),{force:true});}
   }

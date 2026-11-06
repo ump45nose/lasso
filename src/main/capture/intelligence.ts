@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CaptureRect } from '../../shared/capture';
 import { normalizeVisionConfig, validateVisionConfig, visionDefaults, type IntelligenceRequest, type IntelligenceResult, type TranslationBlock, type VisionServiceConfig, type VisionServiceInput } from '../../shared/intelligence';
+import { writeFileAtomic } from '../files';
 
 export interface IntelligenceServiceAdapters {
   secrets: { available(): boolean; encrypt(value: string): Buffer; decrypt(value: Buffer): string };
@@ -41,9 +42,7 @@ export class IntelligenceService {
         catch { throw Error('系统安全存储未能加密凭据，未保存配置'); }
       }
     }
-    const path = join(this.directory, 'config.json');
-    writeFileSync(path + '.tmp', JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-    renameSync(path + '.tmp', path); this.config = config;
+    writeFileAtomic(join(this.directory, 'config.json'), JSON.stringify(config, null, 2) + '\n'); this.config = config;
     return this.connection();
   }
   async analyze(input: IntelligenceRequest): Promise<IntelligenceResult> {

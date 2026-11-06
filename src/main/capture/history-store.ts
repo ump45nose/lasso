@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { CaptureRect } from '../../shared/capture';
 import { validateCaptureHistoryPolicy, type CaptureHistoryItem, type CaptureHistoryPolicy, type CaptureHistoryState } from '../../shared/history-sync';
 import { validateAnnotations, type PinnedDocument } from './document';
+import { writeFileAtomic } from '../files';
 
 type Entry = Omit<CaptureHistoryItem, 'thumbnailDataUrl'> & { storage: string };
 interface HistoryMeta { id?: string; captureKind?: string; region?: CaptureRect; displayId?: number; ocrSnippet?: string; createdAt?: number }
@@ -27,9 +28,7 @@ export class CaptureHistoryStore {
   private index(items = this.entries): string { return JSON.stringify({ version: 1, items }) + '\n'; }
   private bytes(items = this.entries): number { return items.reduce((sum, item) => sum + item.byteSize, Buffer.byteLength(this.index(items))); }
   private commit(items: Entry[]) {
-    const temp = join(this.directory, 'index.json.tmp');
-    writeFileSync(temp, this.index(items), { mode: 0o600 });
-    renameSync(temp, join(this.directory, 'index.json'));
+    writeFileAtomic(join(this.directory, 'index.json'), this.index(items));
     const previous = this.entries;
     this.entries = items;
     for (const item of previous) if (!items.some(next => next.storage === item.storage)) rmSync(join(this.directory, item.storage), { recursive: true, force: true });

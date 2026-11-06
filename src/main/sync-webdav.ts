@@ -1,6 +1,6 @@
 import { dialog, safeStorage } from 'electron';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Preset, Settings } from '../shared/contracts';
 import type { PortableConfigBundle, WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
@@ -10,6 +10,7 @@ import { validMemorySettings } from '../shared/memory';
 import { validatePresets } from './presets';
 import { migrateSettings, validateGeneralSettings } from './settings';
 import { validateFonts } from './fonts';
+import { writeFileAtomic } from './files';
 
 interface ConfigAccess { readSettings(): Settings; writeSettings(settings: Settings): void; readPresets(): Preset[]; writePresets(presets: Preset[]): void }
 const configDefaults = (): WebDavConfig => ({ enabled: false, url: '', remotePath: 'Lasso/config.json', username: '', autoSync: false });
@@ -80,14 +81,10 @@ export class WebDavSyncService {
     }
   }
   private path(name: string) { return join(this.directory, name); }
-  private atomic(name: string, data: string | Buffer) {
-    const path = this.path(name);
-    writeFileSync(path + '.tmp', data, { mode: 0o600 }); chmodSync(path + '.tmp', 0o600); renameSync(path + '.tmp', path);
-  }
   config(): WebDavConfig { return { ...this.saved, hasPassword: existsSync(this.path('webdav-secret.json')) }; }
   private persist() {
     const { hasPassword, status, message, ...saved } = this.saved;
-    this.atomic('webdav-config.json', JSON.stringify(saved) + '\n');
+    writeFileAtomic(this.path('webdav-config.json'), JSON.stringify(saved) + '\n');
   }
   private validateConfig(input: WebDavConfigInput) {
     if (!input || typeof input.enabled !== 'boolean' || typeof input.autoSync !== 'boolean' || typeof input.url !== 'string' || typeof input.username !== 'string' || /[\r\n:]/.test(input.username) || typeof input.remotePath !== 'string' || !input.remotePath.trim() || input.remotePath.split('/').filter(Boolean).some(part => part === '.' || part === '..') || /[\\\x00-\x1f?#]/.test(input.remotePath) || input.remotePath.endsWith('/')) throw Error('WebDAV 配置无效');
@@ -108,11 +105,11 @@ export class WebDavSyncService {
     this.saved = next; this.persist(); this.scheduleAutoSync(); return this.config();
   }
   private savePassword(password: string) {
-    if (safeStorage.isEncryptionAvailable()) { this.atomic('webdav-secret.json', JSON.stringify({ mode: 'system', value: safeStorage.encryptString(password).toString('base64') })); rmSync(this.path('webdav-secret.key'), { force: true }); return; }
+    if (safeStorage.isEncryptionAvailable()) { writeFileAtomic(this.path('webdav-secret.json'), JSON.stringify({ mode: 'system', value: safeStorage.encryptString(password).toString('base64') })); rmSync(this.path('webdav-secret.key'), { force: true }); return; }
     const keyPath = this.path('webdav-secret.key'), key = existsSync(keyPath) ? readFileSync(keyPath) : randomBytes(32);
-    this.atomic('webdav-secret.key', key);
+    writeFileAtomic(keyPath, key);
     const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', key, iv), encrypted = Buffer.concat([cipher.update(password, 'utf8'), cipher.final()]);
-    this.atomic('webdav-secret.json', JSON.stringify({ mode: 'local', iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: encrypted.toString('base64') }));
+    writeFileAtomic(this.path('webdav-secret.json'), JSON.stringify({ mode: 'local', iv: iv.toString('base64'), tag: cipher.getAuthTag().toString('base64'), value: encrypted.toString('base64') }));
   }
   private password(): string {
     if (!existsSync(this.path('webdav-secret.json'))) return '';
