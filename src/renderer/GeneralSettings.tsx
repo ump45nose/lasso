@@ -65,7 +65,7 @@ function ScriptSettings({ actions, save }: { actions: ScriptAction[]; save: (act
   </section>;
 }
 
-function SystemAppearanceSettings({ settings }: { settings: ShellState['settings'] }) {
+function useGeneralSave(settings: Preferences) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const { launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates } = settings;
   async function save(patch: Partial<Preferences>) {
@@ -73,6 +73,11 @@ function SystemAppearanceSettings({ settings }: { settings: ShellState['settings
     try { const result = await window.desktop.saveGeneral({ launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates, ...patch }); if (result.error) throw Error(result.error); setNotice('设置已保存'); return true; }
     catch (error) { setError(String(error)); return false; } finally { setBusy(false); }
   }
+  return { busy, error, notice, setError, save };
+}
+
+function SystemAppearanceSettings({ settings }: { settings: ShellState['settings'] }) {
+  const { busy, error, notice, save } = useGeneralSave(settings), { launchAtLogin, themeMode, autoCheckUpdates } = settings;
   return <section className="l-set-section">
     <fieldset className="l-general-controls" disabled={busy}>
       <div id="system-settings" className="l-set-row-head"><h3>系统与外观</h3><span>立即保存</span></div>
@@ -86,13 +91,7 @@ function SystemAppearanceSettings({ settings }: { settings: ShellState['settings
 }
 
 function EditorScriptSettings({ settings }: { settings: ShellState['settings'] }) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const { launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates } = settings;
-  async function save(patch: Partial<Preferences>) {
-    setBusy(true); setError(''); setNotice('');
-    try { const result = await window.desktop.saveGeneral({ launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates, ...patch }); if (result.error) throw Error(result.error); setNotice('设置已保存'); return true; }
-    catch (error) { setError(String(error)); return false; } finally { setBusy(false); }
-  }
+  const { busy, error, notice, setError, save } = useGeneralSave(settings), { toolbarTools, mouseActions, scriptActions } = settings;
   function toggleTool(id: string) {
     const current = toolbarTools.length ? toolbarTools : toolbarOptions.map(([tool]) => tool);
     const next = current.includes(id) ? current.filter(tool => tool !== id) : [...current, id];
@@ -245,9 +244,9 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
   const resident = state.tasks.filter(task => task.residency === 'resident').length, released = state.tasks.length - resident;
   const captureDot = capture.status === 'active' ? 'complete' : capture.status === 'error' ? 'error' : capture.status === 'permission' ? 'waiting' : 'released';
   return <>
-    <SubNav label="通用设置二级分类" value={sub} options={subTabs} onChange={setSub} />
+    <SubNav scope="general" label="通用设置二级分类" value={sub} options={subTabs} onChange={setSub} />
     <div ref={bodyRef} className="l-set-body">
-      <SubPane id="system" active={sub === 'system'}>
+      <SubPane scope="general" id="system" active={sub === 'system'}>
         <SystemAppearanceSettings settings={settings} />
         <div className="l-set-row-head l-gap"><h3>划词</h3></div>
         <ul className="l-group">
@@ -306,7 +305,7 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
         </ul>
         <button className="l-btn danger l-quit" onClick={() => void window.desktop.act('quit')}>退出 Lasso</button>
       </SubPane>
-      <SubPane id="shortcuts" active={sub === 'shortcuts'}>
+      <SubPane scope="general" id="shortcuts" active={sub === 'shortcuts'}>
         <div id="global-shortcuts" className="l-set-row-head"><h3>全局动作快捷键</h3><span>F1–F24 或组合键 · 立即保存</span></div>
         <ul className="l-group">
           {globalActionIds.map(action => <ShortcutField key={action} id={'shortcut-' + action} label={globalActionLabels[action]} help={actionHelp[action]} value={settings.actionShortcuts[action] || ''} save={shortcut => window.desktop.saveActionShortcut(action, shortcut)} error={action === 'open-launcher' ? state.shortcutError : null} />)}
@@ -322,10 +321,10 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
         </li>) : <li><p className="l-field-help">尚未添加忽略应用</p></li>}</ul>
         {ignoredError && <p className="l-field-help error" role="alert">{ignoredError}</p>}
       </SubPane>
-      <SubPane id="editor" active={sub === 'editor'}>
+      <SubPane scope="general" id="editor" active={sub === 'editor'}>
         <EditorScriptSettings settings={settings} />
       </SubPane>
-      <SubPane id="sync" active={sub === 'sync'}>
+      <SubPane scope="general" id="sync" active={sub === 'sync'}>
         <ConfigSyncSettings />
       </SubPane>
       {error && <p className="l-field-help error" role="alert">{error}</p>}

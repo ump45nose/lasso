@@ -83,9 +83,9 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
     catch (e) { setError(String(e)); } finally { setSaving(false); }
   }
   return <>
-    <SubNav label="截图设置二级分类" value={sub} options={subTabs} onChange={setSub} />
+    <SubNav scope="screenshot" label="截图设置二级分类" value={sub} options={subTabs} onChange={setSub} />
     <div ref={bodyRef} className="l-set-body l-shot-settings">
-      <SubPane id="capture" active={sub === 'capture'}>
+      <SubPane scope="screenshot" id="capture" active={sub === 'capture'}>
         <section id="screenshot-advanced" className="l-set-section">
           <div className="l-set-row-head"><h3>高级采集</h3><span>保存后用于下一次截图</span></div>
           <ul className="l-group">
@@ -135,16 +135,16 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
         <button className="l-btn small" aria-expanded={adding} disabled={!supported.length} onClick={() => setAdding(!adding)}>添加语言</button>
         <AnimatePresence>{adding && <motion.div className="l-shot-languages" {...collapse}>{supported.filter(language => !draft.languages.includes(language)).map(language => <button className="l-btn small" key={language} onClick={() => { patch({ languages: [...draft.languages, language] }); setAdding(false); }}>{languageName(language)}</button>)}</motion.div>}</AnimatePresence>
       </SubPane>
-      <SubPane id="history" active={sub === 'history'}>
+      <SubPane scope="screenshot" id="history" active={sub === 'history'}>
         <CaptureHistory policy={draft.history} change={history => patch({ history })} pinned={() => setPinRevision(value => value + 1)} />
       </SubPane>
-      <SubPane id="pins" active={sub === 'pins'}>
+      <SubPane scope="screenshot" id="pins" active={sub === 'pins'}>
         <PinWorkspace settings={settings.pinWorkspace} revision={pinRevision} />
       </SubPane>
-      <SubPane id="vision" active={sub === 'vision'}>
+      <SubPane scope="screenshot" id="vision" active={sub === 'vision'}>
         <VisionSettings />
       </SubPane>
-      <SubPane id="recording" active={sub === 'recording'}>
+      <SubPane scope="screenshot" id="recording" active={sub === 'recording'}>
         <section id="screenshot-recording" className="l-set-section">
           <div className="l-set-row-head"><h3>屏幕录制与教学演示</h3><button className="l-text-btn" onClick={() => void window.desktop.recordingPanel(true)}>打开录制面板</button></div>
           <ul className="l-group">

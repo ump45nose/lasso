@@ -108,8 +108,3 @@ export function PinWorkspace({ settings, revision }: { settings: PinWorkspaceSet
     {busy && <p className="l-field-help" role="status">正在更新工作空间…</p>}{error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
   </section>;
 }
-
-export function CaptureWorkspaceSettings({ history, changeHistory, workspace }: { history: CaptureHistoryPolicy; changeHistory: (value: CaptureHistoryPolicy) => void; workspace: PinWorkspaceSettings }) {
-  const [revision, setRevision] = useState(0);
-  return <><CaptureHistory policy={history} change={changeHistory} pinned={() => setRevision(value => value + 1)} /><PinWorkspace settings={workspace} revision={revision} /></>;
-}

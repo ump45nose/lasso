@@ -188,10 +188,14 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const move = async (w, x, y) => { w.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) }); await wait(450); };
     const center = async (w, selector) => page(w, `(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r ? [r.x + r.width / 2, r.y + r.height / 2] : null; })()`);
     const ready = async (w, expression) => { for (let pass = 0; pass < 100; pass++) { if (await page(w, expression)) return; await wait(50); } throw Error('UI did not become ready: ' + expression); };
+    // Inactive settings sub-panes stay mounted but hidden; select the owning tab before scrolling to or acting on a control inside one.
+    const showPane = `async element => { const pane = element.closest('[role="tabpanel"][hidden]'); if (!pane) return; document.querySelector('[role="tab"][aria-controls="' + pane.id + '"]').click(); for (let frame = 0; pane.hidden; frame++) { if (frame === 60) throw Error('Settings pane did not open: ' + pane.id); await new Promise(requestAnimationFrame); } }`;
+    const reveal = async (w, selector) => { await page(w, `(${showPane})(document.querySelector(${JSON.stringify(selector)}))`); };
     const scrollTo = async (w, selector, block = 'start') => {
       await ready(w, `Boolean(document.querySelector(${JSON.stringify(selector)}))`);
       await page(w, `(async () => {
         const element=document.querySelector(${JSON.stringify(selector)});
+        await (${showPane})(element);
         element.scrollIntoView({block:${JSON.stringify(block)},behavior:'instant'});
         let previous='',stable=0;
         for(let frame=0;frame<120;frame++){
@@ -216,7 +220,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await page(w, `Array.from(document.querySelectorAll('.l-set-nav button')).find(b => b.textContent === ${JSON.stringify(label)}).click()`); await wait(400);
     };
     if(!find()||!find('action-bar'))throw Error('UI startup failed: '+JSON.stringify(BrowserWindow.getAllWindows().map(w=>({id:w.id,url:w.webContents.getURL()}))));
-    global.uiShots = { captureOnly, surfacesOnly, focusedCases, fs, path, wait, ready, scrollTo, settingsTab, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
+    global.uiShots = { captureOnly, surfacesOnly, focusedCases, fs, path, wait, ready, showPane, reveal, scrollTo, settingsTab, find, page, move, center, out, fixtures, ipcMain, BrowserWindow, app,
       save: async (w, name) => {
         await page(w, `(async()=>{await document.fonts.ready;for(let frame=0;frame<120;frame++){await new Promise(requestAnimationFrame);if(!document.getAnimations().some(a=>a.playState==='running'&&Number.isFinite(a.effect?.getComputedTiming().endTime))&&[...document.querySelectorAll('.l-seg')].every(group=>{const active=group.querySelector('[aria-checked="true"]'),thumbs=group.querySelectorAll('.l-seg-thumb');if(!active)return thumbs.length===0;if(thumbs.length!==1||!active.contains(thumbs[0]))return false;const style=getComputedStyle(thumbs[0]);return Number(style.opacity)===1&&new DOMMatrixReadOnly(style.transform).isIdentity&&!thumbs[0].getAnimations().some(animation=>animation.playState==='running');}))return;}throw Error('Motion did not settle before capture');})()`);
         fs.writeFileSync(path.join(out, name + '.png'), (await w.webContents.capturePage()).toPNG()); return name;
@@ -282,7 +286,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
   // Main window: current view, command palette, settings.
   saved.push(...await main(async () => {
-    const { find, page, wait, save, settingsTab } = global.uiShots, m = find(), names = [];
+    const { find, page, wait, save, settingsTab, scrollTo, reveal } = global.uiShots, m = find(), names = [];
     // Keep this isolated fixture visible while the user's foreground app changes.
     await page(m, 'window.desktop.getState().then(s => s.pinned ? undefined : window.desktop.act("pin"))');
     m.show(); m.focus(); await wait(1500);
@@ -321,24 +325,24 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     shell = await page(m, 'window.desktop.getState()');
     await page(m, "window.desktop.act('settings')"); await wait(700); names.push(await save(m, 'settings'));
     await settingsTab(m, '截图');
-    await page(m, `document.querySelector('.l-shot-policy').closest('ul').previousElementSibling.scrollIntoView({block:'start',behavior:'instant'})`);await wait(200);
+    await scrollTo(m, '.l-set-row-head:has(+ .l-group .l-shot-policy)');await wait(200);
     names.push(await save(m, 'settings-screenshot-actions'));
     await page(m,`window.desktop.act('custom-capture')`);await wait(400);names.push(await save(m,'custom-capture'));await settingsTab(m,'截图');
-    await page(m, `document.querySelector('[aria-label="全屏截图后复制"]').click(); document.querySelector('[aria-label="全屏截图后保存"]').click(); document.querySelector('[aria-label="截图保存格式"] button:last-child').click()`); await wait(250);
-    await page(m, `document.getElementById('screenshot-directory').scrollIntoView({block:'center'})`); await wait(200); names.push(await save(m, 'settings-screenshot-save'));
-    await page(m, `document.querySelector('[aria-label="窗口截图背景"] button:last-child').click(); document.querySelector('[aria-label="保留窗口阴影"]').click()`); await wait(200); await page(m, `document.getElementById('screenshot-color').scrollIntoView({block:'center'})`); await wait(350); names.push(await save(m, 'settings-screenshot-background'));
-    await page(m, `document.getElementById('screenshot-height').scrollIntoView({block:'start'}); Array.from(document.querySelectorAll('button')).find(button => button.textContent === '添加语言').click()`); await wait(250); names.push(await save(m, 'settings-screenshot-ocr'));
+    await reveal(m, '[aria-label="全屏截图后复制"]'); await page(m, `document.querySelector('[aria-label="全屏截图后复制"]').click(); document.querySelector('[aria-label="全屏截图后保存"]').click(); document.querySelector('[aria-label="截图保存格式"] button:last-child').click()`); await wait(250);
+    await scrollTo(m, '#screenshot-directory', 'center'); await wait(200); names.push(await save(m, 'settings-screenshot-save'));
+    await page(m, `document.querySelector('[aria-label="窗口截图背景"] button:last-child').click(); document.querySelector('[aria-label="保留窗口阴影"]').click()`); await wait(200); await scrollTo(m, '#screenshot-color', 'center'); await wait(350); names.push(await save(m, 'settings-screenshot-background'));
+    await scrollTo(m, '#screenshot-height'); await page(m, `Array.from(document.querySelectorAll('button')).find(button => button.textContent === '添加语言').click()`); await wait(250); names.push(await save(m, 'settings-screenshot-ocr'));
     if(global.uiShots.captureOnly)return names;
     await settingsTab(m, '通用');
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true, settings: { ...shell.settings, shortcut: 'F1', captureShortcuts: { ...shell.settings.captureShortcuts, area: 'F2' }, actionShortcuts: { ...shell.settings.actionShortcuts, 'open-launcher': 'F1', area: 'F2' } } }); await wait(250);
-    await page(m, `document.getElementById('shortcut-open-launcher').scrollIntoView({block:'center'})`); await wait(150);
+    await scrollTo(m, '#shortcut-open-launcher', 'center'); await wait(150);
     if (!await page(m, `document.getElementById('shortcut-open-launcher').textContent.includes('F1') && document.getElementById('shortcut-area').textContent.includes('F2')`)) throw Error('Single function keys did not render in shortcut settings');
     names.push(await save(m, 'settings-shortcuts'));
-    await page(m, `document.getElementById('shortcut-rect').scrollIntoView({block:'center'})`); await wait(150); names.push(await save(m, 'settings-rect-shortcut'));
+    await scrollTo(m, '#shortcut-rect', 'center'); await wait(150); names.push(await save(m, 'settings-rect-shortcut'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true });
-    await page(m, `document.getElementById('resident-suite').scrollIntoView({block:'start'})`); await wait(200);
+    await scrollTo(m, '#resident-suite'); await wait(200);
     names.push(await save(m, 'settings-resident-suite'));
-    await page(m, `document.getElementById('memory-settings').scrollIntoView({block:'start'})`); await wait(250);
+    await scrollTo(m, '#memory-settings'); await wait(250);
     names.push(await save(m, 'settings-memory'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true, settings: { ...shell.settings, memory: {enabled:false,idleMinutes:45} } }); await wait(200);
     names.push(await save(m, 'settings-memory-disabled'));
@@ -420,13 +424,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   }));
   // Stage 2 settings use the real isolated configuration IPC; only native pickers are fixtures.
   saved.push(...await main(async () => {
-    const { find, page, wait, ready, scrollTo, settingsTab, save, ipcMain, fs, path, app, out } = global.uiShots, names = [], checks = [], m = find();
+    const { find, page, wait, ready, showPane, scrollTo, settingsTab, save, ipcMain, fs, path, app, out } = global.uiShots, names = [], checks = [], m = find();
     if (global.uiShots.surfacesOnly) return names;
     const original = await page(m, 'window.desktop.getState().then(s => s.settings)');
     const expect = (ok, message) => { if (!ok) throw Error(message); };
-    const click = async selector => { await page(m, `document.querySelector(${JSON.stringify(selector)}).click()`); await wait(180); };
-    const fill = async (id, value) => { await page(m, `(() => { const e=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true})); })()`); await wait(100); };
-    const choice = async (label, text) => { await page(m, `Array.from(document.querySelectorAll('[aria-label="${label}"] button')).find(b=>b.textContent===${JSON.stringify(text)}).click()`); await wait(120); };
+    const click = async selector => { await page(m, `(async () => { const e=document.querySelector(${JSON.stringify(selector)});await (${showPane})(e);e.click(); })()`); await wait(180); };
+    const fill = async (id, value) => { await page(m, `(async () => { const e=document.getElementById(${JSON.stringify(id)});await (${showPane})(e);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true})); })()`); await wait(100); };
+    const choice = async (label, text) => { await page(m, `(async () => { const b=Array.from(document.querySelectorAll('[aria-label="${label}"] button')).find(b=>b.textContent===${JSON.stringify(text)});await (${showPane})(b);b.click(); })()`); await wait(120); };
     const record = async (id, key, code) => { await click('#' + id); await page(m, `document.getElementById(${JSON.stringify(id)}).dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},code:${JSON.stringify(code)},bubbles:true}))`); await wait(250); };
     const settings = () => page(m, 'window.desktop.getState().then(s => s.settings)');
     const picker = ipcMain._invokeHandlers.get('shell:choose-path');
@@ -471,15 +475,15 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   }));
   // Vision settings use the real service/configuration IPC with synthetic safeStorage.
   saved.push(...await main(async () => {
-    const {find,page,wait,ready,scrollTo,settingsTab,save,ipcMain,fs,path,app,out}=global.uiShots,names=[],receipts=[],m=find();
+    const {find,page,wait,ready,showPane,reveal,scrollTo,settingsTab,save,ipcMain,fs,path,app,out}=global.uiShots,names=[],receipts=[],m=find();
     if(global.uiShots.surfacesOnly)return names;
     const original=await page(m,'window.desktop.visionConfig()'),media=await page(m,'window.desktop.mediaConfig()'),handler=ipcMain._invokeHandlers.get('shell:vision-config-save');
     const expect=(ok,message)=>{if(!ok)throw Error(message);};
     ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',async(event,input)=>{const {credential,...config}=input;receipts.push({...config,credentialAction:credential===undefined?'keep':credential?'replace':'clear'});const result=await handler(event,input);expect(!('credential'in result),'Vision response leaked credential');return result;});
-    const click=async selector=>{await page(m,`document.querySelector(${JSON.stringify(selector)}).click()`);await wait(200);};
-    const fill=async(id,value)=>{await page(m,`(()=>{const e=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(120);};
+    const click=async selector=>{await page(m,`(async()=>{const e=document.querySelector(${JSON.stringify(selector)});await (${showPane})(e);e.click();})()`);await wait(200);};
+    const fill=async(id,value)=>{await page(m,`(async()=>{const e=document.getElementById(${JSON.stringify(id)});await (${showPane})(e);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(120);};
     const shot=async name=>{await scrollTo(m,'#screenshot-vision .l-set-row-head');names.push(await save(m,name));};
-    const commit=async()=>{await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务').click()`);await ready(m,`document.querySelector('#screenshot-vision [role="status"]')?.textContent.includes('已保存')`);};
+    const commit=async()=>{await page(m,`(async()=>{const b=[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务');await (${showPane})(b);b.click();})()`);await ready(m,`document.querySelector('#screenshot-vision [role="status"]')?.textContent.includes('已保存')`);};
     try {
       await page(m,`window.desktop.saveMediaConfig({baseURL:'https://images.example.invalid/v1',credential:'synthetic-media-key'})`);
       await settingsTab(m,'截图');await ready(m,`Boolean(document.querySelector('#screenshot-vision input'))`);await shot('settings-vision-reuse');
@@ -493,7 +497,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await settingsTab(m,'通用');await settingsTab(m,'截图');await ready(m,`document.getElementById('vision-model')?.value==='vision-fixture-edited'`);expect(await page(m,`document.querySelector('[aria-label="默认翻译语言"] [aria-checked="true"]').textContent==='日文'`),'Vision language did not restore');
       const disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')),secretDisk=fs.readFileSync(path.join(app.getPath('userData'),'vision-service/config.json'),'utf8');
       const {hasCredential,...persisted}=await page(m,'window.desktop.visionConfig()');expect(JSON.stringify(disk.vision)===JSON.stringify(persisted)&&!secretDisk.includes('synthetic-vision-key'),'Vision settings persistence or secret isolation failed');
-      await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='清除已存独立凭据').click()`);await wait(100);await commit();expect(!(await page(m,'window.desktop.visionConfig()')).hasCredential&&receipts.at(-1).credentialAction==='clear','Independent key did not clear');await shot('settings-vision-cleared');
+      await reveal(m,'#screenshot-vision');await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='清除已存独立凭据').click()`);await wait(100);await commit();expect(!(await page(m,'window.desktop.visionConfig()')).hasCredential&&receipts.at(-1).credentialAction==='clear','Independent key did not clear');await shot('settings-vision-cleared');
       await click('[aria-label="复用生图 API 凭据"]');await commit();expect((await page(m,'window.desktop.visionConfig()')).hasCredential,'Media credential was not reused');
       fs.writeFileSync(path.join(out,'stage-6-settings.json'),JSON.stringify({status:'passed',receipts,persisted,checks:['复用凭据、独立凭据保存/留空保留/清除','URL校验、默认语言、切页恢复','真实IPC与磁盘一致、返回值/输入/文件脱敏'],secrets:'synthetic safeStorage; no system keychain'},null,2));
     } finally {ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',handler);await page(m,`(async()=>{await window.desktop.saveVisionConfig({...${JSON.stringify(original)},credential:''});await window.desktop.saveMediaConfig({baseURL:${JSON.stringify(media.baseURL)},credential:''});await window.desktop.act('close-settings');})()`);}
@@ -501,12 +505,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   }));
   // Stage 4 settings: actions are checked against the persisted fixture receipts.
   saved.push(...await main(async () => {
-    const {find,page,wait,ready,scrollTo,settingsTab,save,fs,path,out,stage4}=global.uiShots,names=[],checks=[],m=find(),s=stage4.state;
+    const {find,page,wait,ready,showPane,reveal,scrollTo,settingsTab,save,fs,path,out,stage4}=global.uiShots,names=[],checks=[],m=find(),s=stage4.state;
     if(global.uiShots.surfacesOnly)return names;
     const originalWorkspace=structuredClone(s.workspace.settings),originalScreenshot=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)');
     const expect=(ok,text)=>{if(!ok)throw Error(text);};
-    const click=async(scope,text)=>{await page(m,`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(b=>b.textContent.trim().startsWith(${JSON.stringify(text)}));if(!b||b.disabled)throw Error('Unavailable stage 4 button: '+${JSON.stringify(text)});b.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});b.click();})()`);await wait(240);};
-    const fill=async(selector,value)=>{await page(m,`(()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing stage 4 input');e.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(260);};
+    const click=async(scope,text)=>{await page(m,`(async()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(b=>b.textContent.trim().startsWith(${JSON.stringify(text)}));if(!b||b.disabled)throw Error('Unavailable stage 4 button: '+${JSON.stringify(text)});await (${showPane})(b);b.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});b.click();})()`);await wait(240);};
+    const fill=async(selector,value)=>{await page(m,`(async()=>{const e=document.querySelector(${JSON.stringify(selector)});if(!e)throw Error('Missing stage 4 input');await (${showPane})(e);e.scrollIntoView({block:'nearest',inline:'nearest',behavior:'instant'});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(260);};
     const shot=async(selector,name)=>{await scrollTo(m,selector);await wait(180);names.push(await save(m,name));};
     await settingsTab(m,'截图');await ready(m,`document.querySelectorAll('.l-history-list > li').length===2`);
     await shot('#capture-history .l-set-row-head','settings-history');await shot('#capture-history .l-history-search','settings-history-list');
@@ -523,7 +527,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await fill('[aria-label="搜索截图历史"]','');await click('#capture-history','清空历史');expect(s.history.items.length===1,'History clear skipped inline confirmation');await click('#capture-history','确认清空');expect(!s.history.items.length,'History did not clear');await shot('#capture-history .l-history-search','settings-history-empty');
     for(const [label,value]of [['保留条数',80],['保留天数',14],['容量上限',256]])await fill('[aria-label="'+label+'"]',value);
     await click('.l-save-bar','保存');expect((await page(m,'window.desktop.getState().then(s=>s.settings.screenshot.history)')).maxBytesMB===256,'History policy did not save');checks.push('历史搜索、编辑/贴图/复制回执、删除/清空二次确认、容量策略保存');
-    await page(m,`document.querySelector('[aria-label="桌面悬浮工具栏"]').click();document.querySelector('[aria-label="启动自动恢复贴图"]').click();[...document.querySelectorAll('[aria-label="贴图滚轮默认动作"] button')].find(b=>b.textContent==='透明度').click()`);await wait(160);
+    await reveal(m,'#pin-workspace');await page(m,`document.querySelector('[aria-label="桌面悬浮工具栏"]').click();document.querySelector('[aria-label="启动自动恢复贴图"]').click();[...document.querySelectorAll('[aria-label="贴图滚轮默认动作"] button')].find(b=>b.textContent==='透明度').click()`);await wait(160);
     await click('#pin-workspace','新建分组');await fill('[aria-label="分组名称 新分组"]','验收分组');await fill('[aria-label="分组颜色 验收分组"]','#788065');await page(m,`document.querySelector('[aria-label="显示分组 验收分组"]').click()`);await shot('#pin-workspace .l-set-row-head','settings-pin-workspace');await click('#pin-workspace','保存工作空间');
     expect(s.workspace.settings.floatingToolbar&&!s.workspace.settings.restoreOnLaunch&&s.workspace.settings.wheelAction==='opacity'&&s.workspace.settings.groups.at(-1).name==='验收分组','Workspace preferences or groups did not persist');
     await click('#pin-workspace','剪贴板贴图');await click('#pin-workspace','新建文字贴图');await fill('[aria-label="文字贴图内容"]','下一步：核对截图历史与同步状态。');await shot('#pin-workspace textarea','settings-pin-create-text');await click('#pin-workspace','创建文字贴图');await click('#pin-workspace','恢复刚关闭贴图');for(const label of ['网格排列','左对齐','顶对齐'])await click('#pin-workspace',label);
@@ -748,7 +752,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
   // Region presets: configuration IPC and form interactions; acquisition is stubbed.
   saved.push(...await main(async () => {
-    const {find,page,wait,save,settingsTab,ipcMain,app,fs,path,out}=global.uiShots,names=[],checks=[];let m;
+    const {find,page,wait,save,settingsTab,scrollTo,reveal,ipcMain,app,fs,path,out}=global.uiShots,names=[],checks=[];let m;
     if(global.uiShots.focusedCases.length)return names;
     await wait(1800);
     m=global.uiShots.BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('/renderer/index.html')&&!w.webContents.getURL().includes('surface='));
@@ -788,10 +792,10 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(m,"window.desktop.act('close-custom-capture')");for(let i=0;i<40&&await page(m,`Boolean(document.querySelector('.custom-capture'))`);i++)await wait(50);await page(m,"window.desktop.act('custom-capture')");for(let i=0;i<40&&!await page(m,`Boolean(document.querySelector('option[value="display-preset"]'))`);i++)await wait(50);await fill('选择区域预设',mapped.id);expect(await val('目标显示器')==='999','Valid local display mapping');checks.push('显示器映射契约 fixture 选择有效本机绑定');
     await page(m,"window.desktop.act('close-custom-capture')");for(let i=0;i<40&&await page(m,`Boolean(document.querySelector('.custom-capture'))`);i++)await wait(50);
     await settingsTab(m,'截图');
-    await page(m,`document.querySelector('[aria-label="重启后记住上次区域"]').click()`);await wait(100);
+    await reveal(m,'[aria-label="重启后记住上次区域"]');await page(m,`document.querySelector('[aria-label="重启后记住上次区域"]').click()`);await wait(100);
     const external={id:'external',name:'外部添加',width:800,height:600,ratio:null,delay:0};await page(m,`window.desktop.saveRegionPreset(${JSON.stringify(external)})`);await wait(200);
     await page(m,`[...document.querySelectorAll('.l-save-bar button')].find(b=>b.textContent==='保存').click()`);await wait(300);
-    const settings=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)');expect(settings.regionPresets.some(p=>p.id==='external'),'Screenshot settings must preserve concurrently updated preset list');expect(settings.rememberRegionAcrossLaunches===false,'Memory setting saved');checks.push('截图设置草稿保留外部新增预设并保存记忆开关');await page(m,`document.querySelector('[aria-label="重启后记住上次区域"]').scrollIntoView({block:'center'})`);await wait(150);names.push(await save(m,'preset-memory-settings'));
+    const settings=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)');expect(settings.regionPresets.some(p=>p.id==='external'),'Screenshot settings must preserve concurrently updated preset list');expect(settings.rememberRegionAcrossLaunches===false,'Memory setting saved');checks.push('截图设置草稿保留外部新增预设并保存记忆开关');await scrollTo(m,'[aria-label="重启后记住上次区域"]','center');await wait(150);names.push(await save(m,'preset-memory-settings'));
     const disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8'));expect(disk.screenshot.regionPresets.some(p=>p.id==='external'),'Persisted settings');
     fs.writeFileSync(path.join(out,'presets-results.json'),JSON.stringify({status:'passed',checks,configurationPersistence:'real isolated Electron IPC and settings.json',capture:'stubbed to avoid initiating screen acquisition',localDisplayMapping:'fixture pending owner integration'},null,2));
     return names;
@@ -943,7 +947,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
   // The grid switch uses the real draft/save/reopen flow and remains selectable in focused runs.
   saved.push(...await main(async () => {
-    const { find, page, wait, ready, scrollTo, settingsTab, save, fs, path, out, app, focusedCases, captureOnly } = global.uiShots, m=find(), names=[],checks=[];
+    const { find, page, wait, ready, reveal, scrollTo, settingsTab, save, fs, path, out, app, focusedCases, captureOnly } = global.uiShots, m=find(), names=[],checks=[];
     const cases=['settings-loupe-grid-off','settings-loupe-grid-on'];
     if(focusedCases.length?!focusedCases.some(name=>cases.includes(name)):captureOnly)return names;
     const original=await page(m,'window.desktop.getState().then(s=>s.settings.screenshot)'),selector='[aria-label="显示放大镜像素网格"]';
@@ -957,7 +961,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       for(const enabled of [false,true]){
         await ready(m,`Boolean(document.querySelector(${JSON.stringify(selector)}))`);
         expect(await page(m,`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-checked')===${JSON.stringify(String(!enabled))}`),'Grid switch did not restore its previous saved value');
-        await page(m,`document.querySelector(${JSON.stringify(selector)}).click()`);
+        await reveal(m,selector);await page(m,`document.querySelector(${JSON.stringify(selector)}).click()`);
         await ready(m,`document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-checked')===${JSON.stringify(String(enabled))}&&Boolean(document.querySelector('.l-save-bar .primary'))`);
         await page(m,`(()=>{const button=[...document.querySelectorAll('.l-save-bar button')].find(button=>button.textContent==='保存');if(!button||button.disabled)throw Error('Grid settings save unavailable');button.click();})()`);
         await ready(m,`!document.querySelector('.l-save-bar .primary')&&document.querySelector(${JSON.stringify(selector)}).getAttribute('aria-checked')===${JSON.stringify(String(enabled))}`);
@@ -976,13 +980,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
   // S5 settings use production IPC and VM execution; only desktop pin creation is receipted.
   saved.push(...await main(async ({ app, nativeTheme, clipboard }) => {
-    const { find, page, wait, ready, scrollTo, settingsTab, save, fs, path, out, stage4, focusedCases } = global.uiShots, names=[],checks=[],m=find();
+    const { find, page, wait, ready, showPane, scrollTo, settingsTab, save, fs, path, out, stage4, focusedCases } = global.uiShots, names=[],checks=[],m=find();
     if(global.uiShots.captureOnly&&!focusedCases.some(name=>['settings-advanced-capture','settings-advanced-narrow-capture'].includes(name)))return names;
     const expect=(ok,message)=>{if(!ok)throw Error(message);},get=()=>page(m,'window.desktop.getState().then(s=>s.settings)'),original=await get(),bounds=m.getBounds(),minimum=m.getMinimumSize(),theme=nativeTheme.themeSource;
     const general=s=>Object.fromEntries(['launchAtLogin','themeMode','toolbarTools','mouseActions','scriptActions','autoCheckUpdates'].map(key=>[key,s[key]]));
-    const click=async selector=>{await page(m,`(()=>{const b=document.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)throw Error('Unavailable S5 control');b.click();})()`);await wait(180);};
-    const text=async(scope,label)=>{await page(m,`(()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw Error('Unavailable S5 action: '+${JSON.stringify(label)});b.click();})()`);await wait(220);};
-    const fill=async(id,value)=>{await page(m,`(()=>{const e=document.getElementById(${JSON.stringify(id)});Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(100);};
+    const click=async selector=>{await page(m,`(async()=>{const b=document.querySelector(${JSON.stringify(selector)});if(!b||b.disabled)throw Error('Unavailable S5 control');await (${showPane})(b);b.click();})()`);await wait(180);};
+    const text=async(scope,label)=>{await page(m,`(async()=>{const b=[...document.querySelectorAll(${JSON.stringify(scope+' button')})].find(b=>b.textContent.trim()===${JSON.stringify(label)});if(!b||b.disabled)throw Error('Unavailable S5 action: '+${JSON.stringify(label)});await (${showPane})(b);b.click();})()`);await wait(220);};
+    const fill=async(id,value)=>{await page(m,`(async()=>{const e=document.getElementById(${JSON.stringify(id)});await (${showPane})(e);Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(String(value))});e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(100);};
     const choice=async(label,value)=>{await text('[aria-label="'+label+'"]',value);};
     const shot=async(selector,name)=>{if(focusedCases.length&&!focusedCases.includes(name))return;await scrollTo(m,selector);names.push(await save(m,name));};
     const fixtureRoot=path.dirname(app.getPath('userData')),legacyPath=path.join(fixtureRoot,'stage-9-legacy.json');
