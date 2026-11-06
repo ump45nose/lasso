@@ -80,13 +80,10 @@ export interface MediaJob extends ImageSizeOptions {
   outputFormat?: MediaFormat;
   generationModel?: string;
   editModel?: string;
-  webMode?: 'edit' | 'send';
   parentId?: string;
   referenceId?: string;
   reference?: MediaReference;
   status: MediaJobStatus;
-  createdAt: string;
-  updatedAt: string;
   images?: MediaReference[];
   error?: string;
 }

@@ -278,7 +278,7 @@ export class WebProfile {
       const selectedModel = model || currentModel;
       const efforts = actual.slider ? await this.sliderOptions(selectedModel, actual.slider, signal, refresh) : actual.options;
       if (!model && actual.slider) sliderCatalogs.set(this.key(''), sliderCatalogs.get(this.key(selectedModel))!);
-      return { models: models.options.map(o => ({ id: o.id, label: o.label })), efforts: efforts.map(o => o.id), effortOptions: efforts.map(o => ({ id: o.id, label: o.label })), currentModel: model || currentModel, currentEffort: efforts.find(o => o.selected)?.id || '' };
+      return { models: models.options.map(o => ({ id: o.id, label: o.label })), efforts: efforts.map(o => o.id), effortOptions: efforts.map(o => ({ id: o.id, label: o.label })) };
     } finally {
       await this.dismiss('effort');
       if (changing) {

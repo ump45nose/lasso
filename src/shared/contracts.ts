@@ -18,7 +18,7 @@ export interface AppPrompt { bundleId: string; name: string; prompt: string; ena
 export interface LocalConfig { executable: string; cwd: string }
 export interface ImagePreview { id: string; thumbnail: string; width: number; height: number }
 export interface ExecutionProfile { model?: string; effort?: string }
-export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; effortOptions?: { id: string; label: string }[]; currentModel: string; currentEffort: string }
+export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; effortOptions?: { id: string; label: string }[] }
 export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string; textId?: string; imagePrompt?: string }
 export interface ChatMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'notice'; text: string; title?: string; running?: boolean; image?: string }
 export interface AgentModel { id: string; label: string; images?: boolean; efforts?: string[]; defaultEffort?: string }
@@ -116,7 +116,6 @@ export interface ShellState {
   inputText: { id: string; text: string } | null;
   /** The pending image or text is shown as a temporary tab in front of the tasks. */
   inputOpen: boolean;
-  title: string;
   hostname: string;
   loading: boolean;
   pageError: string | null;
@@ -320,7 +319,6 @@ export interface EdgeNotesState {
 export interface FinderPanelState {
   folder: string;
   selection: string[];
-  frontmostApp: string;
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
 }
 

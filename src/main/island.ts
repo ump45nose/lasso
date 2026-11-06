@@ -24,7 +24,6 @@ interface NativeAxBridge {
   postBridge?: (name: string, payload: string) => void;
   snapWindow?: (x: number, y: number, w: number, h: number) => boolean;
   tileTwoWindows?: (x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number) => number;
-  frontmostApp?: () => { bundleId: string; name: string; pid: number };
   notchGeometry?: () => { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
   setStationaryWindow?: (handle: Buffer) => void;
 }
@@ -115,7 +114,6 @@ export class NotchIsland {
     this.finder = new FinderPanel(this.fonts, {
       check,
       toast,
-      frontmostAppName: () => this.ax.frontmostApp?.().name ?? 'Finder',
       onSendTextToLasso: callbacks.onSendTextToLasso
     });
 

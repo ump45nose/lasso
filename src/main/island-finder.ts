@@ -24,8 +24,8 @@ function defaultFinderFolder(): string {
   return app.getPath('desktop');
 }
 
-function queryFinderContext(frontAppName: string): { folder: string; selection: string[]; frontmostApp: string } {
-  const fallback = { folder: defaultFinderFolder(), selection: [], frontmostApp: frontAppName || 'Finder' };
+function queryFinderContext(): { folder: string; selection: string[] } {
+  const fallback = { folder: defaultFinderFolder(), selection: [] };
   if (process.env.LASSO_DATA_ROOT) return fallback;
   try {
     const script = `
@@ -49,8 +49,7 @@ function queryFinderContext(frontAppName: string): { folder: string; selection: 
     const lines = out.split('\n').map(s => s.trim()).filter(Boolean);
     return {
       folder: lines[0] || fallback.folder,
-      selection: lines.slice(1),
-      frontmostApp: frontAppName || 'Finder'
+      selection: lines.slice(1)
     };
   } catch {
     return fallback;
@@ -60,7 +59,6 @@ function queryFinderContext(frontAppName: string): { folder: string; selection: 
 export interface FinderPanelDeps {
   check: (event: IpcMainEvent | IpcMainInvokeEvent) => void;
   toast: (text: string, badge?: string) => void;
-  frontmostAppName: () => string;
   onSendTextToLasso: (text: string) => Promise<void>;
 }
 
@@ -72,7 +70,6 @@ export class FinderPanel {
     this.state = {
       folder: defaultFinderFolder(),
       selection: [],
-      frontmostApp: 'Finder',
       fonts
     };
 
@@ -107,7 +104,7 @@ export class FinderPanel {
   }
 
   summon() {
-    const ctx = queryFinderContext(this.deps.frontmostAppName());
+    const ctx = queryFinderContext();
     this.state = { ...ctx, fonts: this.state.fonts };
     const cursor = screen.getCursorScreenPoint();
     const area = screen.getDisplayNearestPoint(cursor).workArea;

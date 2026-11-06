@@ -96,7 +96,7 @@ let nativeDialogs = 0;
 let stopCaptureEfficiency: (()=>void) | undefined;
 /** The command palette hides native pages; its frozen page snapshot stays out of ShellState. */
 let palette: PaletteEvent | null = null;
-let state: Omit<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'title' | 'hostname' | 'loading' | 'pageError' | 'delivery' | 'activeTarget'>;
+let state: Omit<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'hostname' | 'loading' | 'pageError' | 'delivery' | 'activeTarget'>;
 function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 
 function publish() {
@@ -627,7 +627,7 @@ async function boot() {
     pinned: false, expanded: false, settingsOpen: false, inputImage: null, inputText: null, inputOpen: false,
     shortcutError: null, notice: null, settings: readSettings(settingsPath),
     presets: readPresets(presetsPath), capture: { status: 'paused', message: '划词未启动' }, selection: null,
-    captureEfficiency:{phase:'idle',mode:null,remaining:0,hasLastArea:false,error:null}
+    captureEfficiency:{phase:'idle',remaining:0,error:null}
   };
   nativeTheme.themeSource=state.settings.themeMode==='system'?'system':'light';
   if(app.isPackaged&&!process.env.LASSO_PROFILE)app.setLoginItemSettings({openAtLogin:state.settings.launchAtLogin});

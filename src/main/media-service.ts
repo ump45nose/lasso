@@ -52,7 +52,7 @@ export class MediaService {
       this.referenceId = validId(value.referenceId) && this.references.has(value.referenceId) ? value.referenceId : null;
       let interrupted = false;
       for (const job of this.jobs) if (job.status === 'running') {
-        job.status = 'interrupted'; job.updatedAt = new Date().toISOString();
+        job.status = 'interrupted';
         job.error = '应用已重启，请求结果未知；不会自动重发。上游可能仍在处理。';
         interrupted = true;
       }
@@ -194,11 +194,10 @@ export class MediaService {
     const reference = input.referenceId ? this.references.get(input.referenceId) : undefined;
     if (input.referenceId && !reference) throw Error('参考图片已不可用，请重新选择');
     const parent = reference && this.jobs.find(job => job.images?.some(image => image.id === reference.id));
-    const now = new Date().toISOString();
     const job: MediaJob = { id: randomUUID(), requestId: input.requestId, prompt: input.prompt.trim(), aspect: input.aspect, destination: 'api',
       resolution: input.resolution, count: input.count, customSize: input.customSize && { ...input.customSize },
       presetId: input.presetId, presetName: input.presetName, generationModel: input.generationModel, editModel: input.editModel,
-      quality: input.quality, background: input.background, outputFormat: input.outputFormat, status: 'running', createdAt: now, updatedAt: now,
+      quality: input.quality, background: input.background, outputFormat: input.outputFormat, status: 'running',
       ...(reference ? { referenceId: reference.id, reference: structuredClone(reference) } : {}), ...(parent ? { parentId: parent.id } : {}) };
     this.jobs.unshift(job);
     try { this.persist(); } catch { this.jobs.shift(); throw Error('未能保存图片任务，尚未发送生成请求'); }
@@ -276,10 +275,10 @@ export class MediaService {
       this.persist();
       }
       if (job.count && data.length !== job.count) throw Error(`请求 ${job.count} 张，服务返回 ${data.length} 张`);
-      job.status = 'succeeded'; job.updatedAt = new Date().toISOString();
+      job.status = 'succeeded';
       this.persist();
     } catch (error) {
-      job.status = 'failed'; job.updatedAt = new Date().toISOString();
+      job.status = 'failed';
       job.error = error instanceof Error ? error.message : '图片生成失败；未自动重试';
       if (job.images?.length) job.error += `；已保留 ${job.images.length} 张结果`;
       // Never discard the prompt or frozen reference when an upstream request/download fails.

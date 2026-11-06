@@ -7,7 +7,7 @@ export function webURL(value: string): string | null {
 export interface VisionServiceConfig { baseURL: string; model: string; targetLanguage: string; hasCredential: boolean; useMediaCredential: boolean }
 export interface VisionServiceInput { baseURL: string; model: string; targetLanguage: string; credential?: string; useMediaCredential?: boolean }
 export interface TranslationBlock { original: string; translated: string; box?: CaptureRect }
-export interface IntelligenceResult { kind: IntelligenceKind; blocks?: TranslationBlock[]; sourceText?: string; translatedText?: string; table?: string[][]; latex?: string; formulaSvg?: string }
+export interface IntelligenceResult { kind: IntelligenceKind; blocks?: TranslationBlock[]; translatedText?: string; table?: string[][]; latex?: string; formulaSvg?: string }
 export interface IntelligenceRequest { kind: IntelligenceKind; targetLanguage?: string; png: Uint8Array; crop: CaptureRect; lines?: OCRLine[] }
 export const visionDefaults = (): Omit<VisionServiceConfig, 'hasCredential'> => ({ baseURL: '', model: '', targetLanguage: '简体中文', useMediaCredential: true });
 

@@ -17,9 +17,7 @@ export interface SuccessfulCaptureArea {
 }
 export interface CaptureEfficiencyState {
   phase: 'idle' | 'countdown' | 'capturing' | 'canceling';
-  mode: EfficiencyCaptureMode | null;
   remaining: number;
-  hasLastArea: boolean;
   error: string | null;
 }
 export type CaptureEfficiencyResult =

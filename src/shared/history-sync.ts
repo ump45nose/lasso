@@ -1,22 +1,17 @@
-import type { CaptureRect } from './capture';
-
 export interface CaptureHistoryPolicy { enabled: boolean; maxItems: number; maxDays: number; maxBytesMB: number }
 export interface CaptureHistoryItem {
   id: string;
   createdAt: number;
-  updatedAt: number;
   width: number;
   height: number;
   byteSize: number;
   captureKind: string;
-  region?: CaptureRect;
-  displayId?: number;
   pixelScale?: { x: number; y: number };
   ocrSnippet: string;
   thumbnailDataUrl: string;
   hasAnnotations: boolean;
 }
-export interface CaptureHistoryState { items: CaptureHistoryItem[]; totalBytes: number; policy: CaptureHistoryPolicy }
+export interface CaptureHistoryState { items: CaptureHistoryItem[]; totalBytes: number }
 export type PinKind = 'image' | 'text' | 'color' | 'file';
 export type PinWheelAction = 'zoom' | 'opacity';
 export type PinArrangeMode = 'grid' | 'horizontal' | 'vertical' | 'align-left' | 'align-top';

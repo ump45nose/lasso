@@ -2,13 +2,12 @@ import { nativeImage } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { CaptureRect } from '../../shared/capture';
 import { validateCaptureHistoryPolicy, type CaptureHistoryItem, type CaptureHistoryPolicy, type CaptureHistoryState } from '../../shared/history-sync';
 import { validateAnnotations, type PinnedDocument } from './document';
 import { writeFileAtomic } from '../files';
 
 type Entry = Omit<CaptureHistoryItem, 'thumbnailDataUrl'> & { storage: string };
-interface HistoryMeta { id?: string; captureKind?: string; region?: CaptureRect; displayId?: number; ocrSnippet?: string; createdAt?: number }
+interface HistoryMeta { id?: string; captureKind?: string; ocrSnippet?: string; createdAt?: number }
 const validId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]{1,128}$/.test(id);
 
 /** Immutable image revisions become visible together through one atomic index replacement. */
@@ -58,7 +57,7 @@ export class CaptureHistoryStore {
     const { width, height } = document.image.getSize(), ratio = Math.min(1, 240 / width, 160 / height);
     const files = { 'source.png': document.source.toPNG(), 'result.png': document.image.toPNG(), 'annotations.json': Buffer.from(JSON.stringify(annotations) + '\n'), 'thumbnail.png': document.image.resize({ width: Math.max(1, Math.round(width * ratio)), height: Math.max(1, Math.round(height * ratio)) }).toPNG() };
     const now = Date.now(), previous = this.entries.find(item => item.id === id);
-    const item: Entry = { id, storage, createdAt: previous?.createdAt ?? meta.createdAt ?? now, updatedAt: now, width, height, byteSize: Object.values(files).reduce((sum, data) => sum + data.length, 0), captureKind: meta.captureKind ?? 'rect', ocrSnippet: (meta.ocrSnippet ?? '').slice(0, 2000), hasAnnotations: annotations.objects.length > 0 || annotations.privacy.length > 0, pixelScale: document.pixelScale, region: meta.region, displayId: meta.displayId };
+    const item: Entry = { id, storage, createdAt: previous?.createdAt ?? meta.createdAt ?? now, width, height, byteSize: Object.values(files).reduce((sum, data) => sum + data.length, 0), captureKind: meta.captureKind ?? 'rect', ocrSnippet: (meta.ocrSnippet ?? '').slice(0, 2000), hasAnnotations: annotations.objects.length > 0 || annotations.privacy.length > 0, pixelScale: document.pixelScale };
     if (!Number.isFinite(item.createdAt)) throw Error('截图历史时间无效');
     const pending = join(this.directory, storage + '.tmp'), complete = join(this.directory, storage);
     mkdirSync(pending, { mode: 0o700 });
@@ -78,7 +77,7 @@ export class CaptureHistoryStore {
     this.pruneNow();
     const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
     const items = this.entries.filter(item => words.every(word => `${item.ocrSnippet} ${item.captureKind} ${item.id}`.toLocaleLowerCase().includes(word))).map(({ storage, ...item }) => ({ ...item, thumbnailDataUrl: 'data:image/png;base64,' + readFileSync(join(this.directory, storage, 'thumbnail.png')).toString('base64') }));
-    return structuredClone({ items, totalBytes: this.bytes(), policy: this.policy() });
+    return structuredClone({ items, totalBytes: this.bytes() });
   }
   async load(id: string): Promise<PinnedDocument> {
     const entry = this.entries.find(item => item.id === id);

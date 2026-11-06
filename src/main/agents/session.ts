@@ -220,7 +220,7 @@ export class AgentSession {
   async catalog(model = ''): Promise<ExecutionCatalog> {
     await this.start(); await this.refreshModels();
     if (model && model !== this.state.model) await this.setModel(model);
-    return { models: this.state.models, efforts: this.state.efforts, currentModel: this.state.model, currentEffort: this.state.effort };
+    return { models: this.state.models, efforts: this.state.efforts };
   }
   applyProfile(profile: ExecutionProfile): Promise<void> {
     this.assertOpen();

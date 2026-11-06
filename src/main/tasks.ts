@@ -60,7 +60,7 @@ interface Task {
   retryReleaseAt: number;
   warmNavigation?: Promise<void>;
 }
-type TaskProjection = Pick<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'title' | 'hostname' | 'loading' | 'pageError' | 'delivery' | 'activeTarget'>;
+type TaskProjection = Pick<ShellState, 'tasks' | 'activeTaskId' | 'hasPage' | 'hostname' | 'loading' | 'pageError' | 'delivery' | 'activeTarget'>;
 
 /** Owns task lifetime, page residency and each independent preset execution. */
 export class TaskManager {
@@ -186,7 +186,7 @@ export class TaskManager {
   private async readCatalog(target: Target, model: string, refresh: boolean): Promise<ExecutionCatalog> {
     if (target === 'codex') {
       const models = await this.runtime.models(this.settings().local.codex, true);
-      return { models, efforts: models.find(m => m.id === model)?.efforts || [], currentModel: '', currentEffort: '' };
+      return { models, efforts: models.find(m => m.id === model)?.efforts || [] };
     }
     if (target === 'pi') {
       const agent = new AgentSession('catalog', 'pi', this.settings().local.pi, this.runtime, this.images, () => {});
@@ -228,7 +228,7 @@ export class TaskManager {
       id: task.id, target: task.target, title: task.title, activity: this.status(task), residency: task.agent ? (!task.agent.state.resident && task.agent.state.activity === 'complete' ? 'released' : 'resident') : task.view ? 'resident' : 'released', retainedReason: task.retainedReason
     }));
     return {
-      tasks, activeTaskId: this.activeId, activeTarget: active?.target || null, hasPage: Boolean(active), title: active?.title || 'ChatGPT',
+      tasks, activeTaskId: this.activeId, activeTarget: active?.target || null, hasPage: Boolean(active),
       hostname: active?.agent ? active.target : active ? new URL(active.url).hostname : 'chatgpt.com', loading: Boolean(active?.loading || active?.preparing),
       pageError: active?.error || null, delivery: active?.delivery || null
     };

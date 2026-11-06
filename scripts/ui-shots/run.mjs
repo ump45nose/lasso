@@ -240,7 +240,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       history: {items:[
         {id:'history-marked',createdAt:timestamp,updatedAt:timestamp,width:1440,height:900,byteSize:1843200,captureKind:'area',ocrSnippet:'设计评审 · 截图中的文字可再次编辑',thumbnailDataUrl,hasAnnotations:true},
         {id:'history-clean',createdAt:timestamp-3600000,updatedAt:timestamp-3600000,width:960,height:640,byteSize:614400,captureKind:'window',ocrSnippet:'工作空间和贴图分组',thumbnailDataUrl,hasAnnotations:false}
-      ],totalBytes:2457600,policy:{enabled:true,maxItems:50,maxDays:30,maxBytesMB:512}},
+      ],totalBytes:2457600},
       workspace: {settings:{restoreOnLaunch:true,floatingToolbar:false,wheelAction:'zoom',activeGroupId:'default',groups},closedCount:2,pins:[
         {id:'pin-image',title:'设计评审截图',kind:'image',groupId:'default',locked:false,thumbnail:false,visible:true,opacity:1},
         {id:'pin-text',title:'评审笔记',kind:'text',groupId:'research',locked:true,thumbnail:false,visible:true,opacity:.85},
@@ -262,7 +262,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const publish = async () => {for(const win of BrowserWindow.getAllWindows())win.webContents.send('pin-workspace:changed',state.workspace);const sender=find().webContents;sender.send('shell:changed',await fixtureShell({sender,senderFrame:sender.mainFrame}));persist();};
     const handlers = {
       'shell:state': fixtureShell,
-      'shell:capture-history': async (event,query='') => { const shell=await ipcMain._invokeHandlers.get('shell:state')(event);state.history.policy=shell.settings.screenshot.history;receipt('captureHistory',[query]);return {...state.history,items:state.history.items.filter(item=>(item.ocrSnippet+' '+item.captureKind+' '+item.width+'×'+item.height).toLowerCase().includes(query.toLowerCase()))}; },
+      'shell:capture-history': (_event,query='') => { receipt('captureHistory',[query]);return {...state.history,items:state.history.items.filter(item=>(item.ocrSnippet+' '+item.captureKind+' '+item.width+'×'+item.height).toLowerCase().includes(query.toLowerCase()))}; },
       'shell:capture-history-act': (_event,id,action) => {if(!state.history.items.some(item=>item.id===id))throw Error('Unknown fixture history');if(action==='delete')state.history.items=state.history.items.filter(item=>item.id!==id);receipt('actCaptureHistory',[id,action]);return {error:null};},
       'shell:capture-history-clear': () => {state.history.items=[];state.history.totalBytes=0;receipt('clearCaptureHistory');return {error:null};},
       'shell:pin-workspace': () => state.workspace,
@@ -309,7 +309,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(m, 'window.desktop.closePalette()'); await wait(300);
     // Render capture controls from a shell fixture; none of these entries is run.
     shell = await page(m, 'window.desktop.getState()');
-    m.webContents.send('shell:changed', { ...shell, captureEfficiency: { phase: 'idle', mode: null, remaining: 0, hasLastArea: true, error: null } });
+    m.webContents.send('shell:changed', { ...shell, captureEfficiency: { phase: 'idle', remaining: 0, error: null } });
     await page(m, "window.desktop.openPalette('all')"); await wait(350);
     await page(m, `(() => { const input = document.querySelector('.l-pal-search input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '截图'); input.dispatchEvent(new Event('input', {bubbles:true})); })()`); await wait(350);
     const captureLabels = await page(m, `Array.from(document.querySelectorAll('.l-pal-row .l-pal-label')).map(row => row.textContent).join('\\n')`);
@@ -317,7 +317,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(m, `document.querySelector('.l-pal-list').scrollTop = document.querySelector('.l-pal-list').scrollHeight`); await wait(200);
     names.push(await save(m, 'palette-capture'));
     await page(m, 'window.desktop.closePalette()'); await wait(200);
-    m.webContents.send('shell:changed', { ...shell, notice: '3 秒后区域截图，可取消', captureEfficiency: { phase: 'countdown', mode: 'area', remaining: 3, hasLastArea: true, error: null } }); await wait(400);
+    m.webContents.send('shell:changed', { ...shell, notice: '3 秒后区域截图，可取消', captureEfficiency: { phase: 'countdown', remaining: 3, error: null } }); await wait(400);
     if (!await page(m, `Boolean(document.querySelector('[aria-label="取消延时截图"]'))`)) throw Error('Capture countdown cancel button did not appear');
     names.push(await save(m, 'capture-countdown'));
     m.webContents.send('shell:changed', shell); await wait(200);
@@ -362,8 +362,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     catalogIPC.removeHandler('shell:execution-catalog');
     catalogIPC.handle('shell:execution-catalog', (event, target, ...args) => target === 'chatgpt' ? { catalog: {
       models: [{ id: '6', label: '6' }], efforts: [0, 1, 2, 3, 4].map(index => `slider:0:4:${index}`),
-      effortOptions: ['6 即时', '6 中', '6 高', '6 极高', '6 Pro'].map((label, index) => ({ id: `slider:0:4:${index}`, label })),
-      currentModel: '6', currentEffort: 'slider:0:4:0'
+      effortOptions: ['6 即时', '6 中', '6 高', '6 极高', '6 Pro'].map((label, index) => ({ id: `slider:0:4:${index}`, label }))
     }, error: null } : originalCatalog(event, target, ...args));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true, presets: shell.presets.map((preset, index) => index ? preset : { ...preset, model: '6', effort: '6 Instant' }) }); await wait(150);
     await page(m, `document.querySelector('.l-preset').click()`); await wait(450);
@@ -558,8 +557,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const ref = { id: 'fixture-reference', width: 1200, height: 900, thumbnail: image };
     const options = { aspect: '3:2', generationModel: 'configured-generation-model', editModel: 'configured-edit-model', quality: 'auto', background: 'auto', outputFormat: 'png' };
     const draft = { id: 'fixture-draft', presetId: 'draw', presetName: '自由作图', prompt: '一张纸上的暖白建筑草图，细节清晰。', options };
-    const original = { ...options, id: 'fixture-original', requestId: 'fixture-first', prompt: '一张纸上的暖白建筑草图，细节清晰。', aspect: '3:2', status: 'succeeded', createdAt: '2026-10-25T01:00:00Z', updatedAt: '2026-10-25T01:01:00Z', images: [{ ...ref, id: 'fixture-original' }] };
-    const edited = { ...original, id: 'fixture-edited', requestId: 'fixture-second', prompt: '保留构图，将屋顶改成陶土色。', parentId: original.id, referenceId: original.id, reference: original.images[0], createdAt: '2026-10-25T01:02:00Z', images: [{ ...ref, id: 'fixture-edited' }] };
+    const original = { ...options, id: 'fixture-original', requestId: 'fixture-first', prompt: '一张纸上的暖白建筑草图，细节清晰。', aspect: '3:2', status: 'succeeded', images: [{ ...ref, id: 'fixture-original' }] };
+    const edited = { ...original, id: 'fixture-edited', requestId: 'fixture-second', prompt: '保留构图，将屋顶改成陶土色。', parentId: original.id, referenceId: original.id, reference: original.images[0], images: [{ ...ref, id: 'fixture-edited' }] };
     const failed = { ...edited, id: 'fixture-failed', images: undefined, status: 'failed', error: '图片请求失败（HTTP 503）；未自动重试', createdAt: '2026-10-25T01:03:00Z' };
     const interrupted = { ...failed, id: 'fixture-interrupted', status: 'interrupted', error: '应用已重启，请求结果未知；不会自动重发。上游可能仍在处理。' };
     let state, requests = [];
@@ -574,7 +573,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       requests.push({ ...request, referenceId: state.reference?.id });
       if (!state.jobs.some(job => job.requestId === request.requestId)) {
         const id = 'fixture-generated-' + requests.length;
-        state.jobs.unshift({ ...options, ...request, id, status: 'succeeded', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), images: [{ ...ref, id }], ...(state.reference ? { reference: state.reference } : {}) });
+        state.jobs.unshift({ ...options, ...request, id, status: 'succeeded', images: [{ ...ref, id }], ...(state.reference ? { reference: state.reference } : {}) });
       }
       return state;
     });
@@ -1131,7 +1130,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     ipcMain.handle('ui-shots:vision-language',()=> '简体中文');
     ipcMain.handle('ui-shots:recognize',(_event,request)=>{const text='示例识别文字',line={x:24,y:40,width:260,height:26,text,confidence:.95,glyphs:[...text].map((text,i)=>({x:24+i*43,y:40,width:42,height:26,text}))};return {id:request.id,revision:request.revision,lines:state.stage9==='auto-mosaic'?[80,150].map((y,i)=>({x:320+i*100,y,width:80,height:24,text:'LASSO',confidence:1,glyphs:[...'LASSO'].map((text,j)=>({x:320+i*100+j*16,y,width:16,height:24,text}))})):[line],...(state.stage6==='barcode'?{barcodes:[{x:60,y:120,width:140,height:140,symbology:'QR',payload:'https://example.invalid/lasso'},{x:240,y:120,width:260,height:80,symbology:'Code128',payload:'LASSO-2026-001'}]}:{})};});
     ipcMain.handle('ui-shots:screenshot-action',(_event,action)=>{screenshotActions.push(action);return {error:null};});
-    ipcMain.handle('ui-shots:analyze',(_event,request)=>{verify(request.id&&Number.isInteger(request.revision)&&request.png?.length>24&&Buffer.from(request.png).subarray(1,4).toString()==='PNG'&&request.crop.width>0&&request.crop.height>0,'Intelligence request lost image/owner/crop');record('analyze',{id:request.id,revision:request.revision,kind:request.kind,targetLanguage:request.targetLanguage,pngBytes:request.png.length,crop:request.crop,lines:request.lines});const kind=request.kind;return {error:null,result:kind==='translate'?{kind,blocks:[{original:'Design with clarity',translated:'清晰表达设计',box:{x:24,y:40,width:260,height:26}},{original:'A quiet workspace',translated:'安静的工作空间',box:{x:24,y:90,width:260,height:26}}],sourceText:'Design with clarity\nA quiet workspace',translatedText:'清晰表达设计\n安静的工作空间'}:kind==='table'?{kind,table:[['项目','数量','状态'],['图像翻译','12','完成'],['表格识别','8','复核中']]}:{kind,latex:'E=mc^2',formulaSvg:renderFormula('E=mc^2')}};});
+    ipcMain.handle('ui-shots:analyze',(_event,request)=>{verify(request.id&&Number.isInteger(request.revision)&&request.png?.length>24&&Buffer.from(request.png).subarray(1,4).toString()==='PNG'&&request.crop.width>0&&request.crop.height>0,'Intelligence request lost image/owner/crop');record('analyze',{id:request.id,revision:request.revision,kind:request.kind,targetLanguage:request.targetLanguage,pngBytes:request.png.length,crop:request.crop,lines:request.lines});const kind=request.kind;return {error:null,result:kind==='translate'?{kind,blocks:[{original:'Design with clarity',translated:'清晰表达设计',box:{x:24,y:40,width:260,height:26}},{original:'A quiet workspace',translated:'安静的工作空间',box:{x:24,y:90,width:260,height:26}}],translatedText:'清晰表达设计\n安静的工作空间'}:kind==='table'?{kind,table:[['项目','数量','状态'],['图像翻译','12','完成'],['表格识别','8','复核中']]}:{kind,latex:'E=mc^2',formulaSvg:renderFormula('E=mc^2')}};});
     ipcMain.handle('ui-shots:formula-preview',(_event,request)=>{verify(request.id&&Number.isInteger(request.revision)&&request.latex,'Formula preview lost owner or source');record('previewFormula',request);return {svg:renderFormula(request.latex),error:null};});
     ipcMain.handle('ui-shots:open-url',(_event,request)=>{record('openURL',request);verify(request.url==='https://example.invalid/lasso','Wrong barcode URL');return {error:null};});
     ipcMain.handle('ui-shots:table-export',(_event,rows)=>{record('exportTable',rows);return {path:path.join(out,'fixture-table.xlsx'),error:null};});

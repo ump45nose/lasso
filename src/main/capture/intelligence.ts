@@ -97,7 +97,7 @@ export class IntelligenceService {
       const box = line ? { x: line.x, y: line.y, width: line.width, height: line.height } : undefined;
       return { original: block.original, translated: block.translated, ...(box ? { box } : {}) };
     });
-    return { kind: 'translate', blocks, sourceText: blocks.map(block => block.original).join('\n'), translatedText: blocks.map(block => block.translated).join('\n') };
+    return { kind: 'translate', blocks, translatedText: blocks.map(block => block.translated).join('\n') };
   }
   async pinFormula(latex: string, current: () => boolean): Promise<void> {
     if (!current()) throw Error('截图已更新，请重新识别公式');

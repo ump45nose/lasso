@@ -679,7 +679,7 @@ export class CaptureManager {
     const original=shouldOutput||preferences.history.enabled?this.originalImage():null;
     original?.catch(()=>{});
     if(preferences.history.enabled){
-      const meta={id:s.id,captureKind:s.captureKind,region:s.editableRegion?{...s.editableRegion.currentCrop}:s.selection?{...s.selection}:undefined,displayId:this.displayId??undefined};
+      const meta={id:s.id,captureKind:s.captureKind};
       void original!.then(image=>this.history.add({...imageDocument(image),pixelScale},meta)).catch(error=>this.notice('截图历史保存失败：'+(error as Error).message));
     }
     const execute=()=>{if(!original||!shouldOutput)return;void original.then(image=>this.automaticResult(s,image,preferences,actions,pixelScale,editId)).catch(error=>{if(this.state===s&&s.editId===editId){s.outputError=(error as Error).message;this.publish();}else this.notice((error as Error).message);});};
@@ -806,7 +806,7 @@ export class CaptureManager {
       else if(!await deliverImage(image,action,{preferences,format,mode,pixelScale:this.state?.pixelScale,owner:this.win!,app:this.sourceApp,localSource:this.localSource,confirm:()=>this.acceptVersion(id,frame.revision)}))return;
       if(result&&this.state?.editId===id){
         const s=this.state,ocr=this.historyOCR;
-        try{await this.history.add(result,{id:this.historyId??s.id,captureKind:s.captureKind??'image',region:s.editableRegion?.currentCrop,displayId:this.displayId??undefined,ocrSnippet:ocr?.id===id&&ocr.revision===frame.revision?ocr.text:''});}
+        try{await this.history.add(result,{id:this.historyId??s.id,captureKind:s.captureKind??'image',ocrSnippet:ocr?.id===id&&ocr.revision===frame.revision?ocr.text:''});}
         catch(error){this.notice('截图历史保存失败：'+(error as Error).message);}
       }
       if(this.state?.editId===id)this.cancel();

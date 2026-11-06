@@ -53,14 +53,14 @@ export class CaptureEfficiencyControl {
   private pending: PendingCapture | null = null;
   private disposed = false;
   private listeners = new Set<(state: CaptureEfficiencyState) => void>();
-  private current: CaptureEfficiencyState = { phase: 'idle', mode: null, remaining: 0, hasLastArea: false, error: null };
+  private current: CaptureEfficiencyState = { phase: 'idle', remaining: 0, error: null };
 
   constructor(private adapter: CaptureEfficiencyAdapter, private remembered: (area:SuccessfulCaptureArea)=>void) {}
   restoreArea(area: SuccessfulCaptureArea) {
     if (this.disposed || !validCaptureArea(area)) return;
     this.lastArea = copyArea(area);
     this.memoryVersion++;
-    this.publish({ hasLastArea: true, error: null });
+    this.publish({ error: null });
   }
 
   get state(): CaptureEfficiencyState { return { ...this.current }; }
@@ -79,7 +79,7 @@ export class CaptureEfficiencyControl {
     this.lastArea = copyArea(area);
     this.memoryVersion++;
     this.remembered(copyArea(area));
-    this.publish({ hasLastArea: true, error: null });
+    this.publish({ error: null });
   }
   start(mode: EfficiencyCaptureMode, delay: CaptureDelay = 0, custom?:CustomCaptureRequest): Promise<CaptureEfficiencyResult> {
     if (this.disposed) return Promise.resolve({ status: 'failed', error: '截图控制已关闭' });
@@ -100,7 +100,7 @@ export class CaptureEfficiencyControl {
     return new Promise(resolve => {
       const pending: PendingCapture = { controller: new AbortController(), mode, area, custom: custom ? { ...custom } : undefined, memoryVersion: this.memoryVersion, deadline: performance.now() + delay * 1000, running: false, resolve };
       this.pending = pending;
-      this.publish({ phase: delay ? 'countdown' : 'capturing', mode, remaining: delay, error: null });
+      this.publish({ phase: delay ? 'countdown' : 'capturing', remaining: delay, error: null });
       // A state subscriber may cancel synchronously (for example, when its owner closes).
       if (this.pending === pending) this.tick(pending);
     });
@@ -160,7 +160,7 @@ export class CaptureEfficiencyControl {
     if (this.pending !== pending) return;
     if (pending.timer !== undefined) clearTimeout(pending.timer);
     this.pending = null;
-    this.publish({ phase: 'idle', mode: null, remaining: 0, hasLastArea: Boolean(this.lastArea), error: 'error' in result ? result.error : null });
+    this.publish({ phase: 'idle', remaining: 0, error: 'error' in result ? result.error : null });
     pending.resolve(result);
   }
 }
