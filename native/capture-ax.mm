@@ -37,6 +37,8 @@ static napi_value query(napi_env e,napi_callback_info info){size_t n=3;napi_valu
 
 static napi_value windows(napi_env e,napi_callback_info){@autoreleasepool {napi_value arr;napi_create_array(e,&arr);NSArray* list=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly|kCGWindowListExcludeDesktopElements,kCGNullWindowID));NSMutableDictionary<NSNumber*,NSString*>* bundles=[NSMutableDictionary dictionary];uint32_t idx=0;for(NSDictionary*w in list){if([w[(id)kCGWindowOwnerPID] intValue]==getpid()||[w[(id)kCGWindowLayer] intValue]!=0)continue;CGRect r;CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(id)kCGWindowBounds],&r);if(r.size.width<40||r.size.height<30)continue;NSNumber* pid=w[(id)kCGWindowOwnerPID];NSString* bundle=bundles[pid];if(!bundle){bundle=[NSRunningApplication runningApplicationWithProcessIdentifier:pid.intValue].bundleIdentifier?:@"";bundles[pid]=bundle;}napi_value o,b;napi_create_object(e,&o);prop(e,o,"x",r.origin.x);prop(e,o,"y",r.origin.y);prop(e,o,"width",r.size.width);prop(e,o,"height",r.size.height);prop(e,o,"pid",[w[(id)kCGWindowOwnerPID] intValue]);prop(e,o,"id",[w[(id)kCGWindowNumber] intValue]);napi_create_string_utf8(e,bundle.UTF8String,NAPI_AUTO_LENGTH,&b);napi_set_named_property(e,o,"bundleId",b);napi_set_element(e,arr,idx++,o);}return arr;}}
 
+static napi_value windowOnScreen(napi_env e,napi_callback_info info){size_t n=1;napi_value args[1];napi_get_cb_info(e,info,&n,args,nullptr,nullptr);uint32_t windowId;if(n!=1||napi_get_value_uint32(e,args[0],&windowId)!=napi_ok){napi_throw_type_error(e,nullptr,"window id required");return nullptr;}bool onscreen;@autoreleasepool {NSArray* list=CFBridgingRelease(CGWindowListCopyWindowInfo(kCGWindowListOptionIncludingWindow,windowId));NSDictionary* w=list.firstObject;onscreen=[w[(id)kCGWindowIsOnscreen] boolValue];}napi_value result;napi_get_boolean(e,onscreen,&result);return result;}
+
 static napi_value requestScreen(napi_env e,napi_callback_info){auto*q=new Query();q->permission=true;napi_value promise,name;napi_create_promise(e,&q->deferred,&promise);napi_create_string_utf8(e,"capture-permission",NAPI_AUTO_LENGTH,&name);napi_create_async_work(e,nullptr,name,execute,complete,q,&q->work);napi_queue_async_work(e,q->work);return promise;}
 
 /** Synthesizes Cmd+V to replace the active selection in the frontmost application. */
@@ -366,6 +368,7 @@ static napi_value init(napi_env e,napi_value exports){
   napi_property_descriptor d[]={
     {"query",nullptr,query,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"windows",nullptr,windows,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"windowOnScreen",nullptr,windowOnScreen,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"requestScreen",nullptr,requestScreen,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"paste",nullptr,paste,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"setGlow",nullptr,setGlow,nullptr,nullptr,nullptr,napi_default,nullptr},

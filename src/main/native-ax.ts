@@ -6,6 +6,7 @@ export type WindowRect = CaptureRect & { pid: number; id: number; bundleId: stri
 export interface NativeAx {
   query(pid: number, x: number, y: number): Promise<{ rects: CaptureRect[]; error: number }>;
   windows(): WindowRect[];
+  windowOnScreen(windowId: number): boolean;
   requestScreen(): Promise<boolean>;
   frontmostApp(): { bundleId: string; name: string; pid: number };
   paste(): void;

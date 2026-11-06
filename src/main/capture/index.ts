@@ -249,7 +249,7 @@ export class CaptureManager {
   }
   async captureRecordingFrame(mode:RecordingMode,bounds:CaptureRect):Promise<{image:NativeImage;hostTimeMs:number}>{
     const source=this.recordingSource;if(!source||!screen.getAllDisplays().some(display=>sameCaptureDisplay(source.display,bindDisplay(display))))throw Error('录制显示器已变化，请停止后重新录制');
-    if(mode==='window'&&!this.ax.windows().some(window=>window.id===source.windowId))throw Error('录制窗口已关闭');
+    if(mode==='window'&&(source.windowId===undefined||!this.ax.windowOnScreen(source.windowId)))throw Error('录制窗口已关闭');
     const frame=await this.native.capture({displayId:source.display.id,bounds,windowId:source.windowId,shadow:false,includeCursor:this.settings().includeCursor,exclude:excludedCaptureWindows(this.native)});
     try{const pixels=await this.native.pixels(frame.id,{format:'bgra'});return {image:nativeImage.createFromBitmap(Buffer.from(pixels.data),{width:pixels.width,height:pixels.height,scaleFactor:1}),hostTimeMs:frame.hostTimeMs};}
     finally{this.native.release(frame.id);}
