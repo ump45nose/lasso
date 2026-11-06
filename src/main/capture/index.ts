@@ -797,7 +797,7 @@ export class CaptureManager {
         if(this.state?.editableRegion&&this.screenFrame){const data=await this.native.pixels(this.screenFrame.id,{format:'bgra',rect:crop});image=nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height});}
         else image=(await this.originalImage()).crop(crop);
       }else image=contentImage(result?.image??decodeFrameImage(frame),mode,this.state?.pixelScale);
-      if(action==='image'||action==='media')await this.receive(image);
+      if(action==='image')await this.receive(image);
       else if(action==='pin'){
         if(this.state?.pinId&&!this.pins.contains(this.state.pinId)){
           this.state.pinId=undefined;this.editorKey=null;this.publish();

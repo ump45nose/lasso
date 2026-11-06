@@ -1357,7 +1357,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         w.webContents.sendInputEvent({type:'mouseMove',x:Math.round(handle[0]-70),y:Math.round(handle[1]),modifiers:['leftButtonDown']});await wait(80);
         w.webContents.sendInputEvent({type:'mouseUp',x:Math.round(handle[0]-70),y:Math.round(handle[1]),button:'left',clickCount:1});await wait(200);
         r=await regionRect();if(r.x!==before.x-70||r.width!==before.width+70)throw Error('Outward region resize failed: '+JSON.stringify({before,r}));
-        await page(w,`document.querySelector('[aria-label="用于生图"]').click()`);for(let i=0;i<30&&!exports.length;i++)await wait(100);
+        await page(w,`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='图片预设').click()`);for(let i=0;i<30&&!exports.length;i++)await wait(100);
         if(exports.length!==1||exports[0].frame.crop.width!==before.width+70||exports[0].frame.crop.x!==before.x-70)throw Error('Expanded region output differs from geometry '+JSON.stringify({before,r,exports:exports.map(o=>({action:o.action,crop:o.frame.crop})),toast:await page(w,`document.querySelector('.ed-toast')?.textContent`)}));
         fs.writeFileSync(path.join(out,'region-interactions.json'),JSON.stringify({nudge:true,undo:true,outwardResize:true,outputCrop:exports[0].frame.crop},null,2));
       }
@@ -1424,7 +1424,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         expect(await query(`Boolean(document.querySelector('.region-border'))`),'Same-frame reselect failed');
         expect(await query(`document.querySelector('canvas.lower-canvas').width`)===1280,'Cached source was cleared when editor disposed');
         result.sameFrameReselect=true;
-        exportDelay=700;await click('[aria-label="用于生图"]');
+        exportDelay=700;await query(`[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==='图片预设').click()`);await wait(150);
         expect(await query(`document.querySelector('.region-size').inert`),'Output did not make dimensions inert');
         const frozen=await rect();await press('Right');expect(JSON.stringify(await rect())===JSON.stringify(frozen),'Output allowed geometry mutation');
         for(let i=0;i<100&&await query(`document.querySelector('.ed').getAttribute('aria-busy')==='true'`);i++)await wait(50);
@@ -1546,13 +1546,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         fs.writeFileSync(path.join(out,'window-output-layout.json'),JSON.stringify(checks,null,2));
       }
       if (name === 'editor-local-file') {
-        await page(w, `(() => { const button = document.querySelector('[aria-label="用于生图"]'); if (!button || button.disabled) throw Error('Editor generation entry is unavailable'); button.click(); })()`);
+        await page(w, `(() => { const button = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '图片预设'); if (!button || button.disabled) throw Error('Editor image preset entry is unavailable'); button.click(); })()`);
         for (let pass = 0; pass < 40 && !exports.length; pass++) await wait(100);
-        if (exports.length !== 1 || exports[0].action !== 'media' || exports[0].format !== 'png') throw Error('Local-file editor did not emit exactly one fixture media output');
+        if (exports.length !== 1 || exports[0].action !== 'image' || exports[0].format !== 'png') throw Error('Local-file editor did not emit exactly one fixture image preset output');
         const output = exports[0].frame, pixels = Buffer.from(output.pixels);
-        if (pixels.byteLength !== output.crop.width * output.crop.height * 4) throw Error('Editor fixture media output did not contain its flattened crop');
+        if (pixels.byteLength !== output.crop.width * output.crop.height * 4) throw Error('Editor fixture image preset output did not contain its flattened crop');
         const pixel = (80 * output.crop.width + 100) * 4;
-        if (pixels[pixel] !== 23 || pixels[pixel + 1] !== 23 || pixels[pixel + 2] !== 23 || pixels[pixel + 3] !== 255) throw Error('Editor fixture media output lost its privacy mask');
+        if (pixels[pixel] !== 23 || pixels[pixel + 1] !== 23 || pixels[pixel + 2] !== 23 || pixels[pixel + 3] !== 255) throw Error('Editor fixture image preset output lost its privacy mask');
       }
       w.destroy();
     }

@@ -2,7 +2,7 @@ import { RegionControls } from './RegionControls';
 import { regionPoints,resizeRegion,moveRegion } from '../../shared/region-geometry';
 import { Fragment, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Flashlight, Search, Stamp, Eraser, Link2, SlidersHorizontal, RotateCw, FlipHorizontal2, FlipVertical2, Contrast, Barcode, ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, ImagePlus, Languages, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Sigma, Slash, Square, Table2, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
+import { Flashlight, Search, Stamp, Eraser, Link2, SlidersHorizontal, RotateCw, FlipHorizontal2, FlipVertical2, Contrast, Barcode, ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, Languages, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Sigma, Slash, Square, Table2, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
 import type { BarcodeItem, CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
 import type { TranslationBlock } from '../../shared/intelligence';
 import { IntelligencePanel, type IntelligenceView } from './IntelligencePanel';
@@ -327,7 +327,6 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
             <button className="ed-caret" aria-label="保存格式" aria-expanded={formatOpen} disabled={busy} onClick={()=>{setRegionPanelOpen(false);setOCROpen(false);setFormatOpen(o=>!o);}}><ChevronDown/></button>
           </span>
           <button className="ed-tool" data-tip={state.pinId?'更新贴图':'贴到桌面'} aria-label={state.pinId?'更新贴图':'贴图'} disabled={!ready||busy} onClick={()=>void output('pin')}><Pin/></button>
-          <button className="ed-tool" data-tip="用于生图 · 使用处理后的图片" aria-label="用于生图" disabled={!ready||busy} onClick={()=>void output('media')}><ImagePlus/></button>
           <button className="ed-text" disabled={!ready||busy} onClick={()=>void output('image')}><Send/>图片预设</button>
           <button className="ed-primary" disabled={!ready||busy} onClick={()=>void output('copy')}><Copy/>复制</button>
           <button className="ed-tool" data-tip={state.origin==='pin'?'返回贴图 Esc':'关闭 Esc'} aria-label={state.origin==='pin'?'返回贴图':'关闭截图编辑器'} disabled={busy} onClick={()=>void window.screenshot.action('cancel')}><X/></button>

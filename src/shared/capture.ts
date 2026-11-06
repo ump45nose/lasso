@@ -32,7 +32,7 @@ export interface EditorCheckpoint {
 export interface CaptureFrame { outputSize?: {width:number;height:number}; id: string; revision: number; crop: CaptureRect; png?: Uint8Array; pixels?: Uint8Array; annotations?: AnnotationSnapshot }
 export type OCRMode = 'text' | 'code';
 export interface OCRRequest extends CaptureFrame { mode: OCRMode; enhance: boolean; force?: boolean }
-export type ExportAction = 'copy' | 'save' | 'quick-save' | 'copy-file' | 'copy-path' | 'image' | 'pin' | 'media';
+export type ExportAction = 'copy' | 'save' | 'quick-save' | 'copy-file' | 'copy-path' | 'image' | 'pin';
 /** Rect only drags a manual selection. Area drags or picks regions, window picks whole windows, screen takes the display, front takes the frontmost app window. */
 export type CaptureMode = 'rect' | 'area' | 'window' | 'screen' | 'front';
 export const captureModes: CaptureMode[] = ['rect', 'area', 'window', 'screen', 'front'];

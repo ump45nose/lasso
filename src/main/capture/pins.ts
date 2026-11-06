@@ -437,7 +437,7 @@ export class PinManager {
     pin.editorRevision=frame.revision;this.options.suppress();
     if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!preferences.cornerRadius&&!preferences.borderWidth){await copyPng(assertPng(frame.png,frame.outputSize?.width??crop.width,frame.outputSize?.height??crop.height));if(historyDocument)await this.options.recordHistory(historyDocument,pin.state.id);this.showPin(pin);return;}
     const image=mode==='original'?pin.document.source.crop(crop):contentImage(historyDocument?.image??decodeFrameImage(frame),mode,pin.document.pixelScale);
-    if(action==='image'||action==='media')await this.options.image(image);
+    if(action==='image')await this.options.image(image);
     else if(action==='pin'){
       const annotations=validateAnnotations(frame.annotations,pin.document.source,frame.crop);
       const next={...pin.document,image,annotations},bytes=this.weight(next);

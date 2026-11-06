@@ -247,7 +247,7 @@ export async function runAfterSaveAction(filePath: string, action: ScreenshotAft
 
 /** Content mode of an editor export. Pins always keep the composed result. */
 export function exportMode(action: ExportAction, format: ScreenshotOutputFormat, requested: ScreenshotExportContentMode): ScreenshotExportContentMode {
-  if(!['copy','save','quick-save','copy-file','copy-path','image','pin','media'].includes(action)||!screenshotOutputFormats.includes(format)||!['original','result','display'].includes(requested))throw Error('不支持的输出操作');
+  if(!['copy','save','quick-save','copy-file','copy-path','image','pin'].includes(action)||!screenshotOutputFormats.includes(format)||!['original','result','display'].includes(requested))throw Error('不支持的输出操作');
   return action==='pin'?'result':requested;
 }
 /** Display export uses screen logical dimensions; result and original keep their pixels. */
