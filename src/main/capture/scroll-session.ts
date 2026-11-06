@@ -1,9 +1,8 @@
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import type { ScrollDirection } from '../../shared/capture';
-import type { StitchResult } from './scroll-stitch';
+import type { ScrollFrame, StitchResult } from './scroll-stitch';
 
-export interface ScrollFrame { width: number; height: number; data: Uint8Array }
 export interface ScrollReply extends StitchResult { id: number; type: string }
 /** One capture and one worker request at a time. No frame queue grows behind a slow matcher. */
 export class ScrollSession {

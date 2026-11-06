@@ -59,7 +59,6 @@ export interface PinAPI {
   setOpacity(opacity: number): Promise<{ error: string | null }>;
   setZoom(factor: number): Promise<{ error: string | null }>;
   setGroup(groupId: string): Promise<{ error: string | null }>;
-  setTitle(title: string): Promise<{ error: string | null }>;
   updateText(text: string): Promise<{ error: string | null }>;
   startDrag(): void;
   drag(): void;

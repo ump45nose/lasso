@@ -10,7 +10,6 @@ const api: PinAPI = {
   setOpacity:opacity=>ipcRenderer.invoke('pin:set-opacity',opacity),
   setZoom:factor=>ipcRenderer.invoke('pin:set-zoom',factor),
   setGroup:groupId=>ipcRenderer.invoke('pin:set-group',groupId),
-  setTitle:title=>ipcRenderer.invoke('pin:set-title',title),
   updateText:text=>ipcRenderer.invoke('pin:update-text',text),
   text:(text,send,revision)=>ipcRenderer.invoke('pin:text',text,send,revision),
   source:()=>ipcRenderer.invoke('pin:source'),

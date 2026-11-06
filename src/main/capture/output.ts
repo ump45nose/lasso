@@ -4,8 +4,9 @@ import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { deflateSync } from 'node:zlib';
 import type { RecordingFormat } from '../../shared/recording';
-import type { CaptureFrame } from '../../shared/capture';
-import { validateScreenshotFileNameTemplate, type ScreenshotAfterSaveAction, type ScreenshotOutputFormat, type ScreenshotSettings } from '../../shared/screenshot-settings';
+import type { CaptureFrame, ExportAction } from '../../shared/capture';
+import { screenshotOutputFormats, validateScreenshotFileNameTemplate, type ScreenshotAfterSaveAction, type ScreenshotExportContentMode, type ScreenshotOutputFormat, type ScreenshotSettings } from '../../shared/screenshot-settings';
+import { defaultLocalImageCopyPath, saveLocalImageCopy, type LocalImageSource } from './local-images';
 
 const pngMagic = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
 export function assertPng(png: Uint8Array | undefined, width: number, height: number) {
@@ -217,9 +218,6 @@ export function formatScreenshotName(template: string, format: ScreenshotOutputF
   const ext = format === 'jpeg' ? 'jpg' : format;
   return { subDir: parts.join('/'), fileName: `${name}.${ext}`, ext };
 }
-export function screenshotName(format: ScreenshotOutputFormat): string {
-  return formatScreenshotName(defaultNameTemplate, format).fileName;
-}
 export async function saveAutomaticScreenshot(bytes: Buffer, directory: string, format: ScreenshotOutputFormat | RecordingFormat, template = defaultNameTemplate, meta: Omit<ScreenshotNameMeta, 'seq'> = {}): Promise<string> {
   const metadata = { ...meta, date: meta.date ?? new Date() }, hasSequence = template.includes('{seq}');
   for (let count = 0; ; count++) {
@@ -245,6 +243,39 @@ export async function runAfterSaveAction(filePath: string, action: ScreenshotAft
     case 'copy-path': await copyPath(filePath); return;
     case 'copy-file': await copyFile(filePath); return;
   }
+}
+
+/** Content mode of an editor export. Pins always keep the composed result. */
+export function exportMode(action: ExportAction, format: ScreenshotOutputFormat, requested: ScreenshotExportContentMode): ScreenshotExportContentMode {
+  if(!['copy','save','quick-save','copy-file','copy-path','image','pin','media'].includes(action)||!screenshotOutputFormats.includes(format)||!['original','result','display'].includes(requested))throw Error('不支持的输出操作');
+  return action==='pin'?'result':requested;
+}
+/** Display export uses screen logical dimensions; result and original keep their pixels. */
+export function contentImage(image: NativeImage, mode: ScreenshotExportContentMode, scale?: { x: number; y: number }): NativeImage {
+  if(mode!=='display'||!scale)return image;
+  const size=image.getSize();
+  return image.resize({width:Math.max(1,Math.round(size.width/scale.x)),height:Math.max(1,Math.round(size.height/scale.y)),quality:'best'});
+}
+export interface ImageDelivery { preferences: ScreenshotSettings; format: ScreenshotOutputFormat; mode: ScreenshotExportContentMode; pixelScale?: { x: number; y: number }; owner: BrowserWindow; app?: string; localSource?: LocalImageSource | null; confirm?: () => void }
+/** Clipboard and file output of a finished export image. Resolves false when the save dialog is cancelled; confirm runs after the dialog, before writing. */
+export async function deliverImage(image: NativeImage, action: 'copy'|'save'|'quick-save'|'copy-file'|'copy-path', d: ImageDelivery): Promise<boolean> {
+  const {preferences,format}=d,meta={app:d.app,...image.getSize()};
+  const encode=()=>encodeScreenshot(image,{...preferences,resizeTo1x:d.mode==='display'?false:preferences.resizeTo1x},format,d.pixelScale);
+  const copy=action==='copy'?preferences.copyMode:action==='copy-file'?'file':action==='copy-path'?'path':null;
+  if(copy==='image'){await copyImage(decorateScreenshot(image,preferences));return true;}
+  if(action==='save'){
+    const source=d.localSource,name=formatScreenshotName(preferences.fileNameTemplate,format,meta);
+    const defaultPath=source?defaultLocalImageCopyPath(source,format==='jpeg'?'jpeg':'png').replace(/\.[^.]+$/,'.'+name.ext):join(preferences.directory,name.subDir,name.fileName);
+    const {filePath,canceled}=await dialog.showSaveDialog(d.owner,{title:source?'另存图片副本':'保存图片',defaultPath,filters:[{name:format.toUpperCase()+' 图片',extensions:[name.ext]}]});
+    if(canceled||!filePath)return false;
+    d.confirm?.();
+    const bytes=encode();
+    if(source)await saveLocalImageCopy(source,filePath,bytes);else{await mkdir(dirname(filePath),{recursive:true});await writeFile(filePath,bytes);}
+    await runAfterSaveAction(filePath,preferences.afterSaveAction);return true;
+  }
+  const path=await saveAutomaticScreenshot(encode(),preferences.quickSaveDirectory,format,preferences.fileNameTemplate,meta);
+  if(copy==='file')await copyFile(path);else if(copy==='path')await copyPath(path);else await runAfterSaveAction(path,preferences.afterSaveAction);
+  return true;
 }
 
 /** Recording files share screenshot naming, collision handling and post-save preferences. */

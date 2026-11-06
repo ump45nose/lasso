@@ -9,7 +9,6 @@ contextBridge.exposeInMainWorld('pin', {
   setOpacity: value => ipcRenderer.invoke('ui-shots:pin-update', 'opacity', value),
   setZoom: value => ipcRenderer.invoke('ui-shots:pin-update', 'zoom', value),
   setGroup: value => ipcRenderer.invoke('ui-shots:pin-update', 'group', value),
-  setTitle: value => ipcRenderer.invoke('ui-shots:pin-update', 'title', value),
   updateText: value => ipcRenderer.invoke('ui-shots:pin-update', 'updateText', value),
   startDrag: () => ipcRenderer.send('ui-shots:pin-drag', 'start'),
   drag: () => ipcRenderer.send('ui-shots:pin-drag', 'move'),
