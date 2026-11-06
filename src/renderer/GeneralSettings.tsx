@@ -4,8 +4,16 @@ import type { GeneralSettings as Preferences, ScriptAction, ShellState } from '.
 import type { WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { shortcutLabel } from './targets';
 import { editorActionIds, editorActionLabels, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type EditorActionId, type GlobalActionId, type IgnoredAppRule, type IgnoredAppScope } from '../shared/shortcuts';
-import { Segmented } from './motion';
+import { Segmented, SubNav, SubPane, useSubNav } from './motion';
 import './styles/screenshot-settings.css';
+
+export type GeneralSubTab = 'system' | 'shortcuts' | 'editor' | 'sync';
+const subTabs: readonly (readonly [GeneralSubTab, string])[] = [
+  ['system', '系统与常驻'],
+  ['shortcuts', '快捷键与忽略'],
+  ['editor', '编辑器与脚本'],
+  ['sync', '同步与迁移']
+];
 
 const actionHelp: Record<GlobalActionId, string> = {
   rect: '直接拖动框选，不自动吸附窗口或识别区域', area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口',
@@ -57,7 +65,27 @@ function ScriptSettings({ actions, save }: { actions: ScriptAction[]; save: (act
   </section>;
 }
 
-function AdvancedSettings({ settings }: { settings: ShellState['settings'] }) {
+function SystemAppearanceSettings({ settings }: { settings: ShellState['settings'] }) {
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const { launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates } = settings;
+  async function save(patch: Partial<Preferences>) {
+    setBusy(true); setError(''); setNotice('');
+    try { const result = await window.desktop.saveGeneral({ launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates, ...patch }); if (result.error) throw Error(result.error); setNotice('设置已保存'); return true; }
+    catch (error) { setError(String(error)); return false; } finally { setBusy(false); }
+  }
+  return <section className="l-set-section">
+    <fieldset className="l-general-controls" disabled={busy}>
+      <div id="system-settings" className="l-set-row-head"><h3>系统与外观</h3><span>立即保存</span></div>
+      <ul className="l-group">
+        {([['launchAtLogin', '开机自启', launchAtLogin], ['autoCheckUpdates', '自动检查更新', autoCheckUpdates]] as const).map(([key, label, checked]) => <li key={key}><span className="l-row-label">{label}</span><button className="l-switch" role="switch" aria-label={label} aria-checked={checked} onClick={() => void save({ [key]: !checked })}><span /></button></li>)}
+        <li className="l-shot-option"><span>主题</span><Segmented label="界面主题" value={themeMode} onChange={themeMode => void save({ themeMode })} options={ [['paper', '纸面'], ['system', '跟随系统']] } /></li>
+      </ul>
+    </fieldset>
+    {error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
+  </section>;
+}
+
+function EditorScriptSettings({ settings }: { settings: ShellState['settings'] }) {
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   const { launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates } = settings;
   async function save(patch: Partial<Preferences>) {
@@ -73,12 +101,7 @@ function AdvancedSettings({ settings }: { settings: ShellState['settings'] }) {
   }
   return <section className="l-set-section">
     <fieldset className="l-general-controls" disabled={busy}>
-      <div id="system-settings" className="l-set-row-head"><h3>系统与外观</h3><span>立即保存</span></div>
-      <ul className="l-group">
-        {([['launchAtLogin', '开机自启', launchAtLogin], ['autoCheckUpdates', '自动检查更新', autoCheckUpdates]] as const).map(([key, label, checked]) => <li key={key}><span className="l-row-label">{label}</span><button className="l-switch" role="switch" aria-label={label} aria-checked={checked} onClick={() => void save({ [key]: !checked })}><span /></button></li>)}
-        <li className="l-shot-option"><span>主题</span><Segmented label="界面主题" value={themeMode} onChange={themeMode => void save({ themeMode })} options={ [['paper', '纸面'], ['system', '跟随系统']] } /></li>
-      </ul>
-      <div id="mouse-actions" className="l-set-row-head l-gap"><h3>截图编辑器鼠标动作</h3></div>
+      <div id="mouse-actions" className="l-set-row-head"><h3>截图编辑器鼠标动作</h3><span>立即保存</span></div>
       <ul className="l-group">
         <li className="l-shot-option"><span>双击</span><Segmented label="双击动作" value={mouseActions.doubleClick} onChange={doubleClick => void save({ mouseActions: { ...mouseActions, doubleClick } })} options={ [['copy', '复制'], ['save', '保存'], ['pin', '贴图'], ['none', '无']] } /></li>
         <li className="l-shot-option"><span>中键</span><Segmented label="中键动作" value={mouseActions.middleClick} onChange={middleClick => void save({ mouseActions: { ...mouseActions, middleClick } })} options={ [['pin', '贴图'], ['quick-save', '快速保存'], ['none', '无']] } /></li>
@@ -183,7 +206,9 @@ function ConfigSyncSettings() {
   </>;
 }
 
-export function GeneralSettings({ state }: { state: ShellState }) {
+export function GeneralSettings({ state, initialSub = 'system' }: { state: ShellState; initialSub?: GeneralSubTab }) {
+  const [sub, setSub, bodyRef] = useSubNav<GeneralSubTab>(initialSub);
+  useEffect(() => { setSub(initialSub); }, [initialSub]);
   const { settings, capture } = state;
   const [error, setError] = useState('');
   const [ignoredError, setIgnoredError] = useState(''), [ignoredSaving, setIgnoredSaving] = useState(false);
@@ -219,55 +244,91 @@ export function GeneralSettings({ state }: { state: ShellState }) {
   };
   const resident = state.tasks.filter(task => task.residency === 'resident').length, released = state.tasks.length - resident;
   const captureDot = capture.status === 'active' ? 'complete' : capture.status === 'error' ? 'error' : capture.status === 'permission' ? 'waiting' : 'released';
-  return <div className="l-set-body">
-    <AdvancedSettings settings={settings} />
-    <div className="l-set-row-head"><h3>划词</h3></div>
-    <ul className="l-group">
-      <li className="col">
-        <div className="l-row">
-          <div className="l-row-label"><span>划词动作条</span><span className={'l-status' + (capture.status === 'error' ? ' error' : '')}><span className={'dot ' + captureDot} />{capture.message}</span></div>
-          <button className="l-switch" role="switch" aria-checked={settings.selectionEnabled} aria-label="划词动作条" onClick={() => void saveCapture({ selectionEnabled: !settings.selectionEnabled })}><span /></button>
-        </div>
-        {(capture.status === 'permission' || (capture.status !== 'active' && settings.selectionEnabled)) && <div className="l-row">
-          {capture.status === 'permission' && <button className="l-btn small" onClick={() => void window.desktop.act('selection-permission')}>打开系统设置授权</button>}
-          {settings.selectionEnabled && <button className="l-btn small" onClick={() => void window.desktop.act('refresh-capture')}>重新检查</button>}
-        </div>}
-      </li>
-      <li><div className="l-row-label"><span>允许模拟复制取词</span><span>只在辅助功能取不到文字时模拟 ⌘C，可能改动剪贴板。默认关闭。</span></div>
-        <button className="l-switch" role="switch" aria-checked={settings.clipboardFallback} aria-label="允许模拟复制取词" onClick={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })}><span /></button></li>
-    </ul>
-    <div id="global-shortcuts" className="l-set-row-head l-gap"><h3>全局动作快捷键</h3><span>F1–F24 或组合键 · 立即保存</span></div>
-    <ul className="l-group">
-      {globalActionIds.map(action => <ShortcutField key={action} id={'shortcut-' + action} label={globalActionLabels[action]} help={actionHelp[action]} value={settings.actionShortcuts[action] || ''} save={shortcut => window.desktop.saveActionShortcut(action, shortcut)} error={action === 'open-launcher' ? state.shortcutError : null} />)}
-    </ul>
-    <div id="editor-shortcuts" className="l-set-row-head l-gap"><h3>编辑器局部快捷键</h3><span>支持单键 · 立即保存</span></div>
-    <p className="l-field-help">仅在截图编辑器与贴图编辑时生效。点击录制，按 Esc 取消；右侧 × 清空绑定。</p>
-    <ul className="l-group">{editorActionIds.map(action => <ShortcutField key={action} id={'editor-shortcut-' + action} label={editorActionLabels[action]} value={settings.editorShortcuts[action]} local save={shortcut => saveEditor(action, shortcut)} />)}</ul>
-    <div id="ignored-apps" className="l-set-row-head l-gap"><h3>忽略应用</h3><button className="l-text-btn" disabled={ignoredSaving} onClick={() => void addIgnored()}>选择忽略应用…</button></div>
-    <p className="l-field-help">在这些应用中暂停所选功能。窗口候选只过滤截图可选窗口，修改后立即保存。</p>
-    <ul className="l-group">{settings.ignoredApps.length ? settings.ignoredApps.map((rule, index) => <li className="col" key={rule.bundleId}>
-      <div className="l-row"><div className="l-row-label"><span>{rule.name}</span><span className="mono">{rule.bundleId}</span></div><button className="l-switch" role="switch" aria-label={'启用忽略 ' + rule.name} aria-checked={rule.enabled} disabled={ignoredSaving} onClick={() => updateIgnored(index, { enabled: !rule.enabled })}><span /></button><button className="l-icon" aria-label={'删除忽略应用 ' + rule.name} disabled={ignoredSaving} onClick={() => void saveIgnored(settings.ignoredApps.filter((_, i) => i !== index))}><X size={14} /></button></div>
-      <div className="l-ignored-scopes">{ignoredScopes.map(([scope, label]) => <button key={scope} className="l-btn small" role="checkbox" aria-label={`${rule.name}：忽略${label}`} aria-checked={rule.scopes.includes(scope)} disabled={ignoredSaving} onClick={() => updateIgnored(index, { scopes: rule.scopes.includes(scope) ? rule.scopes.filter(value => value !== scope) : [...rule.scopes, scope] })}><Check size={14} aria-hidden="true" />{label}</button>)}</div>
-    </li>) : <li><p className="l-field-help">尚未添加忽略应用</p></li>}</ul>
-    {ignoredError && <p className="l-field-help error" role="alert">{ignoredError}</p>}
-    <div className="l-set-row-head l-gap"><h3>窗口与任务</h3></div>
-    <ul className="l-group">
-      <li><div className="l-row-label"><span>始终置顶</span><span>未置顶时，点击窗外会隐藏小窗；任务继续在后台运行。</span></div>
-        <button className="l-switch" role="switch" aria-checked={state.pinned} aria-label="始终置顶" onClick={() => void window.desktop.act('pin')}><span /></button></li>
-      <li><div className="l-row-label"><span>{resident} 个驻留 · {released} 个已休眠</span><span>任务休眠后可按原链接或原会话恢复；生成中的任务和网页草稿保留。</span></div></li>
-      <li><div className="l-row-label"><span>网页与账户</span><span>在小窗内登录 ChatGPT、Gemini 一次，以后保持登录。网页仍使用自己的模型、工具和会话。</span></div></li>
-    </ul>
-    <div id="memory-settings" className="l-set-row-head l-gap"><h3>内存</h3></div>
-    <ul className="l-group">
-      <li><div className="l-row-label"><span>闲置休眠</span><span>隐藏或最小化后开始计时，返回时恢复；正在处理的操作保持运行。</span></div><button className="l-switch" role="switch" aria-checked={settings.memory.enabled} aria-label="闲置休眠" onClick={() => void saveMemory(undefined, !settings.memory.enabled)}><span /></button></li>
-      <li className="col"><div className="l-field"><label htmlFor="memory-minutes">休眠时间（分钟）</label>
-        <Segmented label="闲置休眠时间" value={String(settings.memory.idleMinutes)} options={[5,15,30,60].map(value => [String(value), String(value)] as const)} onChange={value => void saveMemory(Number(value))} />
-        <div className="l-row"><input id="memory-minutes" className="l-input mono" type="number" min="1" max="1440" value={minutes} onChange={event => setMinutes(event.target.value)} /><button className="l-btn small" onClick={() => void saveMemory(Number(minutes))}>应用</button></div>
-        <p className="l-field-help">可自定义 1–1440 分钟，默认 30 分钟。修改后按已有闲置时间重新计算；关闭开关可保持驻留。</p>
-      </div></li>
-    </ul>
-    <ConfigSyncSettings />
-    {error && <p className="l-field-help error" role="alert">{error}</p>}
-    <button className="l-btn danger l-quit" onClick={() => void window.desktop.act('quit')}>退出 Lasso</button>
-  </div>;
+  return <>
+    <SubNav label="通用设置二级分类" value={sub} options={subTabs} onChange={setSub} />
+    <div ref={bodyRef} className="l-set-body">
+      <SubPane id="system" active={sub === 'system'}>
+        <SystemAppearanceSettings settings={settings} />
+        <div className="l-set-row-head l-gap"><h3>划词</h3></div>
+        <ul className="l-group">
+          <li className="col">
+            <div className="l-row">
+              <div className="l-row-label"><span>划词动作条</span><span className={'l-status' + (capture.status === 'error' ? ' error' : '')}><span className={'dot ' + captureDot} />{capture.message}</span></div>
+              <button className="l-switch" role="switch" aria-checked={settings.selectionEnabled} aria-label="划词动作条" onClick={() => void saveCapture({ selectionEnabled: !settings.selectionEnabled })}><span /></button>
+            </div>
+            {(capture.status === 'permission' || (capture.status !== 'active' && settings.selectionEnabled)) && <div className="l-row">
+              {capture.status === 'permission' && <button className="l-btn small" onClick={() => void window.desktop.act('selection-permission')}>打开系统设置授权</button>}
+              {settings.selectionEnabled && <button className="l-btn small" onClick={() => void window.desktop.act('refresh-capture')}>重新检查</button>}
+            </div>}
+          </li>
+          <li><div className="l-row-label"><span>允许模拟复制取词</span><span>只在辅助功能取不到文字时模拟 ⌘C，可能改动剪贴板。默认关闭。</span></div>
+            <button className="l-switch" role="switch" aria-checked={settings.clipboardFallback} aria-label="允许模拟复制取词" onClick={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })}><span /></button></li>
+        </ul>
+        <div id="resident-suite" className="l-set-row-head l-gap"><h3>常驻桌面套件</h3><span>状态栏与全局热键</span></div>
+        <ul className="l-group">
+          <li>
+            <div className="l-row-label"><span>刘海岛与专注看板</span><span>顶部常驻胶囊、番茄钟 / 摸鱼提醒与 Nook 待办联动，紧迫提醒触发四边呼吸光晕。</span></div>
+            <button className="l-btn small" onClick={() => void window.desktop.act('open-island-board')}>展开看板</button>
+          </li>
+          <li>
+            <div className="l-row-label"><span>EdgeNotes 边缘便签</span><span>屏幕右侧 6px 悬停抽屉，双向同步 ~/Documents/LassoNotes/*.md，可一键钉为贴图。</span></div>
+            <span className="l-kbd">⌃⌥N</span>
+            <button className="l-btn small" onClick={() => void window.desktop.act('toggle-edge-notes')}>打开便签</button>
+          </li>
+          <li>
+            <div className="l-row-label"><span>Finder 超级动作面板</span><span>在当前目录新建 .md / .py / .sh 等文件，或用终端、Cursor、VS Code 打开并发送给 AI。</span></div>
+            <span className="l-kbd">⌃⌥F</span>
+            <button className="l-btn small" onClick={() => void window.desktop.act('open-finder-panel')}>唤起面板</button>
+          </li>
+          <li className="col">
+            <div className="l-row-label"><span>窗口分屏与双栏工作区</span><span>⌃⌥ ← / → 左/右半屏 · ⌃⌥ ↑ 最大化 · ⌃⌥ ↓ 居中阅读窗 · ⌃⌥ ↵ 一键 2/3 研发 + 1/3 AI 双栏。</span></div>
+            <div className="l-workspace-actions">
+              <button className="l-btn small" onClick={() => void window.desktop.act('snap-coding-ai')}>2/3 研发双栏</button>
+              <button className="l-btn small" onClick={() => void window.desktop.act('snap-equal-split')}>50/50 对半分屏</button>
+            </div>
+          </li>
+        </ul>
+        <div className="l-set-row-head l-gap"><h3>窗口与任务</h3></div>
+        <ul className="l-group">
+          <li><div className="l-row-label"><span>始终置顶</span><span>未置顶时，点击窗外会隐藏小窗；任务继续在后台运行。</span></div>
+            <button className="l-switch" role="switch" aria-checked={state.pinned} aria-label="始终置顶" onClick={() => void window.desktop.act('pin')}><span /></button></li>
+          <li><div className="l-row-label"><span>{resident} 个驻留 · {released} 个已休眠</span><span>任务休眠后可按原链接或原会话恢复；生成中的任务和网页草稿保留。</span></div></li>
+          <li><div className="l-row-label"><span>网页与账户</span><span>在小窗内登录 ChatGPT、Gemini 一次，以后保持登录。网页仍使用自己的模型、工具和会话。</span></div></li>
+        </ul>
+        <div id="memory-settings" className="l-set-row-head l-gap"><h3>内存</h3></div>
+        <ul className="l-group">
+          <li><div className="l-row-label"><span>闲置休眠</span><span>隐藏或最小化后开始计时，返回时恢复；正在处理的操作保持运行。</span></div><button className="l-switch" role="switch" aria-checked={settings.memory.enabled} aria-label="闲置休眠" onClick={() => void saveMemory(undefined, !settings.memory.enabled)}><span /></button></li>
+          <li className="col"><div className="l-field"><label htmlFor="memory-minutes">休眠时间（分钟）</label>
+            <Segmented label="闲置休眠时间" value={String(settings.memory.idleMinutes)} options={[5,15,30,60].map(value => [String(value), String(value)] as const)} onChange={value => void saveMemory(Number(value))} />
+            <div className="l-row"><input id="memory-minutes" className="l-input mono" type="number" min="1" max="1440" value={minutes} onChange={event => setMinutes(event.target.value)} /><button className="l-btn small" onClick={() => void saveMemory(Number(minutes))}>应用</button></div>
+            <p className="l-field-help">可自定义 1–1440 分钟，默认 30 分钟。修改后按已有闲置时间重新计算；关闭开关可保持驻留。</p>
+          </div></li>
+        </ul>
+        <button className="l-btn danger l-quit" onClick={() => void window.desktop.act('quit')}>退出 Lasso</button>
+      </SubPane>
+      <SubPane id="shortcuts" active={sub === 'shortcuts'}>
+        <div id="global-shortcuts" className="l-set-row-head"><h3>全局动作快捷键</h3><span>F1–F24 或组合键 · 立即保存</span></div>
+        <ul className="l-group">
+          {globalActionIds.map(action => <ShortcutField key={action} id={'shortcut-' + action} label={globalActionLabels[action]} help={actionHelp[action]} value={settings.actionShortcuts[action] || ''} save={shortcut => window.desktop.saveActionShortcut(action, shortcut)} error={action === 'open-launcher' ? state.shortcutError : null} />)}
+        </ul>
+        <div id="editor-shortcuts" className="l-set-row-head l-gap"><h3>编辑器局部快捷键</h3><span>支持单键 · 立即保存</span></div>
+        <p className="l-field-help">仅在截图编辑器与贴图编辑时生效。点击录制，按 Esc 取消；右侧 × 清空绑定。</p>
+        <ul className="l-group">{editorActionIds.map(action => <ShortcutField key={action} id={'editor-shortcut-' + action} label={editorActionLabels[action]} value={settings.editorShortcuts[action]} local save={shortcut => saveEditor(action, shortcut)} />)}</ul>
+        <div id="ignored-apps" className="l-set-row-head l-gap"><h3>忽略应用</h3><button className="l-text-btn" disabled={ignoredSaving} onClick={() => void addIgnored()}>选择忽略应用…</button></div>
+        <p className="l-field-help">在这些应用中暂停所选功能。窗口候选只过滤截图可选窗口，修改后立即保存。</p>
+        <ul className="l-group">{settings.ignoredApps.length ? settings.ignoredApps.map((rule, index) => <li className="col" key={rule.bundleId}>
+          <div className="l-row"><div className="l-row-label"><span>{rule.name}</span><span className="mono">{rule.bundleId}</span></div><button className="l-switch" role="switch" aria-label={'启用忽略 ' + rule.name} aria-checked={rule.enabled} disabled={ignoredSaving} onClick={() => updateIgnored(index, { enabled: !rule.enabled })}><span /></button><button className="l-icon" aria-label={'删除忽略应用 ' + rule.name} disabled={ignoredSaving} onClick={() => void saveIgnored(settings.ignoredApps.filter((_, i) => i !== index))}><X size={14} /></button></div>
+          <div className="l-ignored-scopes">{ignoredScopes.map(([scope, label]) => <button key={scope} className="l-btn small" role="checkbox" aria-label={`${rule.name}：忽略${label}`} aria-checked={rule.scopes.includes(scope)} disabled={ignoredSaving} onClick={() => updateIgnored(index, { scopes: rule.scopes.includes(scope) ? rule.scopes.filter(value => value !== scope) : [...rule.scopes, scope] })}><Check size={14} aria-hidden="true" />{label}</button>)}</div>
+        </li>) : <li><p className="l-field-help">尚未添加忽略应用</p></li>}</ul>
+        {ignoredError && <p className="l-field-help error" role="alert">{ignoredError}</p>}
+      </SubPane>
+      <SubPane id="editor" active={sub === 'editor'}>
+        <EditorScriptSettings settings={settings} />
+      </SubPane>
+      <SubPane id="sync" active={sub === 'sync'}>
+        <ConfigSyncSettings />
+      </SubPane>
+      {error && <p className="l-field-help error" role="alert">{error}</p>}
+    </div>
+  </>;
 }

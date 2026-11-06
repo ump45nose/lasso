@@ -10,7 +10,7 @@ function Switch({ label, value, change, disabled }: { label: string; value: bool
   return <button className="l-switch" role="switch" aria-label={label} aria-checked={value} disabled={disabled} onClick={change}><span /></button>;
 }
 
-function CaptureHistory({ policy, change, pinned }: { policy: CaptureHistoryPolicy; change: (value: CaptureHistoryPolicy) => void; pinned: () => void }) {
+export function CaptureHistory({ policy, change, pinned }: { policy: CaptureHistoryPolicy; change: (value: CaptureHistoryPolicy) => void; pinned: () => void }) {
   const [query, setQuery] = useState(''), [history, setHistory] = useState<CaptureHistoryState | null>(null);
   const [busy, setBusy] = useState(false), [loading, setLoading] = useState(true), [error, setError] = useState(''), [notice, setNotice] = useState(''), [confirm, setConfirm] = useState('');
   const request = useRef(0);
@@ -50,7 +50,7 @@ function CaptureHistory({ policy, change, pinned }: { policy: CaptureHistoryPoli
   </section>;
 }
 
-function PinWorkspace({ settings, revision }: { settings: PinWorkspaceSettings; revision: number }) {
+export function PinWorkspace({ settings, revision }: { settings: PinWorkspaceSettings; revision: number }) {
   const [workspace, setWorkspace] = useState<PinWorkspaceState | null>(null), [draft, setDraft] = useState(() => structuredClone(settings));
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState(''), [removing, setRemoving] = useState(''), [moving, setMoving] = useState('');
   const [writing, setWriting] = useState(false), [text, setText] = useState('');

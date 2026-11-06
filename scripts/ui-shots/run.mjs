@@ -336,6 +336,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     names.push(await save(m, 'settings-shortcuts'));
     await page(m, `document.getElementById('shortcut-rect').scrollIntoView({block:'center'})`); await wait(150); names.push(await save(m, 'settings-rect-shortcut'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true });
+    await page(m, `document.getElementById('resident-suite').scrollIntoView({block:'start'})`); await wait(200);
+    names.push(await save(m, 'settings-resident-suite'));
     await page(m, `document.getElementById('memory-settings').scrollIntoView({block:'start'})`); await wait(250);
     names.push(await save(m, 'settings-memory'));
     m.webContents.send('shell:changed', { ...shell, settingsOpen: true, settings: { ...shell.settings, memory: {enabled:false,idleMinutes:45} } }); await wait(200);
@@ -508,6 +510,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const shot=async(selector,name)=>{await scrollTo(m,selector);await wait(180);names.push(await save(m,name));};
     await settingsTab(m,'截图');await ready(m,`document.querySelectorAll('.l-history-list > li').length===2`);
     await shot('#capture-history .l-set-row-head','settings-history');await shot('#capture-history .l-history-search','settings-history-list');
+    {
+      const savedItems=structuredClone(s.history.items);
+      s.history.items=Array.from({length:6},(_,i)=>({...savedItems[i%2],id:'history-overflow-'+i,ocrSnippet:`第 ${i+1} 条截图历史 · 验证长列表滚动不收缩不重叠`}));
+      await click('#capture-history','刷新历史');await ready(m,`document.querySelectorAll('.l-history-list > li').length===6`);
+      expect(await page(m,`(()=>{const items=[...document.querySelectorAll('.l-history-list > li')];return items.length===6&&items.every((li,i)=>li.getBoundingClientRect().height>=li.scrollHeight-1&&(!i||li.getBoundingClientRect().top>=items[i-1].getBoundingClientRect().bottom-.5));})()`),'Capture history items shrunk or overlapped when exceeding max-height');
+      s.history.items=savedItems;await click('#capture-history','刷新历史');await ready(m,`document.querySelectorAll('.l-history-list > li').length===2`);
+    }
     await fill('[aria-label="搜索截图历史"]','设计评审');expect(await page(m,`document.querySelectorAll('.l-history-list > li').length===1 && document.querySelector('.l-history-list').textContent.includes('含标注')`),'History search did not retain marked result');await shot('#capture-history .l-history-search','settings-history-search');
     for(const label of ['再编辑','贴图','复制'])await click('#capture-history .l-history-list',label);
     await click('#capture-history .l-history-list','删除');expect(s.history.items.length===2,'History delete skipped inline confirmation');await shot('#capture-history .l-history-search','settings-history-delete-confirm');await click('#capture-history .l-history-list','确认删除');expect(s.history.items.length===1,'History delete did not persist');
@@ -1239,7 +1248,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
 
       const controls=name.startsWith('scroll-')&&value.phase==='scrolling';
-      const w = new BrowserWindow({ x: 40, y: 40, width: value.viewSize?.width??(controls?700:W), height:value.viewSize?.height??(controls?144:H), frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
+      const w = new BrowserWindow({ x: 40, y: 40, width: value.viewSize?.width??(controls?700:W), height:value.viewSize?.height??(controls?144:H), enableLargerThanScreen: true, frame: false, show: true, backgroundColor: value.origin === 'clipboard' ? '#E9E6DD' : '#222222', webPreferences: { preload: path.join(fixtures, 'screenshot-preload.cjs'), contextIsolation: true, sandbox: true } });
+      if (value.viewSize) w.setSize(value.viewSize.width, value.viewSize.height);
       await w.loadFile(path.join(process.cwd(), 'dist/renderer/index.html'), { query: { surface: 'screenshot' } });
       await wait(900);
       if(value.stage9){
