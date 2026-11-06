@@ -1,6 +1,10 @@
+import type { RecordingSessionState } from '../shared/recording';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ScreenshotAPI, ScreenshotState } from '../shared/capture';
 const api: ScreenshotAPI = {
+  recordingState:()=>ipcRenderer.invoke('shell:recording-state'),
+  recordingAction:action=>ipcRenderer.invoke('shell:recording-action',action),
+  onRecording:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:RecordingSessionState|null)=>callback(state);ipcRenderer.on('shell:recording-changed',listener);return()=>ipcRenderer.removeListener('shell:recording-changed',listener);},
   onSuspend: callback => {
     const listener = (_event: Electron.IpcRendererEvent, editId: string) => {
       void ipcRenderer.invoke('screenshot:checkpoint', editId, callback()).catch(()=>{});
@@ -30,8 +34,15 @@ const api: ScreenshotAPI = {
   action:a=>ipcRenderer.invoke('screenshot:action',a),
   scrollAction:action=>ipcRenderer.invoke('screenshot:scroll-action',action),
   recognize:frame=>ipcRenderer.invoke('screenshot:recognize',frame),
+  analyze:request=>ipcRenderer.invoke('screenshot:analyze',request),
+  visionLanguage:()=>ipcRenderer.invoke('screenshot:vision-language'),
+  previewFormula:request=>ipcRenderer.invoke('screenshot:preview-formula',request),
+  openURL:request=>ipcRenderer.invoke('screenshot:open-url',request),
+  exportTable:rows=>ipcRenderer.invoke('screenshot:export-table',rows),
+  pinFormula:latex=>ipcRenderer.invoke('screenshot:pin-formula',latex),
   invalidateOCR:request=>ipcRenderer.send('screenshot:invalidate-ocr',request),
-  export:(frame,action,format)=>ipcRenderer.invoke('screenshot:export',frame,action,format),
+  export:(frame,action,format,contentMode)=>ipcRenderer.invoke('screenshot:export',frame,action,format,contentMode),
+  saveAnnotationMemory:memory=>ipcRenderer.invoke('screenshot:save-annotation-memory',memory),
   copyText:request=>ipcRenderer.invoke('screenshot:copy-text',request),
   sendText:request=>ipcRenderer.invoke('screenshot:send-text',request)
 };

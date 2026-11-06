@@ -17,9 +17,9 @@ import type {
 } from '../shared/contracts';
 
 interface NativeAxBridge {
-  paste?: () => boolean;
+  paste?: () => void;
   setGlow?: (enabled: boolean) => void;
-  startBridge?: (cb: (name: string, payload: string) => void) => void;
+  startBridge?: (cb: (event: { name: string; payload: string }) => void) => void;
   postBridge?: (name: string, payload: string) => void;
   snapWindow?: (x: number, y: number, w: number, h: number) => boolean;
   tileTwoWindows?: (x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number) => number;
@@ -31,16 +31,19 @@ const NOTES_W = 376, NOTES_H = 548;
 const FINDER_W = 384, FINDER_H = 430;
 
 function loadNativeAx(): NativeAxBridge {
+  if (process.env.LASSO_DATA_ROOT) return {};
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require(join(__dirname, 'capture-ax.node')) as NativeAxBridge;
+    return require(join(__dirname, 'native/capture-ax.node')) as NativeAxBridge;
   } catch {
     return {};
   }
 }
 
 function readNookTasks(): IslandTaskItem[] {
-  const base = join(homedir(), 'Library/Application Support/PersonalDataHub/local-cache');
+  const base = process.env.LASSO_DATA_ROOT
+    ? join(app.getPath('userData'), 'nook-cache')
+    : join(homedir(), 'Library/Application Support/PersonalDataHub/local-cache');
   for (const file of ['google.json', 'agenda.json']) {
     const p = join(base, file);
     if (!existsSync(p)) continue;
@@ -265,7 +268,7 @@ export class NotchIsland {
 
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
       const valid = [this.window.webContents, this.notesWindow.webContents, this.finderWindow.webContents];
-      if (!valid.includes(event.sender)) throw new Error('套件表面来源不匹配');
+      if (!valid.includes(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('套件表面来源不匹配');
     };
 
     ipcMain.handle('island:state', event => {
@@ -411,7 +414,7 @@ export class NotchIsland {
       await this.runFinderAction(action);
     });
 
-    this.ax.startBridge?.((name, payload) => this.handleBridgeNotification(name, payload));
+    this.ax.startBridge?.(({ name, payload }) => this.handleBridgeNotification(name, payload));
 
     this.window.once('ready-to-show', () => {
       this.placeWindows();

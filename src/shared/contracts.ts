@@ -1,9 +1,13 @@
+import type { RecordingAction, RecordingSessionState } from './recording';
 import type { CustomCaptureRequest, RegionConfiguration, RegionPreset } from './capture-regions';
 import type { ScreenshotSettings } from './screenshot-settings';
 import type { MemorySettings } from './memory';
 import type { ImageOptions, MediaConfig, MediaConfigInput } from './media';
 import type { CaptureMode } from './capture';
+import type { VisionServiceConfig, VisionServiceInput } from './intelligence';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
+import type { EditorShortcutMap, GlobalActionId, IgnoredAppRule } from './shortcuts';
+import type { CaptureHistoryState, PinArrangeMode, PinKind, PinWorkspaceSettings, PinWorkspaceState, WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from './history-sync';
 export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
 /** Native web views are placed below the title bar and above any footer rows. */
 export const HEADER_HEIGHT = 44;
@@ -26,13 +30,26 @@ export type AgentEvent = { taskId: string; revision: number; patch: Partial<Omit
 export type FontRole = 'display' | 'text' | 'ui' | 'mono';
 export interface ImportedFont { family: string; file: string }
 export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
+export interface ScriptAction { id: string; name: string; enabled: boolean; code: string }
+export type GeneralSettings = Pick<Settings, 'launchAtLogin' | 'themeMode' | 'toolbarTools' | 'mouseActions' | 'scriptActions' | 'autoCheckUpdates'>;
 export interface Settings {
+  launchAtLogin: boolean;
+  themeMode: 'paper' | 'system';
+  /** Empty displays every tool. */
+  toolbarTools: string[];
+  mouseActions: { doubleClick: 'copy' | 'save' | 'pin' | 'none'; rightClick: 'reselect' | 'cancel'; middleClick: 'pin' | 'quick-save' | 'none' };
+  scriptActions: ScriptAction[];
+  autoCheckUpdates: boolean;
+  vision: Omit<VisionServiceConfig, 'hasCredential'>;
   memory: MemorySettings;
   screenshot: ScreenshotSettings;
   /** Empty means no global shortcut. */
   shortcut: string;
   /** Empty means unbound, per capture mode. */
   captureShortcuts: Record<CaptureMode, string>;
+  actionShortcuts: Partial<Record<GlobalActionId, string>>;
+  editorShortcuts: EditorShortcutMap;
+  ignoredApps: IgnoredAppRule[];
   lastTarget: Target;
   selectionEnabled: boolean;
   clipboardFallback: boolean;
@@ -118,12 +135,36 @@ export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' |
 export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
+  saveGeneral(options: GeneralSettings): Promise<{ error: string | null }>;
+  runScriptAction(id: string, input?: { text?: string }): Promise<{ output: string; error: string | null }>;
+  recordingPanel(open: boolean): Promise<void>;
+  onRecordingClose(callback: () => void): () => void;
+  recordingState(): Promise<RecordingSessionState | null>;
+  recordingAction(action: RecordingAction): Promise<{ state: RecordingSessionState | null; path?: string | null; error: string | null }>;
+  onRecording(callback: (state: RecordingSessionState | null) => void): () => void;
+  captureHistory(query?: string): Promise<CaptureHistoryState>;
+  actCaptureHistory(id: string, action: 'edit' | 'pin' | 'copy' | 'delete'): Promise<{ error: string | null }>;
+  clearCaptureHistory(): Promise<{ error: string | null }>;
+  pinWorkspace(): Promise<PinWorkspaceState>;
+  savePinWorkspace(settings: PinWorkspaceSettings): Promise<{ error: string | null }>;
+  createPin(input: { kind: PinKind; text?: string; color?: string; filePath?: string; groupId?: string }): Promise<{ error: string | null }>;
+  pinClipboard(): Promise<{ error: string | null }>;
+  reopenClosedPin(): Promise<{ error: string | null }>;
+  arrangePins(mode: PinArrangeMode, groupId?: string): Promise<{ error: string | null }>;
+  actPin(id: string, action: 'focus' | 'toggle-visible' | 'toggle-lock' | 'toggle-thumbnail' | 'close', groupId?: string): Promise<{ error: string | null }>;
+  exportConfig(): Promise<{ path: string | null; error: string | null }>;
+  importConfig(): Promise<{ error: string | null }>;
+  webdavConfig(): Promise<WebDavConfig>;
+  saveWebdavConfig(input: WebDavConfigInput): Promise<WebDavConfig>;
+  syncWebdav(direction: WebDavSyncDirection): Promise<{ state: WebDavConfig; error: string | null }>;
   saveMemory(options: MemorySettings): Promise<{ error: string | null }>;
   captureRegions():Promise<RegionConfiguration>;
   customScreenshot(request:CustomCaptureRequest):Promise<{error:string|null}>;
   saveRegionPreset(preset:RegionPreset):Promise<void>;
   deleteRegionPreset(id:string):Promise<void>;
   mediaConfig(): Promise<MediaConfig>;
+  visionConfig(): Promise<VisionServiceConfig>;
+  saveVisionConfig(input: VisionServiceInput): Promise<VisionServiceConfig>;
   saveMediaConfig(input: MediaConfigInput): Promise<MediaConfig>;
   mediaModels(): Promise<string[]>;
   openImagePresets(): Promise<void>;
@@ -136,6 +177,9 @@ export interface DesktopAPI {
   openLocalImage(): Promise<{ error: string | null }>;
   saveCaptureShortcut(mode: CaptureMode, shortcut: string): Promise<{ error: string | null }>;
   saveShortcut(shortcut: string): Promise<{ error: string | null }>;
+  saveActionShortcut(action: GlobalActionId, shortcut: string): Promise<{ error: string | null }>;
+  saveEditorShortcuts(shortcuts: EditorShortcutMap): Promise<{ error: string | null }>;
+  saveIgnoredApps(rules: IgnoredAppRule[]): Promise<{ error: string | null }>;
   saveScreenshot(options: ScreenshotSettings): Promise<{ error: string | null }>;
   ocrLanguages(): Promise<string[]>;
   saveCapture(options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>): Promise<{ error: string | null }>;

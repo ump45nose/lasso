@@ -1,27 +1,72 @@
-/* Pinned screenshot: the image fills the frameless window; the ink toolbar floats in on hover and answers in clay. */
+/* Content stays in place; compact ink controls float above warm paper. */
 .pin { position: fixed; inset: 0; overflow: hidden; user-select: none; background: var(--sunken); font-family: var(--font-ui); }
-.pin::after { content: ''; position: absolute; inset: 0; border-radius: 10px; box-shadow: inset 0 0 0 0.5px rgba(20, 20, 19, 0.18); pointer-events: none; transition: box-shadow var(--t-base); }
+.pin::after { content: ''; position: absolute; z-index: 4; inset: 0; border-radius: 10px; box-shadow: inset 0 0 0 0.5px rgba(20, 20, 19, 0.18); pointer-events: none; transition: box-shadow var(--t-base); }
 .pin.focused::after { box-shadow: inset 0 0 0 1.5px var(--clay); }
 .pin-viewport { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; cursor: grab; }
-.pin-viewport.dragging { cursor: grabbing; }
+.pin-viewport.dragging, .pin-thumbnail:active { cursor: grabbing; }
 .pin-viewport.selecting { cursor: text; }
 .pin-viewport.moving { cursor: grab; }
-.pin-bar, .pin-options { -webkit-app-region: no-drag; }
+.pin.locked .pin-viewport, .pin.locked .pin-thumbnail, .pin.locked .pin-grip { cursor: default; }
 .pin-viewport.moving .editor-text-layer { pointer-events: none; }
 .pin-stage { position: relative; }
 .pin-pixels { position: relative; transform-origin: 0 0; }
 .pin-pixels > img { display: block; width: 100%; height: 100%; pointer-events: none; }
-.pin-bar { position: absolute; z-index: 2; top: 8px; left: 50%; translate: -50% 0; display: flex; align-items: center; gap: 1px; height: 34px; padding: 0 3px 0 0; border-radius: 10px; background: var(--ink);
+.pin-bar { -webkit-app-region: no-drag; position: absolute; z-index: 3; top: 8px; left: 50%; translate: -50% 0; display: flex; align-items: center; gap: 1px; height: 34px; max-width: calc(100% - 12px); padding: 0 3px 0 0; border-radius: 10px; background: var(--ink); color: var(--on-ink); overflow-x: auto; scrollbar-width: none;
   box-shadow: inset 0 0 0 0.5px rgba(250, 249, 245, 0.1), 0 8px 20px -8px rgba(20, 20, 19, 0.55); }
-.pin-bar svg { width: 15px; height: 15px; stroke-width: 1.6; }
-.pin-grip { width: 22px; height: 34px; display: grid; place-items: center; color: rgba(250, 249, 245, 0.45); cursor: grab; -webkit-app-region: drag; }
-.pin-bar button { height: 28px; min-width: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 7px; border: 0; border-radius: 7px; background: transparent; color: var(--on-ink); font-size: 12.5px; white-space: nowrap; transition: background var(--t-fast), transform 100ms; }
-.pin-bar button:hover { background: var(--clay); color: #FFFFFF; }
-.pin-bar button:active { transform: scale(.94); }
-.pin-bar button.pin-text { background: rgba(217, 119, 87, 0.28); }
-.pin-bar button.on, .pin-bar button[aria-pressed="true"] { color: var(--clay); }
-.pin-bar button.on:hover, .pin-bar button[aria-pressed="true"]:hover { color: #FFFFFF; }
-.pin-options { top: 48px; padding: 0 3px; }
-.pin-opacity .mono { font-size: 11.5px; }
-.pin-status { position: absolute; z-index: 2; left: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 8px; border-radius: 6px; background: rgba(20, 20, 19, 0.78); color: var(--on-ink); font-size: 11px; pointer-events: none; }
+.pin-bar svg, .pin-thumbnail svg, .pin-lock-mark svg, .pin-file-card button svg, .pin-color-values svg { width: 15px; height: 15px; flex-shrink: 0; stroke-width: 1.6; }
+.pin-grip { flex-shrink: 0; width: 20px; height: 34px; display: grid; place-items: center; color: rgba(250, 249, 245, 0.45); cursor: grab; touch-action: none; }
+.pin-bar button, .pin-thumbnail-actions button { flex-shrink: 0; height: 28px; min-width: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 6px; border: 0; border-radius: 7px; background: transparent; color: var(--on-ink); font-size: 12.5px; white-space: nowrap; transition: background var(--t-fast), transform var(--t-fast); }
+.pin-bar button:hover, .pin-thumbnail-actions button:hover { background: var(--clay); color: var(--surface); }
+.pin-bar button:active, .pin-thumbnail-actions button:active { background: var(--clay-press); transform: scale(.94); }
+.pin-bar button[aria-pressed="true"], .pin-bar button[aria-selected="true"], .pin-thumbnail-actions button[aria-pressed="true"] { color: var(--clay); }
+.pin-bar button[aria-pressed="true"]:hover, .pin-bar button[aria-selected="true"]:hover { color: var(--surface); }
+.pin-options { top: 48px; width: min(320px, calc(100% - 16px)); max-width: none; height: auto; max-height: calc(100% - 56px); padding: 4px; display: block; overflow: auto; scrollbar-width: thin; }
+.pin-option-row { display: flex; flex-wrap: wrap; gap: 1px; }
+.pin-control { display: flex; align-items: center; gap: 7px; padding: 4px 6px; min-height: 32px; font-size: 12px; }
+.pin-control > span:first-child { min-width: 36px; }
+.pin-control input[type="range"] { min-width: 30px; width: 100%; height: 4px; accent-color: var(--clay); cursor: pointer; }
+.pin-control output { width: 36px; flex-shrink: 0; text-align: right; font-size: 11px; }
+.pin-control .pin-zoom { width: 55px; min-width: 0; padding: 2px 4px; border: 1px solid rgba(250, 249, 245, 0.25); border-radius: 5px; background: var(--ink-2); color: var(--on-ink); font-family: var(--font-mono); font-size: 11px; }
+.pin-group { min-width: 0; }
+.pin-group .pin-group-toggle { width: 100%; justify-content: flex-start; }
+.pin-group-toggle > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.pin-group-menu { max-height: 180px; overflow: auto; padding: 4px 0; border-top: 1px solid rgba(250, 249, 245, 0.15); }
+.pin-group-menu button { display: flex; width: 100%; justify-content: space-between; }
+.pin-group-menu button span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pin-status { position: absolute; z-index: 3; left: 8px; bottom: 8px; max-width: calc(100% - 16px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 8px; border-radius: 6px; background: rgba(20, 20, 19, 0.78); color: var(--on-ink); font-size: 11px; pointer-events: none; }
 .pin-status.error { background: var(--danger); }
+.pin-lock-mark { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; padding: 5px; border-radius: 6px; background: var(--ink); color: var(--clay); pointer-events: none; }
+.pin-note { width: 100%; height: 100%; padding: 20px; background: var(--bg); }
+.pin-note p { margin: 0; height: 100%; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-text); font-size: 15px; line-height: 1.65; }
+.pin-note.editing { display: flex; flex-direction: column; gap: 8px; padding: 48px 12px 10px; cursor: default; }
+.pin-note textarea { flex: 1; width: 100%; min-height: 32px; resize: none; border: 1px solid var(--clay-line); border-radius: 7px; padding: 8px; background: var(--surface); color: var(--ink); font-family: var(--font-text); font-size: 14px; user-select: text; }
+.pin-note-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.pin-note-actions button { padding: 4px 9px; font-size: 12px; }
+.pin-color-card { width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--bg); }
+.pin-color-swatch { width: 100%; min-height: 0; flex: 1; object-fit: cover; pointer-events: none; }
+.pin-color-values { flex-shrink: 0; padding: 7px 12px; }
+.pin-color-values button { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; border: 0; border-radius: 5px; padding: 3px 6px; background: transparent; color: var(--ink); font-size: 12px; }
+.pin-color-values button:hover { background: var(--clay-wash); color: var(--clay-ink); }
+.pin-file-card { width: 100%; height: 100%; overflow: auto; display: grid; grid-template-columns: 28px minmax(0,1fr); align-content: center; align-items: center; gap: 4px 8px; padding: 14px 16px; background: var(--bg); }
+.pin-file-card > svg { grid-row: span 2; width: 26px; height: 26px; color: var(--clay-ink); stroke-width: 1.5; }
+.pin-file-card strong { font-weight: 400; font-size: 15px; overflow-wrap: anywhere; }
+.pin-file-card > .mono { color: var(--ink-4); font-size: 10px; }
+.pin-file-card p { grid-column: 1/-1; margin: 3px 0; max-height: 38px; overflow: auto; overflow-wrap: anywhere; color: var(--ink-4); font-size: 10.5px; line-height: 1.4; user-select: text; cursor: text; }
+.pin-file-card > div { grid-column: 1/-1; display: flex; gap: 6px; }
+.pin-file-card button { padding: 3px 7px; font-size: 11.5px; }
+.pin-thumbnail { position: absolute; inset: 0; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; background: var(--ink); color: var(--on-ink); cursor: grab; }
+.pin-thumbnail > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; opacity: .45; pointer-events: none; }
+.pin-thumbnail-title { position: relative; display: flex; align-items: center; gap: 5px; padding: 4px 8px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; }
+.pin-thumbnail-actions { position: relative; display: flex; justify-content: flex-end; gap: 2px; padding: 2px 4px; background: var(--ink); }
+.pin-drop { position: absolute; z-index: 5; inset: 5px; display: flex; align-items: center; justify-content: center; gap: 8px; border: 2px solid var(--clay); border-radius: 8px; background: var(--bg); color: var(--clay-ink); font-size: 13px; pointer-events: none; }
+.pin-toolbar-surface { background: transparent; }
+.pin-workspace-bar { position: absolute; inset: 4px; color: var(--on-ink); font-family: var(--font-ui); }
+.pin-workspace-actions { position: relative; top: 0; left: 0; translate: none; max-width: none; width: 100%; height: 44px; padding: 4px; gap: 0; overflow: visible; }
+.pin-workspace-actions > .pin-grip { -webkit-app-region: drag; width: 17px; }
+.pin-workspace-actions > .pin-group { flex: 1; }
+.pin-workspace-actions > .pin-group .pin-group-toggle { padding: 0 4px; font-size: 11px; }
+.pin-workspace-actions > .pin-group .pin-group-toggle > svg:first-child { display: none; }
+.pin-workspace-actions > button { min-width: 28px; width: 28px; padding: 0; }
+.pin-workspace-actions .pin-group-menu { position: absolute; top: 48px; left: 0; right: 0; max-height: 180px; padding: 4px; border: 0; border-radius: 9px; background: var(--ink); box-shadow: var(--shadow-card); }
+.pin-workspace-tip { position: absolute; bottom: 0; left: 0; right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 8px; border-radius: 6px; background: var(--ink); color: var(--on-ink); font-size: 11px; pointer-events: none; }
+.pin-workspace-tip.error { background: var(--danger); }

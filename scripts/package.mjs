@@ -18,7 +18,7 @@ const paths = await packager({
   extendInfo: {
     LSUIElement: true,
     LSMinimumSystemVersion: '14.2',
-    NSScreenCaptureUsageDescription: '选择屏幕区域并截图。', NSMicrophoneUsageDescription: '在 AI 网页中使用语音输入。', NSCameraUsageDescription: '在 AI 网页中添加相机内容。',
+    NSScreenCaptureUsageDescription: '选择屏幕区域截图、录屏并录制系统声音。', NSMicrophoneUsageDescription: '录屏时录制麦克风声音，或在 AI 网页中使用语音输入。', NSCameraUsageDescription: '录屏时添加摄像头画中画，或在 AI 网页中添加相机内容。',
     CFBundleDocumentTypes: [{ CFBundleTypeName: 'PNG / JPEG 图片', CFBundleTypeRole: 'Viewer', LSHandlerRank: 'Alternate', LSItemContentTypes: ['public.png', 'public.jpeg'] }],
     NSServices: [{ NSMenuItem: { default: '使用 Lasso 生图' }, NSMessage: 'generateImage', NSPortName: 'Lasso', NSSendTypes: ['public.file-url', 'NSFilenamesPboardType'], NSSendFileTypes: ['public.png', 'public.jpeg'], NSRequiredContext: {}, NSTimeout: '10000' }]
   }

@@ -1,11 +1,10 @@
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
+import type { ScrollDirection } from '../../shared/capture';
+import type { StitchResult } from './scroll-stitch';
 
 export interface ScrollFrame { width: number; height: number; data: Uint8Array }
-export interface ScrollReply {
-  id: number; type: string; status: string; width: number; height: number;
-  segments: number; seams: number[]; reason?: string; data?: Uint8Array;
-}
+export interface ScrollReply extends StitchResult { id: number; type: string }
 /** One capture and one worker request at a time. No frame queue grows behind a slow matcher. */
 export class ScrollSession {
   private worker: Worker;
@@ -16,8 +15,8 @@ export class ScrollSession {
   private dead = false;
   private failure: Error | null = null;
   status: 'running' | 'paused' | 'finished' = 'running';
-  metadata: ScrollReply = { id: 0, type: 'frame', status: 'empty', width: 0, height: 0, segments: 0, seams: [] };
-  message = '在选区内缓慢向下滚动，每次保留至少三分之一重叠';
+  metadata: ScrollReply = { id: 0, type: 'frame', status: 'empty', width: 0, height: 0, segments: 0, seams: [], segmentSizes: [], direction: 'vertical', reversedTrimmed: 0, canUndo: false, fixedTop: 0, fixedBottom: 0, fixedLeft: 0, fixedRight: 0 };
+  message = '在选区内缓慢滚动，每次保留至少三分之一重叠；反向滚动会裁剪末段';
   constructor(private capture: () => Promise<ScrollFrame>, private changed: () => void, private stopped: () => void, maxHeight: number) {
     this.worker = new Worker(join(__dirname, 'scroll-worker.cjs'), { workerData: { maxHeight } });
     this.worker.on('message', (reply: ScrollReply) => {
@@ -35,12 +34,12 @@ export class ScrollSession {
     this.requests.clear();
     this.status = 'paused'; this.message = error.message; this.changed();
   }
-  private request(type: string, frame?: ScrollFrame): Promise<ScrollReply> {
+  private request(type: string, frame?: ScrollFrame, action?: { direction?: ScrollDirection; index?: number; delta?: number }): Promise<ScrollReply> {
     if (this.dead || this.failure) return Promise.reject(this.failure || Error('滚动截图已结束'));
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
       this.requests.set(id, { resolve, reject });
-      this.worker.postMessage({ id, type, ...frame }, frame ? [frame.data.buffer as ArrayBuffer] : []);
+      this.worker.postMessage({ id, type, ...frame, ...action }, frame ? [frame.data.buffer as ArrayBuffer] : []);
     });
   }
   async start() { await this.tick(); }
@@ -59,7 +58,7 @@ export class ScrollSession {
         this.metadata = reply;
         if (reply.status === 'unreliable') {
           this.status = 'paused';
-          this.message = '匹配不可靠，已暂停并保留结果。请向上回到上次采集位置，再继续慢滚。';
+          this.message = reply.reason || '匹配不可靠，已暂停并保留结果。请回到上次采集位置，再继续慢滚。';
         } else if (reply.status === 'limit') {
           this.status = 'finished'; reachedLimit = true;
           this.message = reply.reason || '已达到尺寸上限，结果已保留';
@@ -80,17 +79,36 @@ export class ScrollSession {
   }
   resume() {
     if (this.dead || this.status !== 'paused') return;
-    this.status = 'running'; this.message = '在选区内缓慢向下滚动，每次保留至少三分之一重叠'; this.changed(); this.schedule();
+    this.status = 'running'; this.message = '在选区内缓慢滚动，每次保留至少三分之一重叠；反向滚动会裁剪末段'; this.changed(); this.schedule();
   }
   async finish() {
     this.status = 'finished'; if (this.timer) clearTimeout(this.timer); this.timer = null;
     await this.flight; this.status = 'finished';
-    return this.request('snapshot');
+    this.metadata = await this.request('snapshot');
+    return this.metadata;
   }
   async undo() {
     if (this.status !== 'finished') throw Error('请先结束采集再撤回末段');
     this.metadata = await this.request('undo');
-    return this.request('snapshot');
+    if (!this.metadata.data) this.metadata = await this.request('snapshot');
+    return this.metadata;
+  }
+  async setDirection(direction: ScrollDirection) {
+    if (this.status === 'finished') throw Error('采集已结束，请重新开始后切换方向');
+    const running = this.status === 'running';
+    await this.pause();
+    try { this.metadata = await this.request('direction', undefined, { direction }); this.changed(); }
+    finally { if (running) this.resume(); }
+  }
+  async removeSegment(index: number) {
+    if (this.status !== 'finished') throw Error('请先结束采集再删除分段');
+    this.metadata = await this.request('remove-segment', undefined, { index });
+    return this.metadata;
+  }
+  async adjustSeam(index: number, delta: number) {
+    if (this.status !== 'finished') throw Error('请先结束采集再调整接缝');
+    this.metadata = await this.request('adjust-seam', undefined, { index, delta });
+    return this.metadata;
   }
   dispose() {
     if (this.dead) return;

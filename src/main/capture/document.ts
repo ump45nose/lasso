@@ -1,7 +1,24 @@
-import type { NativeImage } from 'electron';
+import { nativeImage, type NativeImage } from 'electron';
 import type { AnnotationSnapshot, CaptureRect } from '../../shared/capture';
 
 export interface PinnedDocument { pixelScale?: { x: number; y: number }; source: NativeImage; image: NativeImage; annotations: AnnotationSnapshot }
+export interface SerializedPinnedDocument { source: string; image: string; annotations: AnnotationSnapshot; pixelScale?: { x: number; y: number } }
+export function imageDocument(image: NativeImage): PinnedDocument {
+  const size=image.getSize();
+  if(image.isEmpty()||size.width*size.height>40_000_000)throw Error('贴图图片为空或过大');
+  return {source:image,image,annotations:{objects:[],crop:{x:0,y:0,...size},privacy:[],nextNumber:1}};
+}
+export function serializePinnedDocument(document:PinnedDocument):SerializedPinnedDocument {
+  return {source:document.source.toPNG().toString('base64'),image:document.image.toPNG().toString('base64'),annotations:document.annotations,pixelScale:document.pixelScale};
+}
+export function deserializePinnedDocument(value:SerializedPinnedDocument):PinnedDocument {
+  if(!value||typeof value.source!=='string'||typeof value.image!=='string'||value.source.length>220_000_000||value.image.length>220_000_000)throw Error('贴图文件无效');
+  const source=nativeImage.createFromBuffer(Buffer.from(value.source,'base64')),image=nativeImage.createFromBuffer(Buffer.from(value.image,'base64'));
+  imageDocument(source);imageDocument(image);
+  const annotations=validateAnnotations(value.annotations,source,value.annotations?.crop);
+  if(value.pixelScale&&(!Number.isFinite(value.pixelScale.x)||!Number.isFinite(value.pixelScale.y)||value.pixelScale.x<=0||value.pixelScale.y<=0))throw Error('贴图像素比例无效');
+  return {source,image,annotations,pixelScale:value.pixelScale};
+}
 export function validateAnnotations(value: AnnotationSnapshot | undefined, source: Pick<NativeImage,'getSize'>, crop: CaptureRect): AnnotationSnapshot {
   if(!value||!Array.isArray(value.objects)||value.objects.length>3000||!Number.isSafeInteger(value.nextNumber)||value.nextNumber<1||value.nextNumber>1000000)throw Error('贴图标注数据无效');
   const size=source.getSize(),r=value.crop;
