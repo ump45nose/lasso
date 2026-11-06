@@ -1,24 +1,16 @@
-import type { RecordingSessionState } from '../shared/recording';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopAPI, ShellState, AgentEvent, PaletteEvent } from '../shared/contracts';
+import { on, pinWorkspaceCalls, recording } from './bridge';
 const api: DesktopAPI = {
   saveGeneral: options => ipcRenderer.invoke('shell:general-settings', options),
   runScriptAction: (id,input) => ipcRenderer.invoke('shell:script-run',id,input),
   recordingPanel:open=>ipcRenderer.invoke('shell:recording-panel',open),
-  onRecordingClose:callback=>{const listener=()=>callback();ipcRenderer.on('shell:recording-close-request',listener);return()=>ipcRenderer.removeListener('shell:recording-close-request',listener);},
-  recordingState:()=>ipcRenderer.invoke('shell:recording-state'),
-  recordingAction:action=>ipcRenderer.invoke('shell:recording-action',action),
-  onRecording:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:RecordingSessionState|null)=>callback(state);ipcRenderer.on('shell:recording-changed',listener);return()=>ipcRenderer.removeListener('shell:recording-changed',listener);},
+  onRecordingClose: callback => on('shell:recording-close-request', () => callback()),
+  ...recording,
   captureHistory: query => ipcRenderer.invoke('shell:capture-history',query),
   actCaptureHistory: (id,action) => ipcRenderer.invoke('shell:capture-history-act',id,action),
   clearCaptureHistory: () => ipcRenderer.invoke('shell:capture-history-clear'),
-  pinWorkspace: () => ipcRenderer.invoke('shell:pin-workspace'),
-  savePinWorkspace: settings => ipcRenderer.invoke('shell:pin-workspace-save',settings),
-  createPin: input => ipcRenderer.invoke('shell:pin-create',input),
-  pinClipboard: () => ipcRenderer.invoke('shell:pin-clipboard'),
-  reopenClosedPin: () => ipcRenderer.invoke('shell:pin-reopen'),
-  arrangePins: (mode,groupId) => ipcRenderer.invoke('shell:pins-arrange',mode,groupId),
-  actPin: (id,action,groupId) => ipcRenderer.invoke('shell:pin-act',id,action,groupId),
+  ...pinWorkspaceCalls,
   exportConfig: () => ipcRenderer.invoke('shell:config-export'),
   importConfig: () => ipcRenderer.invoke('shell:config-import'),
   webdavConfig: () => ipcRenderer.invoke('shell:webdav-config'),
@@ -66,10 +58,7 @@ const api: DesktopAPI = {
   agentRefreshModels: id => ipcRenderer.invoke('agent:models-refresh', id),
   agentModel: (id, model) => ipcRenderer.invoke('agent:model', id, model),
   agentAnswer: (id, requestId, answer) => ipcRenderer.invoke('agent:answer', id, requestId, answer),
-  onAgent: callback => {
-    const listener = (_event: Electron.IpcRendererEvent, event: AgentEvent) => callback(event);
-    ipcRenderer.on('agent:changed', listener); return () => ipcRenderer.removeListener('agent:changed', listener);
-  },
+  onAgent: callback => on<AgentEvent>('agent:changed', callback),
   saveFonts: fonts => ipcRenderer.invoke('shell:fonts', fonts),
   importFont: () => ipcRenderer.invoke('shell:font-import'),
   removeFont: file => ipcRenderer.invoke('shell:font-remove', file),
@@ -77,14 +66,7 @@ const api: DesktopAPI = {
   closeTask: id => ipcRenderer.invoke('shell:task-close', id),
   openPalette: scope => ipcRenderer.invoke('shell:palette-open', scope),
   closePalette: () => ipcRenderer.invoke('shell:palette-close'),
-  onPalette: callback => {
-    const listener = (_event: Electron.IpcRendererEvent, event: PaletteEvent) => callback(event);
-    ipcRenderer.on('shell:palette', listener); return () => ipcRenderer.removeListener('shell:palette', listener);
-  },
-  onState: callback => {
-    const listener = (_event: Electron.IpcRendererEvent, state: ShellState) => callback(state);
-    ipcRenderer.on('shell:changed', listener);
-    return () => ipcRenderer.removeListener('shell:changed', listener);
-  }
+  onPalette: callback => on<PaletteEvent>('shell:palette', callback),
+  onState: callback => on<ShellState>('shell:changed', callback)
 };
 contextBridge.exposeInMainWorld('desktop', api);

@@ -1,10 +1,8 @@
-import type { RecordingSessionState } from '../shared/recording';
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ScreenshotAPI, ScreenshotState } from '../shared/capture';
+import { on, recording } from './bridge';
 const api: ScreenshotAPI = {
-  recordingState:()=>ipcRenderer.invoke('shell:recording-state'),
-  recordingAction:action=>ipcRenderer.invoke('shell:recording-action',action),
-  onRecording:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:RecordingSessionState|null)=>callback(state);ipcRenderer.on('shell:recording-changed',listener);return()=>ipcRenderer.removeListener('shell:recording-changed',listener);},
+  ...recording,
   onSuspend: callback => {
     const listener = (_event: Electron.IpcRendererEvent, editId: string) => {
       void ipcRenderer.invoke('screenshot:checkpoint', editId, callback()).catch(()=>{});
@@ -20,7 +18,7 @@ const api: ScreenshotAPI = {
   saveRegionPreset:p=>ipcRenderer.invoke('screenshot:save-region-preset',p),
   ready:(id,editId)=>ipcRenderer.send('screenshot:ready',id,editId),
   state:()=>ipcRenderer.invoke('screenshot:state'),
-  onState:callback=>{const listener=(_e:Electron.IpcRendererEvent,s:ScreenshotState|null)=>callback(s);ipcRenderer.on('screenshot:changed',listener);return()=>ipcRenderer.removeListener('screenshot:changed',listener);},
+  onState:callback=>on<ScreenshotState|null>('screenshot:changed',callback),
   requestPixels:request=>{
     const ticket=crypto.randomUUID();
     void ipcRenderer.invoke('screenshot:pixels',request).then(frame=>{

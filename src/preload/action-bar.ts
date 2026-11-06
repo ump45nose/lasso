@@ -1,10 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ActionBarAPI, ActionBarLayout, ActionBarState } from '../shared/contracts';
-function on<T>(channel: string, callback: (value: T) => void) {
-  const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
-  ipcRenderer.on(channel, listener);
-  return () => { ipcRenderer.removeListener(channel, listener); };
-}
+import { on } from './bridge';
 const api: ActionBarAPI = {
   getState: () => ipcRenderer.invoke('bar:state'),
   runPreset: id => ipcRenderer.invoke('bar:run', id),

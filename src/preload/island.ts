@@ -1,11 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { EdgeNotesState, FinderPanelState, IslandAPI, IslandState } from '../shared/contracts';
-
-function on<T>(channel: string, callback: (value: T) => void) {
-  const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
-  ipcRenderer.on(channel, listener);
-  return () => { ipcRenderer.removeListener(channel, listener); };
-}
+import { on } from './bridge';
 
 const api: IslandAPI = {
   getState: () => ipcRenderer.invoke('island:state'),

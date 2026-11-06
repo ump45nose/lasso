@@ -1,11 +1,10 @@
-import type { RecordingSessionState } from '../shared/recording';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
-import type { PinAPI, PinState, ScreenshotAPI } from '../shared/capture';
-import type { DesktopAPI } from '../shared/contracts';
+import type { PinAPI, PinState, PinWorkspaceAPI, ScreenshotAPI } from '../shared/capture';
 import type { PinWorkspaceState } from '../shared/history-sync';
+import { on, pinWorkspaceCalls, recording } from './bridge';
 const api: PinAPI = {
   state:()=>ipcRenderer.invoke('pin:state'),
-  onState:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:PinState)=>callback(state);ipcRenderer.on('pin:changed',listener);return()=>ipcRenderer.removeListener('pin:changed',listener);},
+  onState:callback=>on<PinState>('pin:changed',callback),
   action:action=>ipcRenderer.invoke('pin:action',action),
   setOpacity:opacity=>ipcRenderer.invoke('pin:set-opacity',opacity),
   setZoom:factor=>ipcRenderer.invoke('pin:set-zoom',factor),
@@ -18,9 +17,7 @@ const api: PinAPI = {
   endDrag:()=>ipcRenderer.send('pin:drag-end')
 };
 const screenshot: ScreenshotAPI = {
-  recordingState:()=>ipcRenderer.invoke('shell:recording-state'),
-  recordingAction:action=>ipcRenderer.invoke('shell:recording-action',action),
-  onRecording:callback=>{const listener=(_event:Electron.IpcRendererEvent,state:RecordingSessionState|null)=>callback(state);ipcRenderer.on('shell:recording-changed',listener);return()=>ipcRenderer.removeListener('shell:recording-changed',listener);},
+  ...recording,
   onSuspend:()=>()=>{},
   updateRegion:async()=>{},
   lastRegion:async()=>null,
@@ -50,27 +47,18 @@ const screenshot: ScreenshotAPI = {
 };
 contextBridge.exposeInMainWorld('pin',api);
 contextBridge.exposeInMainWorld('screenshot',screenshot);
-// Only workspace operations are shared by pin windows and the desktop toolbar.
-const workspace: Pick<DesktopAPI,'pinWorkspace'|'savePinWorkspace'|'createPin'|'pinClipboard'|'reopenClosedPin'|'arrangePins'|'actPin'> = {
-  pinWorkspace:()=>ipcRenderer.invoke('shell:pin-workspace'),
-  savePinWorkspace:settings=>ipcRenderer.invoke('shell:pin-workspace-save',settings),
-  createPin:input=>ipcRenderer.invoke('shell:pin-create',input),
-  pinClipboard:()=>ipcRenderer.invoke('shell:pin-clipboard'),
-  reopenClosedPin:()=>ipcRenderer.invoke('shell:pin-reopen'),
-  arrangePins:(mode,groupId)=>ipcRenderer.invoke('shell:pins-arrange',mode,groupId),
-  actPin:(id,action,groupId)=>ipcRenderer.invoke('shell:pin-act',id,action,groupId)
-};
-contextBridge.exposeInMainWorld('pinWorkspace',{
-  ...workspace,
-  onChanged:(callback:(state:PinWorkspaceState)=>void)=>{const listener=(_event:Electron.IpcRendererEvent,state:PinWorkspaceState)=>callback(state);ipcRenderer.on('pin-workspace:changed',listener);return()=>ipcRenderer.removeListener('pin-workspace:changed',listener);},
-  setToolbarHeight:(height:number)=>ipcRenderer.send('pin-toolbar:height',height),
-  dropFiles:async(files:File[],text:string,groupId?:string)=>{
+const workspace: PinWorkspaceAPI = {
+  ...pinWorkspaceCalls,
+  onChanged:callback=>on<PinWorkspaceState>('pin-workspace:changed',callback),
+  setToolbarHeight:height=>ipcRenderer.send('pin-toolbar:height',height),
+  dropFiles:async(files,text,groupId)=>{
     for(const file of files){
       const filePath=webUtils.getPathForFile(file);
       if(!filePath)return {error:'请拖入本地图片或文件'};
       const kind=file.type.startsWith('image/')||/\.(png|jpe?g|gif|webp|bmp|tiff?|heic|avif)$/i.test(file.name)?'image':'file';
-      const result=await workspace.createPin({kind,filePath,groupId});if(result.error)return result;
+      const result=await pinWorkspaceCalls.createPin({kind,filePath,groupId});if(result.error)return result;
     }
-    return files.length?{error:null}:text.trim()?workspace.createPin({kind:'text',text,groupId}):{error:'请拖入文件、图片或文字'};
+    return files.length?{error:null}:text.trim()?pinWorkspaceCalls.createPin({kind:'text',text,groupId}):{error:'请拖入文件、图片或文字'};
   }
-});
+};
+contextBridge.exposeInMainWorld('pinWorkspace',workspace);

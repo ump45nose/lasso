@@ -1,9 +1,9 @@
-import type { Settings } from './contracts';
+import type { DesktopAPI, Settings } from './contracts';
 import type { ScreenshotSettings } from './screenshot-settings';
 import type { RecordingAction, RecordingSessionState } from './recording';
 import type { CaptureDisplayBinding } from './capture-efficiency';
 import type { RegionPreset, RegionConfiguration } from './capture-regions';
-import type { PinContentPayload, PinGroup, PinKind, PinWheelAction } from './history-sync';
+import type { PinContentPayload, PinGroup, PinKind, PinWheelAction, PinWorkspaceState } from './history-sync';
 import type { AnnotationStyleMemory, ScreenshotExportContentMode, ScreenshotKind, ScreenshotOutputFormat } from './screenshot-settings';
 import type { IntelligenceKind, IntelligenceResult } from './intelligence';
 export interface CaptureRect { x: number; y: number; width: number; height: number }
@@ -63,6 +63,12 @@ export interface PinAPI {
   startDrag(): void;
   drag(): void;
   endDrag(): void;
+}
+export type PinWorkspaceCalls = Pick<DesktopAPI, 'pinWorkspace' | 'savePinWorkspace' | 'createPin' | 'pinClipboard' | 'reopenClosedPin' | 'arrangePins' | 'actPin'>;
+export interface PinWorkspaceAPI extends PinWorkspaceCalls {
+  onChanged(callback: (state: PinWorkspaceState) => void): () => void;
+  dropFiles(files: File[], text: string, groupId?: string): Promise<{ error: string | null }>;
+  setToolbarHeight(height: number): void;
 }
 export function pixelRect(r: CaptureRect, width: number, height: number, pixelWidth: number, pixelHeight: number): CaptureRect {
   const x=Math.round(r.x*pixelWidth/width),y=Math.round(r.y*pixelHeight/height);

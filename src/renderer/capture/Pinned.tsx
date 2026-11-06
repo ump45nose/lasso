@@ -1,8 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { AlignLeft, AlignStartVertical, ArrowUpRight, Check, ChevronDown, Clipboard, Copy, Ellipsis, EyeOff, File as FileIcon, Folder, GripVertical, Grid2X2, Lock, Maximize2, Minimize2, MousePointerClick, Pause, PenLine, Pin, Play, RotateCcw, Save, ScanText, Send, TextSelect, Type, Unlock, X } from 'lucide-react';
-import type { PinAPI, PinAction, PinState } from '../../shared/capture';
-import type { DesktopAPI } from '../../shared/contracts';
+import type { PinAPI, PinAction, PinState, PinWorkspaceAPI } from '../../shared/capture';
 import type { PinGroup, PinWorkspaceState } from '../../shared/history-sync';
 import { spring } from '../motion';
 import { PinEdit } from './PinEdit';
@@ -10,12 +9,7 @@ import { selectedOCRText } from './selected-text';
 import './text-layer.css';
 import './pinned.css';
 
-type WorkspaceBridge = Pick<DesktopAPI,'pinWorkspace'|'savePinWorkspace'|'createPin'|'pinClipboard'|'reopenClosedPin'|'arrangePins'|'actPin'> & {
-  onChanged(callback:(state:PinWorkspaceState)=>void):()=>void;
-  dropFiles(files:File[],text:string,groupId?:string):Promise<{error:string|null}>;
-  setToolbarHeight(height:number):void;
-};
-declare global {interface Window {pin:PinAPI;pinWorkspace:WorkspaceBridge}}
+declare global {interface Window {pin:PinAPI;pinWorkspace:PinWorkspaceAPI}}
 const clamp=(value:number,min:number,max:number)=>Math.max(min,Math.min(max,value));
 const editable=(target:EventTarget|null)=>target instanceof HTMLElement&&!!target.closest('input, textarea, [contenteditable="true"]');
 const TipContext=createContext<(tip:string)=>void>(()=>{});
