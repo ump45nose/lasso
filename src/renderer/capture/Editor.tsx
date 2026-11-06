@@ -16,6 +16,7 @@ import { editorActionForEvent, toolKeys } from './editor-shortcuts';
 import './text-layer.css';
 import './editor.css';
 import { selectedOCRText } from './selected-text';
+import { TextLines } from './TextLines';
 import { captureCanvas, CapturePixels } from './pixels';
 
 const tools: [Tool, string, ReactNode][][] = [
@@ -285,7 +286,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
             onPointerDown={e=>{if(!e.shiftKey){window.getSelection()?.removeAllRanges();selection.current='';setSelectedText('');}}}
             onDragStart={e=>e.preventDefault()}
             onCopy={e=>{if(selection.current){e.preventDefault();e.clipboardData.setData('text/plain',selection.current);}}}>
-            {lines.map((line,index)=><div className="editor-text-line" key={index} style={{left:line.x,top:line.y,width:line.width,height:line.height}}>{line.glyphs.map((g,i)=><span key={i} style={{left:g.x-line.x,top:g.y-line.y,width:g.width,height:g.height,fontSize:g.height*.95,lineHeight:`${g.height}px`}}>{g.text}</span>)}</div>)}
+            <TextLines lines={lines}/>
           </div>
           {translations.length>0&&<div style={{transform:`matrix(${editor?.matrix.join(',')})`,transformOrigin:'0 0'}} className="editor-translations" aria-label="图上译文">{translations.map((block,index)=>block.box&&<span key={index} style={{left:block.box.x,top:block.box.y,width:block.box.width,minHeight:block.box.height,fontSize:Math.max(12,block.box.height*.72)}}>{block.translated}</span>)}</div>}
           {!region&&activeCrop&&crop&&<div className="editor-shade" aria-hidden="true"><i style={{left:displayCrop!.x,top:displayCrop!.y,width:displayCrop!.width,height:displayCrop!.height}}/></div>}

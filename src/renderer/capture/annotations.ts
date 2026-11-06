@@ -77,6 +77,13 @@ export class AnnotationEditor {
     this.canvas.requestRenderAll();
   }
   private restoreExtras(snapshot:Snapshot){this.effects={turns:0,flipX:false,flipY:false,grayscale:false,brightness:100,...snapshot.effects};this.cropPolygons=snapshot.cropPolygons??[];this.multiBounds=null;this.syncView();}
+  private async applySnapshot(snapshot:Snapshot,crop:CaptureRect){
+    const objects=await util.enlivenObjects<FabricObject>(snapshot.objects);
+    if(this.disposed){objects.forEach(o=>o.dispose());return false;}
+    this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(this.decorate(o,(o as Mark).lassoTool)));
+    this.crop=crop;this.restoreExtras(snapshot);this.number=snapshot.nextNumber;
+    return true;
+  }
 
   constructor(element: HTMLCanvasElement, readonly source: HTMLCanvasElement, private changed: () => void, private invalidate: () => void, private preview: (r: CaptureRect | null) => void, initialCrop?:CaptureRect, selected?:()=>void) {
     this.crop = initialCrop?{...initialCrop}:{ x:0,y:0,width:source.width,height:source.height };
@@ -110,10 +117,8 @@ export class AnnotationEditor {
   async load(snapshot: Snapshot){
     this.flat=null;this.sampled=null;this.restoring=true;
     try{
-      const objects=await util.enlivenObjects<FabricObject>(snapshot.objects);
-      if(this.disposed){objects.forEach(o=>o.dispose());return;}
-      this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(this.decorate(o,(o as Mark).lassoTool)));
-      this.crop={...snapshot.crop};this.restoreExtras(snapshot);this.number=snapshot.nextNumber;this.history=[];this.cursor=-1;
+      if(!await this.applySnapshot(snapshot,{...snapshot.crop}))return;
+      this.history=[];this.cursor=-1;
       this.setTool(this.tool);this.save();this.canvas.requestRenderAll();
     }finally{this.restoring=false;}
   }
@@ -355,9 +360,8 @@ export class AnnotationEditor {
     this.flat=null;this.sampled=null;this.restoring=true;this.invalidate();
     try{
       const snap=JSON.parse(this.history[next]) as Snapshot;
-      const objects=await util.enlivenObjects<FabricObject>(snap.objects);
-      if(this.disposed){objects.forEach(o=>o.dispose());return;}
-      this.canvas.discardActiveObject();this.canvas.remove(...this.canvas.getObjects());objects.forEach(o=>this.canvas.add(this.decorate(o,(o as Mark).lassoTool)));this.crop=snap.crop;this.restoreExtras(snap);this.number=snap.nextNumber;this.cursor=next;this.setTool(this.tool);this.canvas.requestRenderAll();
+      if(!await this.applySnapshot(snap,snap.crop))return;
+      this.cursor=next;this.setTool(this.tool);this.canvas.requestRenderAll();
     }finally{this.restoring=false;if(!this.disposed)this.changed();}
   }
   private compose(crop=this.crop){

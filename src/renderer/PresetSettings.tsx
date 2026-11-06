@@ -3,12 +3,13 @@ import { ApiTextFields, ImageOptionsFields } from './ImageOptionsFields';
 import { promptSources } from '../shared/prompt-templates';
 import { Fragment, useRef, useState } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
-import { Check, ChevronLeft, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { ChevronLeft, GripVertical, Plus, Trash2 } from 'lucide-react';
 import { ExecutionFields } from './ExecutionFields';
 import { presetTargetLabels as targetLabels } from '../shared/contracts';
 import type { Preset } from '../shared/contracts';
 import { targets } from './targets';
 import { Segmented, rise, spring } from './motion';
+import { SaveBar } from './SaveBar';
 import { Switch } from './Switch';
 
 const BAR_SIZE = 4;
@@ -94,11 +95,6 @@ function PresetEditor({ preset, isNew, save, remove, back, error }: { preset: Pr
       </ul>
       {!isNew && <button className="l-btn danger l-quit" onClick={() => confirm === 'delete' ? void remove(preset.id) : setConfirm('delete')}><Trash2 size={14} />{confirm === 'delete' ? `再点一次删除「${preset.name}」` : '删除预设'}</button>}
     </div>
-    {(dirty || saved || error) && <div className="l-save-bar" role="status">
-      {error ? <span className="l-danger">{error}</span> : saved && !dirty ? <span className="l-ok"><Check size={14} />已保存</span> : isNew && !base ? '新预设尚未保存' : '有未保存的更改'}
-      <span className="push" />
-      {dirty && <><button className="l-btn small" onClick={() => base ? setDraft(base) : back()}>放弃</button>
-        <button className="l-btn small primary" disabled={!draft.name.trim() || !draft.template.trim()} onClick={() => void commit()}>保存预设</button></>}
-    </div>}
+    <SaveBar dirty={dirty} saved={saved} error={error} pending={isNew && !base ? '新预设尚未保存' : '有未保存的更改'} saveLabel="保存预设" saveDisabled={!draft.name.trim() || !draft.template.trim()} discard={() => base ? setDraft(base) : back()} save={() => void commit()} />
   </>;
 }

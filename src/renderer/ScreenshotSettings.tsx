@@ -8,6 +8,7 @@ import { validateVisionConfig, type VisionServiceConfig } from '../shared/intell
 import { Segmented, SubNav, SubPane, collapse, useSubNav } from './motion';
 import type { RecordingSettings } from '../shared/recording';
 import { CaptureHistory, PinWorkspace } from './CaptureWorkspaceSettings';
+import { SaveBar } from './SaveBar';
 import { Switch } from './Switch';
 import './styles/screenshot-settings.css';
 const labels = { ...captureModeLabels, scroll: '滚动截图' };
@@ -156,6 +157,6 @@ export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferen
         </section>
       </SubPane>
     </div>
-    {(dirty || saved || error) && <div className="l-save-bar" role="status">{error ? <span className="l-danger">{error}</span> : saved && !dirty ? <span className="l-ok"><Check size={14} />已保存</span> : '有未保存的更改'}<span className="push" />{dirty && <><button className="l-btn small" disabled={saving} onClick={() => { setDraft(structuredClone(settings)); setHeight(String(settings.scrollMaxHeight)); setError(''); setSaved(false); }}>放弃</button><button className="l-btn small primary" disabled={saving || !supported.length} onClick={() => void save()}>{saving ? '保存中…' : '保存'}</button></>}</div>}
+    <SaveBar dirty={dirty} saved={saved} error={error} saving={saving} saveLabel={saving ? '保存中…' : '保存'} saveDisabled={!supported.length} discard={() => { setDraft(structuredClone(settings)); setHeight(String(settings.scrollMaxHeight)); setError(''); setSaved(false); }} save={() => void save()} />
   </>;
 }

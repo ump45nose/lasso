@@ -6,6 +6,7 @@ import type { PinGroup, PinWorkspaceState } from '../../shared/history-sync';
 import { spring } from '../motion';
 import { PinEdit } from './PinEdit';
 import { selectedOCRText } from './selected-text';
+import { TextLines } from './TextLines';
 import './text-layer.css';
 import './pinned.css';
 
@@ -107,7 +108,7 @@ export function Pinned(){
         {kind==='image'?<div className="pin-stage" style={{width:state.width*scale,height:state.height*scale}}><div className="pin-pixels" style={{width:state.width,height:state.height,transform:`scale(${scale})`}}>
           <img src={image} draggable={false} alt="贴图成品"/>
           <div className={'editor-text-layer'+(canSelectText?' enabled':'')} ref={layer} aria-label="贴图识别文字" onPointerDown={e=>{if(!e.shiftKey)clearSelection();}} onDragStart={e=>e.preventDefault()} onCopy={e=>{if(selection.current){e.preventDefault();e.clipboardData.setData('text/plain',selection.current);}}}>
-            {state.lines.map((line,index)=><div key={index} className="editor-text-line" style={{left:line.x,top:line.y,width:line.width,height:line.height}}>{line.glyphs.map((g,i)=><span key={i} style={{left:g.x-line.x,top:g.y-line.y,width:g.width,height:g.height,fontSize:g.height*.95,lineHeight:`${g.height}px`}}>{g.text}</span>)}</div>)}
+            <TextLines lines={state.lines}/>
           </div>
         </div></div>:kind==='text'?<div className={'pin-note'+(textEditing?' editing':'')}>
           {textEditing?<><textarea aria-label="贴图文字" autoFocus value={draft} maxLength={100000} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if((e.metaKey||e.ctrlKey)&&e.key==='Enter'){e.preventDefault();void saveText();}if(e.key==='Escape'){e.preventDefault();setTextEditing(false);setDraft(payload?.text||'');}}}/><div className="pin-note-actions"><button className="l-ghost" onClick={()=>{setTextEditing(false);setDraft(payload?.text||'');}}>取消文字编辑</button><button className="l-btn" disabled={!draft.trim()} onClick={()=>void saveText()}>保存文字</button></div></>:<p>{payload?.text}</p>}

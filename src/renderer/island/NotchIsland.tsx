@@ -48,6 +48,10 @@ export function NotchIsland() {
     window.island.hit(false);
   }
 
+  function startFocus() {
+    void window.island.startPomodoro(nookTasks[0] ? { id: nookTasks[0].id, title: nookTasks[0].title } : undefined, 25, 'focus');
+  }
+
   return (
     <div
       className="isl-stage"
@@ -179,11 +183,7 @@ export function NotchIsland() {
                 <span className="isl-clock-lg mono">{formatClock(pomodoro?.remainingSeconds ?? 300)}</span>
               </div>
               <div className="isl-actions">
-                <button
-                  type="button"
-                  className="isl-btn primary"
-                  onClick={() => void window.island.startPomodoro(nookTasks[0] ? { id: nookTasks[0].id, title: nookTasks[0].title } : undefined, 25, 'focus')}
-                >
+                <button type="button" className="isl-btn primary" onClick={startFocus}>
                   <Flame size={12} />开始下一轮 25m
                 </button>
                 <button type="button" className="isl-btn" onClick={() => void window.island.stopPomodoro()}>
@@ -280,11 +280,7 @@ export function NotchIsland() {
                       <strong>番茄钟与摸鱼提醒</strong>
                       <small>选择一个 Nook 待办开始 25m 专注，或直接启动</small>
                     </div>
-                    <button
-                      type="button"
-                      className="isl-btn primary"
-                      onClick={() => void window.island.startPomodoro(nookTasks[0] ? { id: nookTasks[0].id, title: nookTasks[0].title } : undefined, 25, 'focus')}
-                    >
+                    <button type="button" className="isl-btn primary" onClick={startFocus}>
                       <Flame size={12} />25m 专注
                     </button>
                     <button

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { AppWindow, Check } from 'lucide-react';
+import { AppWindow } from 'lucide-react';
 import type { Settings, AppPrompt, LocalTarget } from '../shared/contracts';
 import { targetLabels } from '../shared/contracts';
+import { SaveBar } from './SaveBar';
 import { Switch } from './Switch';
 
 /** Both sections save local CLI paths and app rules together, so the save bar compares against the stored pair. */
@@ -53,11 +54,7 @@ export function IntegrationSettings({ settings, section }: { settings: Settings;
         <div className="l-row"><button className="l-btn" onClick={() => void addApp()}>选择应用…</button><button className="l-btn" onClick={() => { setRules([...rules, { name: '', bundleId: '', prompt: '', enabled: true }]); edited(); }}>手动填写 bundle ID</button></div>
       </>}
     </div>
-    {(dirty || saved || error) && <div className="l-save-bar" role="status">
-      {error ? <span className="l-danger">{error}</span> : saved && !dirty ? <span className="l-ok"><Check size={14} />已保存</span> : '有未保存的更改'}
-      <span className="push" />
-      {dirty && <><button className="l-btn small" onClick={() => { setLocal(structuredClone(settings.local)); setRules(structuredClone(settings.appPrompts)); edited(); }}>放弃</button><button className="l-btn small primary" onClick={() => void save()}>保存</button></>}
-    </div>}
+    <SaveBar dirty={dirty} saved={saved} error={error} discard={() => { setLocal(structuredClone(settings.local)); setRules(structuredClone(settings.appPrompts)); edited(); }} save={() => void save()} />
   </>;
 }
 
