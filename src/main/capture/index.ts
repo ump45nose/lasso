@@ -13,8 +13,9 @@ import { randomUUID } from 'node:crypto';
 import type { CaptureFrame, CaptureMode, CaptureRect, EditorCheckpoint, ExportAction, ScreenshotState, ScrollCaptureAction } from '../../shared/capture';
 import { pixelRect } from '../../shared/capture';
 import { updateNativeAppearance, loadNativeCapture, excludedCaptureWindows, type NativeCapture, type NativeFrame, type NativeCaptureEvent } from './native';
-import { clip, contains } from './candidates';
+import { clip } from './candidates';
 import { CandidateDetection } from './candidate-detection';
+import { RecordingCapture } from './recording-capture';
 import { OCRService, visionOCR } from './ocr';
 import { editorSettings, handleEditorServices, validCrop, type EditorSession } from './editor-services';
 import { imageDocument, normalizeRegionAnnotations, validateAnnotations, type PinnedDocument } from './document';
@@ -22,7 +23,7 @@ import { CaptureHistoryStore } from './history-store';
 import { PinManager } from './pins';
 import { ScrollSession, type ScrollReply } from './scroll-session';
 import type { LocalImageSource } from './local-images';
-import { CaptureEfficiencyControl, CaptureReselectRequiredError, sameCaptureDisplay } from './efficiency-control';
+import { CaptureEfficiencyControl, CaptureReselectRequiredError, bindDisplay, sameCaptureDisplay } from './efficiency-control';
 import type { Settings } from '../../shared/contracts';
 import type { CaptureDisplayBinding, SuccessfulCaptureArea } from '../../shared/capture-efficiency';
 import { setWindowPresence } from '../window-presence';
@@ -32,13 +33,8 @@ import { IdleSleep } from '../idle-sleep';
 import { closeOnCommandW, fromMainFrame, result, sealLocal } from '../ipc';
 import type { MemorySettings } from '../../shared/memory';
 import type { IntelligenceService } from './intelligence';
-const bindDisplay=(display:Electron.Display):CaptureDisplayBinding=>({id:display.id,bounds:{...display.bounds},scaleFactor:display.scaleFactor,rotation:display.rotation});
 export class CaptureManager {
-  private recordingSource:{display:CaptureDisplayBinding;windowId?:number}|null=null;
-  private recordingSelect:((event:NativeCaptureEvent)=>void)|null=null;
-  private recordingPreparing=false;
-  private recordingEpoch=0;
-  private recordingReleased=true;
+  private recording: RecordingCapture;
   private regionsStore:RegionStore;
   private customRequest:CustomCaptureRequest|undefined;
   private scrollPreparing=false;
@@ -121,6 +117,7 @@ export class CaptureManager {
     this.ax=nativeAx();
     this.native=loadNativeCapture(event=>this.nativeEvent(event));
     this.detection=new CandidateDetection({native:this.native,ax:this.ax,state:()=>this.state,bounds:()=>this.bounds});
+    this.recording=new RecordingCapture({native:this.native,ax:this.ax,settings,active:()=>this.active,before,after,configureNativeAppearance:()=>this.configureNativeAppearance(),candidateWindows:()=>this.candidateWindows()});
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
     this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
@@ -192,49 +189,11 @@ export class CaptureManager {
     this.win = win;
     return true;
   }
-  get active(){return this.recordingPreparing||Boolean(this.recordingSource)||this.busy||Boolean(this.state)||Boolean(this.win)||this.efficiency.state.phase!=='idle';}
-  cancelRecordingSelection(){if(this.recordingPreparing)this.releaseRecording();}
-  releaseRecording(restore=false){if(this.recordingReleased)return;this.recordingReleased=true;this.recordingEpoch++;const select=this.recordingSelect;this.recordingSelect=null;select?.({session:'',type:'cancel'});this.recordingSource=null;this.after(restore);}
-  async prepareRecording(mode:RecordingMode,bounds?:CaptureRect):Promise<{bounds:CaptureRect;displayId:number}>{
-    if(this.active)throw Error('请先完成当前截图或录制');
-    this.recordingPreparing=true;this.recordingReleased=false;const epoch=++this.recordingEpoch;let restore=false;
-    const current=()=>{if(epoch!==this.recordingEpoch||this.disposed)throw Error('已取消录制选区');};
-    try{
-      if(systemPreferences.getMediaAccessStatus('screen')!=='granted'){const granted=await this.ax.requestScreen();current();if(!granted)throw Error('请在系统设置允许 Lasso 录制屏幕');}
-      restore=this.before();
-      this.configureNativeAppearance();
-      const display=bounds?screen.getDisplayMatching(bounds):screen.getDisplayNearestPoint(screen.getCursorScreenPoint()),binding=bindDisplay(display);
-      let chosen=bounds,windowId:number|undefined;
-      const windows=mode==='window'?this.candidateWindows():[];
-      if(mode==='screen')chosen={...display.bounds};
-      else if(mode==='window'&&bounds){const window=windows.find(w=>contains(w,bounds.x+bounds.width/2,bounds.y+bounds.height/2));if(!window)throw Error('选中的窗口已关闭');chosen=window;windowId=window.id;}
-      if(!chosen){
-        const frame=await this.native.capture({displayId:display.id,bounds:display.bounds,includeCursor:this.settings().includeCursor,exclude:excludedCaptureWindows(this.native)}),session=randomUUID();
-        try{
-          current();
-          const selection=await new Promise<{bounds:CaptureRect;windowId?:number}>((resolve,reject)=>{
-            this.recordingSelect=event=>{
-              if(event.type==='cancel'){reject(Error('已取消录制选区'));return;}
-              if(event.session!==session)return;
-              if(mode==='window'&&event.type==='window'){const window=windows.find(w=>w.id===event.id);if(window)resolve({bounds:window,windowId:window.id});}
-              if(mode==='rect'&&event.type==='select'&&event.rect)resolve({bounds:{...event.rect,x:event.rect.x+display.bounds.x,y:event.rect.y+display.bounds.y}});
-            };
-            this.native.show({frameId:frame.id,session,mode:mode==='window'?'window':'rect',windows:windows.map(w=>({...w,x:w.x-display.bounds.x,y:w.y-display.bounds.y})),candidates:[]});
-          });
-          current();chosen=selection.bounds;windowId=selection.windowId;
-        }finally{this.recordingSelect=null;this.native.hide();this.native.release(frame.id);}
-      }
-      if(![chosen.x,chosen.y,chosen.width,chosen.height].every(Number.isFinite)||chosen.width<2||chosen.height<2||chosen.x<display.bounds.x||chosen.y<display.bounds.y||chosen.x+chosen.width>display.bounds.x+display.bounds.width||chosen.y+chosen.height>display.bounds.y+display.bounds.height)throw Error('录制范围需位于同一显示器内');
-      current();this.recordingSource={display:binding,windowId};return {bounds:{x:chosen.x,y:chosen.y,width:chosen.width,height:chosen.height},displayId:display.id};
-    }catch(error){this.releaseRecording(restore);throw error;}finally{this.recordingPreparing=false;}
-  }
-  async captureRecordingFrame(mode:RecordingMode,bounds:CaptureRect):Promise<{image:NativeImage;hostTimeMs:number}>{
-    const source=this.recordingSource;if(!source||!screen.getAllDisplays().some(display=>sameCaptureDisplay(source.display,bindDisplay(display))))throw Error('录制显示器已变化，请停止后重新录制');
-    if(mode==='window'&&(source.windowId===undefined||!this.ax.windowOnScreen(source.windowId)))throw Error('录制窗口已关闭');
-    const frame=await this.native.capture({displayId:source.display.id,bounds,windowId:source.windowId,shadow:false,includeCursor:this.settings().includeCursor,exclude:excludedCaptureWindows(this.native)});
-    try{const pixels=await this.native.pixels(frame.id,{format:'bgra'});return {image:nativeImage.createFromBitmap(Buffer.from(pixels.data),{width:pixels.width,height:pixels.height,scaleFactor:1}),hostTimeMs:frame.hostTimeMs};}
-    finally{this.native.release(frame.id);}
-  }
+  get active(){return this.recording.busy||this.busy||Boolean(this.state)||Boolean(this.win)||this.efficiency.state.phase!=='idle';}
+  cancelRecordingSelection(){this.recording.cancelSelection();}
+  releaseRecording(restore=false){this.recording.release(restore);}
+  prepareRecording(mode:RecordingMode,bounds?:CaptureRect){return this.recording.prepare(mode,bounds);}
+  captureRecordingFrame(mode:RecordingMode,bounds:CaptureRect){return this.recording.captureFrame(mode,bounds);}
   get sleeping(){return Boolean(this.suspended);}
   focus(){if(this.state?.phase==='selecting'){this.native.focus();return;}if(this.suspended||this.sleepJob){void this.resumeEditor().catch(error=>this.notice('编辑器恢复失败：'+error.message));return;}if(this.presented&&this.win&&!this.win.isDestroyed()){if(this.win.isMinimized())this.win.restore();this.win.show();app.focus({steal:true});this.win.focus();}}
   memoryChanged(){this.idle.refresh();}
@@ -307,7 +266,7 @@ export class CaptureManager {
   private configureNativeAppearance(){const settings=this.appearance(),{includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat}=this.settings(),screenshot={includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat};const key=JSON.stringify({fonts:settings.fonts,importedFonts:settings.importedFonts,...screenshot});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings,screenshot);}}
   private assertCaptureDisplay(){if(!this.captureDisplay||!screen.getAllDisplays().some(display=>sameCaptureDisplay(this.captureDisplay!,bindDisplay(display))))throw new CaptureReselectRequiredError();}
   async start(mode:CaptureMode='area',request?:{area?:SuccessfulCaptureArea;signal:AbortSignal;custom?:CustomCaptureRequest}) {
-    if(this.recordingPreparing||this.recordingSource)throw Error('请先停止当前录制');
+    if(this.recording.busy)throw Error('请先停止当前录制');
     if(this.disposed||request?.signal.aborted)return false;
     if(this.state){this.focus();return true;}
     if(this.busy)return false;
@@ -441,7 +400,7 @@ export class CaptureManager {
     if(remember&&this.state===s)this.efficiency.rememberSuccessfulArea({display,rect,kind:s.captureKind==='rect'?'rect':'area'});
   }
   private nativeEvent(event:NativeCaptureEvent){
-    if(this.recordingSelect){this.recordingSelect(event);return;}
+    if(this.recording.nativeEvent(event))return;
     if(this.state?.id!==event.session)return;
     const s=this.state;
     if(event.type==='copy'){this.pendingCopy=true;if(s.phase==='result'&&this.presented){this.pendingCopy=false;s.copyIntent=(s.copyIntent??0)+1;this.publish();}return;}
@@ -740,5 +699,5 @@ export class CaptureManager {
   private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}
   private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.detection.release();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
   cancel(restore=false){this.release(restore);}
-  dispose(){this.releaseRecording();this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:export','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:ready'])ipcMain.removeAllListeners(name);this.stopEditorServices();}
+  dispose(){this.recording.dispose();this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:export','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:ready'])ipcMain.removeAllListeners(name);this.stopEditorServices();}
 }

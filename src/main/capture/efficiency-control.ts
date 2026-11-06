@@ -20,6 +20,7 @@ export interface CaptureEfficiencyAdapter {
 const copyArea = (area: SuccessfulCaptureArea): SuccessfulCaptureArea => ({ kind: area.kind, display: { ...area.display, bounds: { ...area.display.bounds } }, rect: { ...area.rect } });
 const sameRect = (a: CaptureDisplayBinding['bounds'], b: CaptureDisplayBinding['bounds']) => a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 export const sameCaptureDisplay = (a: CaptureDisplayBinding, b: CaptureDisplayBinding) => a.id === b.id && a.scaleFactor === b.scaleFactor && a.rotation === b.rotation && sameRect(a.bounds, b.bounds);
+export const bindDisplay = (display: Electron.Display): CaptureDisplayBinding => ({ id: display.id, bounds: { ...display.bounds }, scaleFactor: display.scaleFactor, rotation: display.rotation });
 export const validCaptureArea = (value: unknown): value is SuccessfulCaptureArea => {
   const area = value as SuccessfulCaptureArea | null;
   if (!area || typeof area !== 'object') return false;
