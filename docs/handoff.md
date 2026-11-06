@@ -71,7 +71,8 @@
 | 位置（`src/main/`） | 责任 |
 | --- | --- |
 | `index.ts` | 启动装配、小窗/托盘/菜单、权限与远程页安全、设置与预设持久化、预设路由（网页/CLI/API/生图）、主窗口 IPC；不持有任务状态。 |
-| `ipc.ts`、`action-shortcuts.ts`、`recording-panel.ts`、`capture-library.ts` | 由 `4566db7` 从 index 拆出：结果包装；可配置全局快捷键；录制面板与托盘子菜单；截图历史与贴图工作区 IPC。 |
+| `action-shortcuts.ts`、`recording-panel.ts`、`capture-library.ts` | 由 `4566db7` 从 index 拆出：可配置全局快捷键；录制面板与托盘子菜单；截图历史与贴图工作区 IPC。 |
+| `ipc.ts`、`files.ts` | 本地窗口加固（`sealLocal`：禁止开新窗口和导航）、发送方主框架校验（`fromMainFrame`）与 `{ error }` 结果包装（`result`）；持久化文件统一先写 `.tmp` 再改名（`writeFileAtomic`，0600）。 |
 | `tasks.ts`、`task-policy.ts` | TaskManager 唯一管理任务、待命页、标签投影、网页/CLI 资源、待提交输入、回收及恢复。 |
 | `adapters/` | 网站选择器、完整填入、附件、单次发送、模型/深度选择与状态识别。网站变化在这里修。 |
 | `agents/` | Codex 共享 app-server 和独立 thread；Pi 每任务一个 RPC 进程；原生审批/交互与会话恢复。 |
@@ -79,7 +80,7 @@
 | `images.ts`、`presets.ts`、`settings.ts` | 待处理图片；预设与设置的读写、校验、迁移；受控脚本在 vm worker 中运行。 |
 | `media-service.ts`、`media-window.ts` | 生图请求、凭据、结果与版本，生图窗口；也给快速卡片提供流式调用。 |
 | `sync-webdav.ts` | 配置包导出/导入、WebDAV 推拉与冲突判定；密码另存。 |
-| `island.ts` | 刘海岛、EdgeNotes、Finder 面板窗口；番茄钟与提醒、四边光效、Nook 通知桥、分屏和固定 ⌃⌥ 快捷键。 |
+| `island.ts`、`island-notes.ts`、`island-finder.ts` | 刘海岛窗口：番茄钟与提醒、四边光效、Nook 通知桥、分屏和固定 ⌃⌥ 快捷键；持有 EdgeNotes 抽屉与 Finder 面板两个子模块，三个表面共用一个来源校验。贴顶靠 `enableLargerThanScreen`，原生层只补 Stationary / IgnoresCycle。 |
 | `capture/index.ts` | CaptureManager：截图会话、原生取图、候选（窗口/AX/边缘/颜色）、编辑窗口与闲置休眠、滚动截图、录屏取帧；持有 `pins`、`history`。取消释放图片与 worker，不处理 AI 任务。 |
 | `capture/native.ts`、`candidates.ts`、`regions-worker.ts`、`region-store.ts`、`efficiency-control.ts`、`scroll-*.ts` | 原生取图加载；候选排序；边缘、颜色与滚动拼接在 worker；记住的区域与尺寸预设；延时与重截。 |
 | `capture/editor-services.ts` | 截图编辑和贴图编辑共用的 OCR、智能识别、文字复制/发送与 OCR 失效（`3e0b60e`）。 |
@@ -88,7 +89,7 @@
 | `capture/pins.ts`、`floating-bar.ts`、`document.ts`、`history-store.ts`、`local-images.ts` | 贴图窗口与分组工作区、悬浮工具栏、贴图文档；截图历史；打开本地图片与受保护副本。 |
 | `capture/recording.ts`、`recording-media.ts` | 录屏会话、可恢复会话与编码。 |
 | `idle-sleep.ts`、`motion.ts`、`position.ts`、`window-presence.ts`、`fonts.ts`、`app-icons.ts` | 闲置计时、显隐动效、定位、Dock 策略、字体协议、应用图标。 |
-| `native/`（仓库根） | 六个原生模块，`scripts/build-capture.mjs` 编译：ScreenCaptureKit 取图与选区层；窗口/AX、分屏、刘海定位、光效、Nook 通知；Vision；音视频采集；Finder 服务；应用图标。 |
+| `native/`（仓库根） | 六个原生模块，`scripts/build-capture.mjs` 编译：ScreenCaptureKit 取图与选区层；窗口/AX、分屏、刘海几何与常驻窗口行为、光效、Nook 通知；Vision；音视频采集；Finder 服务；应用图标。 |
 | `src/renderer/`、`src/preload/` | 单一渲染入口按 `?surface=` 区分十类窗口，各有 preload 与校验来源的窄 IPC。远程网站没有 Node 或本地 preload。 |
 
 网页任务过了闲置阈值，且已完成、无草稿/附件/待确认、可恢复、不是临时对话，才回收；释放前用临时隐藏页核对历史与最新回答，失败保留原页。Pi 用 session 文件，Codex 用 thread 恢复原目录；恢复不重发。生成中、等待审批、草稿与未知状态均保留。退出不持久化本次任务列表。截图编辑器闲置时写入 `capture-sleep/` 后释放窗口；贴图和历史各自持久化，不套用任务回收规则。
@@ -97,7 +98,9 @@
 
 `build`、`ui:shots`、`package` 的用途见 AGENTS.md；仓库没有单元测试脚本。`npm start` 与安装版共用数据目录，不要同时运行。
 
-- `ui:shots` 用独立数据目录、内存剪贴板和夹具 preload 驱动界面，只证明夹具状态。它会打开很多真实窗口并抢占焦点数分钟：用户正在使用本机时不在当前桌面运行，改到远程 MacPro（`ssh yuwk@100.127.184.6`，Apple M1 Pro，带刘海），把工作树复制到临时目录（不带 `node_modules`、`dist`、`outputs`、`release`），`npm ci` 后运行，再把截图拷回查看。
+- `ui:shots` 用独立数据目录、内存剪贴板和夹具 preload 驱动界面，只证明夹具状态。它会打开很多真实窗口并抢占焦点数分钟：用户正在使用本机时不在当前桌面运行，改到远程 MacPro（`ssh yuwk@100.127.184.6`，Apple M1 Pro），把工作树复制到临时目录（不带 `node_modules`、`dist`、`outputs`、`release`），`npm ci` 后运行，再把截图拷回查看。
+  - 该机 npm 11 默认拦截依赖安装脚本，需 `npm install-scripts approve selection-hook canvas esbuild fsevents` 后 `npm rebuild`。SSH 启动的进程，隐私权限记在 sshd 名下；要在图形会话里运行，用 `launchctl bootstrap gui/$(id -u)` 提交任务，并把 `ProcessType` 设为 `Interactive`（不设会被限速 CPU）。当前主显示器是 1920×1080 的外接或虚拟屏，不是带刘海的内建屏。
+  - 2026-11-06 实测：该机 Electron 45 的渲染进程一直卡在 V8 初始化，连 `data:` 页面都加载不出，SSH 和图形会话启动都一样，`ui:shots` 起不来。再用前先排查这台机器的状态。
 
 ## 新 Mac 迁移步骤
 
