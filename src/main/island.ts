@@ -16,33 +16,13 @@ import { fromMainFrame } from './ipc';
 import { FinderPanel } from './island-finder';
 import { EdgeNotes } from './island-notes';
 import { createIslandWindow } from './island-window';
-
-interface NativeAxBridge {
-  paste?: () => void;
-  setGlow?: (enabled: boolean) => void;
-  startBridge?: (cb: (event: { name: string; payload: string }) => void) => void;
-  postBridge?: (name: string, payload: string) => void;
-  snapWindow?: (x: number, y: number, w: number, h: number) => boolean;
-  tileTwoWindows?: (x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number) => number;
-  notchGeometry?: () => { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
-  setStationaryWindow?: (handle: Buffer) => void;
-}
+import { nativeAx, type NativeAx } from './native-ax';
 
 const WIN_W = 540, WIN_H = 440;
 
 const MODES: readonly IslandMode[] = ['idle', 'focus', 'focus-hover', 'slacking', 'nook-alert', 'toast', 'board'];
 const SNAP_SLOTS: readonly SnapSlot[] = ['left-half', 'right-half', 'top-half', 'bottom-half', 'maximize', 'center', 'coding-ai', 'equal-split'];
 const QUICK_ACTIONS = ['screenshot-area', 'open-settings', 'toggle-notes', 'open-finder-panel'] as const;
-
-function loadNativeAx(): NativeAxBridge {
-  if (process.env.LASSO_DATA_ROOT) return {};
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    return require(join(__dirname, 'native/capture-ax.node')) as NativeAxBridge;
-  } catch {
-    return {};
-  }
-}
 
 function readNookTasks(): IslandTaskItem[] {
   const base = process.env.LASSO_DATA_ROOT
@@ -82,7 +62,7 @@ export class NotchIsland {
   readonly window: BrowserWindow;
   readonly notes: EdgeNotes;
   readonly finder: FinderPanel;
-  private ax: NativeAxBridge;
+  private ax: Partial<NativeAx>;
   private mode: IslandMode = 'idle';
   private glow = false;
   private pomodoro: IslandState['pomodoro'] = null;
@@ -96,7 +76,7 @@ export class NotchIsland {
   private readonly onDisplayMetricsChanged = () => this.placeWindows();
 
   constructor(private callbacks: NotchIslandCallbacks) {
-    this.ax = loadNativeAx();
+    this.ax = process.env.LASSO_DATA_ROOT ? {} : nativeAx();
     this.nookTasks = readNookTasks();
 
     this.window = createIslandWindow(WIN_W, WIN_H, { focusable: false, fullscreenable: false, enableLargerThanScreen: true });

@@ -26,14 +26,13 @@ import { CaptureEfficiencyControl, CaptureReselectRequiredError, sameCaptureDisp
 import type { Settings } from '../../shared/contracts';
 import type { CaptureDisplayBinding, SuccessfulCaptureArea } from '../../shared/capture-efficiency';
 import { setWindowPresence } from '../window-presence';
-import { applicationBundleIds, frontmostApplicationId, ignoresApplication } from '../selection';
+import { ignoresApplication } from '../selection';
+import { nativeAx, type NativeAx, type WindowRect } from '../native-ax';
 import { IdleSleep } from '../idle-sleep';
 import { fromMainFrame, result, sealLocal } from '../ipc';
 import type { MemorySettings } from '../../shared/memory';
 import type { IntelligenceService } from './intelligence';
-type WindowRect = CaptureRect & { pid: number; id: number };
 const bindDisplay=(display:Electron.Display):CaptureDisplayBinding=>({id:display.id,bounds:{...display.bounds},scaleFactor:display.scaleFactor,rotation:display.rotation});
-type AX = { windows(): WindowRect[]; query(pid:number,x:number,y:number):Promise<{rects:CaptureRect[];error:number}>; requestScreen(): Promise<boolean> };
 export class CaptureManager {
   private recordingSource:{display:CaptureDisplayBinding;windowId?:number}|null=null;
   private recordingSelect:((event:NativeCaptureEvent)=>void)|null=null;
@@ -85,7 +84,7 @@ export class CaptureManager {
   private elements: RegionCandidate[]=[];
   private colors: RegionCandidate[]=[];
   private edges: RegionCandidate[]=[];
-  private ax: AX;
+  private ax: NativeAx;
   private seq=0;
   private busy=false;
   private pending: {x:number;y:number}|null=null;
@@ -133,7 +132,7 @@ export class CaptureManager {
     this.idle=new IdleSleep(memory,async()=>{if(!this.sleepJob){this.sleepJob=this.suspendEditor();try{await this.sleepJob;}finally{this.sleepJob=null;}}});
     this.regionsStore=new RegionStore(join(app.getPath('userData'),'capture-regions.json'),()=>this.settings().rememberRegionAcrossLaunches);
     if(this.regionsStore.last)this.efficiency.restoreArea(this.regionsStore.last);
-    this.ax=require(join(__dirname,'native/capture-ax.node')) as AX;
+    this.ax=nativeAx();
     this.native=loadNativeCapture(event=>this.nativeEvent(event));
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
@@ -351,7 +350,7 @@ export class CaptureManager {
       if(request?.signal.aborted||epoch!==this.epoch)return false;
       this.timing.permissionChecked=performance.now()-this.startedAt;
       this.preferences=structuredClone(this.settings());
-      this.sourceApp=this.preferences.fileNameTemplate.includes('{app}')?frontmostApplicationId():'';
+      this.sourceApp=this.preferences.fileNameTemplate.includes('{app}')?this.ax.frontmostApp().bundleId:'';
       this.configureNativeAppearance();
       const front=mode==='front'?this.candidateWindows(true)[0]:undefined;
       if(mode==='front'&&!front)throw Error('没有可截图的前台窗口');
@@ -425,9 +424,7 @@ export class CaptureManager {
   }
   private candidateWindows(frontOnly=false){
     const all=this.ax.windows(),windows=frontOnly?all.slice(0,1):all,rules=this.appearance().ignoredApps;
-    if(!rules.some(rule=>rule.enabled&&rule.scopes.includes('capture-candidates')))return windows;
-    const ids=applicationBundleIds();
-    return windows.filter(window=>!ignoresApplication(rules,ids[window.pid]??'','capture-candidates'));
+    return windows.filter(window=>!ignoresApplication(rules,window.bundleId,'capture-candidates'));
   }
   async startScrollCapture(){
     this.scrollRequested=true;

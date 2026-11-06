@@ -4,17 +4,9 @@ import type { TextSelectionData } from 'selection-hook';
 import type { KeystrokeCue, MouseClickCue } from '../shared/recording';
 import type { CaptureStatus, SelectionContext, Settings } from '../shared/contracts';
 import type { IgnoredAppRule, IgnoredAppScope } from '../shared/shortcuts';
-import { execFileSync } from 'node:child_process';
 
 export function ignoresApplication(rules: IgnoredAppRule[], bundleId: string, scope: IgnoredAppScope) {
   return rules.some(rule => rule.enabled && rule.bundleId === bundleId && rule.scopes.includes(scope));
-}
-/** NSWorkspace avoids asking System Events for an additional automation permission. */
-export function frontmostApplicationId(): string {
-  return execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', "ObjC.import('AppKit'); ObjC.unwrap($.NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier) || ''"], { encoding: 'utf8', timeout: 2000 }).trim();
-}
-export function applicationBundleIds(): Record<number, string> {
-  return JSON.parse(execFileSync('/usr/bin/osascript', ['-l', 'JavaScript', '-e', "ObjC.import('AppKit'); var apps=$.NSWorkspace.sharedWorkspace.runningApplications, ids={}; for(var i=0;i<apps.count;i++){var app=apps.objectAtIndex(i), id=ObjC.unwrap(app.bundleIdentifier); if(id)ids[Number(app.processIdentifier)]=id;} JSON.stringify(ids)"], { encoding: 'utf8', timeout: 2000 }));
 }
 
 export interface SelectionInputHandlers {

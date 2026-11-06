@@ -1,0 +1,22 @@
+import { join } from 'node:path';
+import type { CaptureRect } from '../shared/capture';
+
+export type WindowRect = CaptureRect & { pid: number; id: number; bundleId: string };
+
+export interface NativeAx {
+  query(pid: number, x: number, y: number): Promise<{ rects: CaptureRect[]; error: number }>;
+  windows(): WindowRect[];
+  requestScreen(): Promise<boolean>;
+  frontmostApp(): { bundleId: string; name: string; pid: number };
+  paste(): void;
+  setGlow(enabled: boolean): void;
+  startBridge(cb: (event: { name: string; payload: string }) => void): void;
+  postBridge(name: string, payload: string): void;
+  snapWindow(x: number, y: number, w: number, h: number): boolean;
+  tileTwoWindows(x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number): number;
+  notchGeometry(): { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
+  setStationaryWindow(handle: Buffer): void;
+}
+
+let ax: NativeAx | undefined;
+export const nativeAx = (): NativeAx => ax ??= require(join(__dirname, 'native/capture-ax.node'));

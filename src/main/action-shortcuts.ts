@@ -3,7 +3,8 @@ import type { IpcMainInvokeEvent } from 'electron';
 import { canonicalShortcut, globalActionIds, globalActionLabels, isValidShortcut, type GlobalActionId } from '../shared/shortcuts';
 import { captureModes, type CaptureMode } from '../shared/capture';
 import type { Settings, ShellState } from '../shared/contracts';
-import { frontmostApplicationId, ignoresApplication } from './selection';
+import { ignoresApplication } from './selection';
+import { nativeAx } from './native-ax';
 
 export interface ActionShortcutDeps {
   state: () => Pick<ShellState, 'settings' | 'shortcutError'>;
@@ -24,8 +25,7 @@ export class ActionShortcuts {
     try {
       return globalShortcut.register(shortcut, () => {
         void (async () => {
-          const rules = this.deps.state().settings.ignoredApps;
-          if (rules.some(rule => rule.enabled && rule.scopes.includes('shortcuts')) && ignoresApplication(rules, frontmostApplicationId(), 'shortcuts')) return;
+          if (ignoresApplication(this.deps.state().settings.ignoredApps, nativeAx().frontmostApp().bundleId, 'shortcuts')) return;
           await this.deps.run(action);
         })().catch(error => { this.deps.notice((error as Error).message); });
       }) ? null : `${shortcut} 已被占用，请换一组快捷键。`;
