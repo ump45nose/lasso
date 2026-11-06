@@ -549,7 +549,7 @@ function installIPC() {
     } catch (error) { return { error: (error as Error).message }; } finally { nativeDialogs--; }
   });
   ipcMain.handle('shell:image-presets', event => { assertLocal(event); return openPalette('images'); });
-  ipcMain.handle('shell:external', (event, url: string) => { assertLocal(event); if (['https:', 'http:'].includes(new URL(url).protocol)) return shell.openExternal(url); });
+  ipcMain.handle('shell:external', (event, url: string) => { assertLocal(event); if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) return shell.openExternal(url); });
   const result = async (action: () => unknown) => { try { await action(); return { error: null }; } catch (error) { return { error: (error as Error).message }; } };
   ipcMain.handle('shell:capture-history',(event,query?:string)=>{assertLocal(event);if(query!==undefined&&typeof query!=='string')throw Error('历史搜索词无效');return screenshots.history.state(query);});
   ipcMain.handle('shell:capture-history-act',(event,id:string,action:Parameters<DesktopAPI['actCaptureHistory']>[1])=>{assertLocal(event);return result(()=>screenshots.actCaptureHistory(id,action));});
@@ -713,8 +713,6 @@ function installIPC() {
   ipcMain.handle('shell:screenshot', async (event, mode: EfficiencyCaptureMode,delay:CaptureDelay=0) => { assertLocal(event); if ((mode==='repeat'||captureModes.includes(mode))&&[0,3,5,10].includes(delay)) await startScreenshot(mode,delay); });
   ipcMain.handle('shell:screenshot-cancel',event=>{assertLocal(event);screenshots.efficiency.cancel();});
   ipcMain.handle('shell:action-shortcut', (event, action: GlobalActionId, shortcut: string) => { assertLocal(event); return saveActionShortcut(action, shortcut); });
-  ipcMain.handle('shell:capture-shortcut', (event, mode: CaptureMode, shortcut: string) => { assertLocal(event); return captureModes.includes(mode) ? saveActionShortcut(mode, shortcut) : { error: '未知的截图方式' }; });
-  ipcMain.handle('shell:shortcut', (event, shortcut: string) => { assertLocal(event); return saveActionShortcut('open-launcher', shortcut); });
   ipcMain.handle('shell:editor-shortcuts', (event, shortcuts: EditorShortcutMap) => {
     assertLocal(event); const error = validateEditorShortcuts(shortcuts); if (error) return { error };
     return result(() => saveSettings({ ...state.settings, editorShortcuts: shortcuts }));

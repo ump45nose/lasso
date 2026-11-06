@@ -175,8 +175,6 @@ export interface DesktopAPI {
   screenshot(mode: EfficiencyCaptureMode, delay?: CaptureDelay): Promise<void>;
   cancelScreenshot(): Promise<void>;
   openLocalImage(): Promise<{ error: string | null }>;
-  saveCaptureShortcut(mode: CaptureMode, shortcut: string): Promise<{ error: string | null }>;
-  saveShortcut(shortcut: string): Promise<{ error: string | null }>;
   saveActionShortcut(action: GlobalActionId, shortcut: string): Promise<{ error: string | null }>;
   saveEditorShortcuts(shortcuts: EditorShortcutMap): Promise<{ error: string | null }>;
   saveIgnoredApps(rules: IgnoredAppRule[]): Promise<{ error: string | null }>;
