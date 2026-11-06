@@ -60,6 +60,7 @@
    - 界面复用：编辑器经「图片预设」出图（「用于生图」已删）；三个设置页的保存栏；标注撤销/重做；刘海岛的 25m 专注按钮。
    - 录屏面板和托盘的实时状态、贴图工作区与悬浮工具栏。
    - 翻译：去掉 `sourceText`/`translatedText` 两个请求字段后，仍应拿到完整译文。
+   - CaptureManager 拆分（候选检测、录屏取图两个模块，行为应不变）：区域截图时窗口、AX 元素和颜色/边缘高亮跟随指针，区域/窗口/矩形模式来回切换，内联编辑后清除选区能重新选，重截上次区域和尺寸预设，取消后立即重开没有残留高亮，从选区开始滚动截图；区域、窗口、全屏录屏的开始与停止，录制中关闭被录窗口提示「录制窗口已关闭」，选区阶段从面板或托盘取消，截图与录屏互斥提示，选区阶段退出 Lasso。
 
 ### P1：补完原路径集中验收
 
@@ -90,7 +91,8 @@
 | `media-service.ts`、`media-window.ts` | 生图请求、凭据、结果与版本，生图窗口；也给快速卡片提供流式调用。 |
 | `sync-webdav.ts` | 配置包导出/导入、WebDAV 推拉与冲突判定；密码另存。 |
 | `island.ts`、`island-window.ts`、`island-notes.ts`、`island-finder.ts` | 刘海岛窗口：番茄钟与提醒、四边光效、Nook 通知桥、分屏和固定 ⌃⌥ 快捷键；持有 EdgeNotes 抽屉与 Finder 面板两个子模块，三个表面用 `createIslandWindow` 建窗并共用一个来源校验。Finder 面板打开时异步查询 Finder 当前目录与选中项，查询返回后再显示。贴顶靠 `enableLargerThanScreen`，原生层只补 Stationary / IgnoresCycle。 |
-| `capture/index.ts` | CaptureManager：截图会话、原生取图、候选（窗口/AX/边缘/颜色）、编辑窗口与闲置休眠、滚动截图、录屏取帧；持有 `pins`、`history`。取消释放图片与 worker，不处理 AI 任务。 |
+| `capture/index.ts` | CaptureManager：截图会话、原生取图、编辑窗口与闲置休眠、滚动截图；持有 `pins`、`history` 和下一行的两个模块。取消释放图片与 worker，不处理 AI 任务。 |
+| `capture/candidate-detection.ts`、`recording-capture.ts` | 由 `86f0e3f`、`4aa74bf` 从 CaptureManager 拆出：选区候选（窗口、悬停时指针下的 AX 元素与颜色区域、worker 算出的边缘），只经 `state`/`bounds` 回调读会话；录屏取图端（在原生选区层选显示器/窗口/区域、逐帧取图），CaptureManager 的四个录屏方法只做转发。 |
 | `capture/native.ts`、`candidates.ts`、`regions-worker.ts`、`region-store.ts`、`efficiency-control.ts`、`scroll-*.ts` | 原生取图加载；候选排序；边缘、颜色与滚动拼接在 worker；记住的区域与尺寸预设；延时与重截。 |
 | `capture/editor-services.ts` | 截图编辑和贴图编辑共用的 OCR、智能识别、文字复制/发送与 OCR 失效（`3e0b60e`）。 |
 | `capture/ocr.ts`、`intelligence.ts` | Vision 文字与条码；翻译/表格/公式调用外部视觉服务。 |
