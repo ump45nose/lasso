@@ -366,7 +366,7 @@ export class CaptureManager {
       this.bounds=display.bounds;
       const id=randomUUID();
       if(this.disposed||epoch!==this.epoch)return false;
-      this.state={id,editId:randomUUID(),width:this.bounds.width,height:this.bounds.height,pixelWidth:0,pixelHeight:0,candidates:[],windows:[],mode:mode==='rect'?'rect':mode==='window'?'window':'area',captureKind:request?.area?.kind??mode,saveFormat:this.preferences.format,phase:'selecting',selection:null,status:'',origin:'screen'};
+      this.state={id,editId:randomUUID(),width:this.bounds.width,height:this.bounds.height,pixelWidth:0,pixelHeight:0,candidates:[],windows:[],mode:mode==='rect'?'rect':mode==='window'?'window':'area',captureKind:request?.area?.kind??mode,saveFormat:this.preferences.format,phase:'selecting',selection:null,origin:'screen'};
       if(front){this.windows=[front];this.state.windows=[{...front,x:front.x-this.bounds.x,y:front.y-this.bounds.y}];await this.captureWindow(front.id,this.preferences.shadow);return Boolean(this.state?.imageFrame);}
       const exclude=excludedCaptureWindows(this.native);this.timing.queued=performance.now()-this.startedAt;
       const frame=await this.native.capture({displayId:display.id,bounds:this.bounds,includeCursor:this.settings().includeCursor,exclude});
@@ -713,7 +713,7 @@ export class CaptureManager {
     try{
       this.preferences=structuredClone(this.settings());this.sourceApp='';this.startedAt=performance.now();this.selectedAt=0;this.timing={};this.restoreWindow=this.before();this.editorKey=key;this.localSource=context?.file??null;this.image=image;
       const display=screen.getDisplayNearestPoint(screen.getCursorScreenPoint());this.bounds=display.bounds;this.displayId=display.id;
-      this.editRevision=0;this.state={presentation:'window',pixelScale:document?.pixelScale,saveFormat:this.preferences.format,id:randomUUID(),editId:randomUUID(),imageFrame:this.keepFrame(this.importFrame(image)),width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,candidates:[],phase:'result',selection:{x:0,y:0,...size},status:'',origin,pinId,annotations:document?.annotations};
+      this.editRevision=0;this.state={presentation:'window',pixelScale:document?.pixelScale,saveFormat:this.preferences.format,id:randomUUID(),editId:randomUUID(),imageFrame:this.keepFrame(this.importFrame(image)),width:size.width,height:size.height,pixelWidth:size.width,pixelHeight:size.height,candidates:[],phase:'result',selection:{x:0,y:0,...size},origin,pinId,annotations:document?.annotations};
       const state=this.state,win=await this.prepareWindow();if(!this.claimWindow(win,state,epoch))return;
       this.configureResult();this.publish();
     }catch(error){if(epoch===this.epoch)this.cancel();throw error;}finally{this.busy=false;}

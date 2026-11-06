@@ -1027,7 +1027,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const sel = { x: 380, y: 170, width: 520, height: 320 }, crop = frame.crop(sel);
     const windows = [{ id: 1, x: 300, y: 120, width: 640, height: 430 }, { id: 2, x: 120, y: 60, width: 900, height: 620 }];
     const preferences = await page(find(), 'window.desktop.getState().then(s => ({annotationMemory:s.settings.screenshot.annotationMemory,editorShortcuts:s.settings.editorShortcuts}))');
-    const base = { ...preferences, saveFormat:'png', id: 'ui-shots', editId: 'ui-shots-edit', candidates: [], status: '', selection: null };
+    const base = { ...preferences, saveFormat:'png', id: 'ui-shots', editId: 'ui-shots-edit', candidates: [], selection: null };
     const longPixels=Buffer.concat([frame.toBitmap(),frame.toBitmap(),frame.toBitmap()]);
     const long=nativeImage.createFromBitmap(longPixels,{width:W,height:H*3});
     const scrolling={status:'running',width:W,height:H*3,segments:3,seams:[H,H*2],direction:'vertical',segmentSizes:[H,H,H],message:'在选区内缓慢向下滚动，每次保留至少三分之一重叠'};
