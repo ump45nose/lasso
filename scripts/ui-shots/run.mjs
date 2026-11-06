@@ -749,6 +749,42 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     return names;
   }));
 
+  // Script actions: one enabled script saved through the public settings IPC, then the capsule without presets (a renderer-only
+  // fixture, so its ··· menu stays closed), the ··· menu with the script section, and the palette group. General settings are restored.
+  saved.push(...await main(async () => {
+    const { find, page, wait, ready, move, center, save } = global.uiShots, w = find('action-bar'), m = find(), names = [];
+    if (global.uiShots.captureOnly) return names;
+    const general = s => Object.fromEntries(['launchAtLogin', 'themeMode', 'toolbarTools', 'mouseActions', 'scriptActions', 'autoCheckUpdates'].map(key => [key, s[key]]));
+    const saveGeneral = async value => { const { error } = await page(m, `window.desktop.saveGeneral(${JSON.stringify(value)})`); if (error) throw Error(error); };
+    const original = general(await page(m, 'window.desktop.getState().then(s => s.settings)'));
+    await saveGeneral({ ...original, scriptActions: [{ id: 'ui-shots-script', name: '整理评审文字', enabled: true, code: 'return input.text.trim();' }] });
+    try {
+      w.setOpacity(1); w.showInactive(); w.webContents.send('bar:enter', { tip: 'above', menu: 'above' }); await wait(500);
+      const bar = await page(w, 'window.actionBar.getState()');
+      if (!bar.scripts.some(script => script.id === 'ui-shots-script')) throw Error('Enabled script did not reach the action bar state');
+      w.webContents.send('bar:changed', { ...bar, presets: [], more: [] }); await wait(300);
+      await move(w, ...await center(w, '[aria-haspopup=menu]'));
+      names.push(await save(w, 'action-bar-scripts-only'));
+      w.webContents.send('bar:changed', bar); await wait(300);
+      await move(w, ...await center(w, '[aria-haspopup=menu]'));
+      await page(w, "document.querySelector('[aria-haspopup=menu]').click()");
+      const scriptRow = `[...document.querySelectorAll('.ab-menu button')].find(button => button.textContent.includes('整理评审文字'))`;
+      await ready(w, `Boolean(${scriptRow})`); await wait(450);
+      // A menu that opens upward ends MENU_EDGE (6px) below the window top only when main grew the window to its rendered height.
+      if (!await page(w, "document.querySelector('.ab-menu').offsetTop === 6")) throw Error('Action bar window height differs from the rendered ··· menu');
+      await move(w, ...await page(w, `(() => { const r = ${scriptRow}.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()`));
+      names.push(await save(w, 'action-bar-menu-scripts'));
+      await page(w, "document.querySelector('[aria-haspopup=menu]').click()"); await wait(200); w.hide();
+      await page(m, "window.desktop.openPalette('all')"); await wait(600);
+      await page(m, `(() => { const input = document.querySelector('.l-pal-search input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(input, '整理'); input.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+      await ready(m, `[...document.querySelectorAll('.l-pal-group')].some(group => group.textContent === '脚本动作') && Boolean(document.getElementById('pal-s-ui-shots-script'))`);
+      await move(m, ...await center(m, '#pal-s-ui-shots-script'));
+      names.push(await save(m, 'palette-scripts'));
+      await page(m, 'window.desktop.closePalette()'); await wait(300);
+    } finally { await saveGeneral(original); }
+    return names;
+  }));
+
   // Region presets: configuration IPC and form interactions; acquisition is stubbed.
   saved.push(...await main(async () => {
     const {find,page,wait,save,settingsTab,scrollTo,reveal,ipcMain,app,fs,path,out}=global.uiShots,names=[],checks=[];let m;
