@@ -26,7 +26,6 @@ async function abortable<T>(operation: Promise<T>, signal: AbortSignal): Promise
   } finally { signal.removeEventListener('abort', abort); }
 }
 const webAdapter = (target: Target, contents: WebContents) => target === 'gemini' ? new GeminiAdapter(contents) : new ChatGPTAdapter(contents);
-export const CHAT_PARTITION = 'persist:chatgpt';
 interface Task {
   target: Target;
   agent: AgentSession | null;
