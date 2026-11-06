@@ -1,0 +1,40 @@
+name: Linux CI
+
+on:
+  push:
+    branches: ['**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check and build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      # This job bundles the app without launching Electron.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Check UI rules
+        run: npm run check:ui
+      # No standalone test script is currently defined in package.json.
+      # ui:shots needs the running macOS app and is verified separately.
+      - name: Build JS
+        # Native compilation requires Xcode and macOS frameworks.
+        run: npm run build:js
