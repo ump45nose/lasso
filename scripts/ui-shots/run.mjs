@@ -242,10 +242,10 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         {id:'history-clean',createdAt:timestamp-3600000,updatedAt:timestamp-3600000,width:960,height:640,byteSize:614400,captureKind:'window',ocrSnippet:'工作空间和贴图分组',thumbnailDataUrl,hasAnnotations:false}
       ],totalBytes:2457600,policy:{enabled:true,maxItems:50,maxDays:30,maxBytesMB:512}},
       workspace: {settings:{restoreOnLaunch:true,floatingToolbar:false,wheelAction:'zoom',activeGroupId:'default',groups},closedCount:2,pins:[
-        {id:'pin-image',title:'设计评审截图',kind:'image',groupId:'default',locked:false,thumbnail:false,topmost:true,visible:true,opacity:1,width:360,height:225,preview:'设计评审',updatedAt:timestamp},
-        {id:'pin-text',title:'评审笔记',kind:'text',groupId:'research',locked:true,thumbnail:false,topmost:true,visible:true,opacity:.85,width:340,height:240,preview:'把想法留在桌面上，继续手头的工作。',updatedAt:timestamp},
-        {id:'pin-color',title:'陶土色',kind:'color',groupId:'default',locked:false,thumbnail:true,topmost:true,visible:true,opacity:1,width:280,height:200,preview:'#BD7658',updatedAt:timestamp},
-        {id:'pin-file',title:'fixture-file.txt',kind:'file',groupId:'research',locked:false,thumbnail:false,topmost:false,visible:false,opacity:1,width:360,height:225,preview:filePath,updatedAt:timestamp}
+        {id:'pin-image',title:'设计评审截图',kind:'image',groupId:'default',locked:false,thumbnail:false,visible:true,opacity:1},
+        {id:'pin-text',title:'评审笔记',kind:'text',groupId:'research',locked:true,thumbnail:false,visible:true,opacity:.85},
+        {id:'pin-color',title:'陶土色',kind:'color',groupId:'default',locked:false,thumbnail:true,visible:true,opacity:1},
+        {id:'pin-file',title:'fixture-file.txt',kind:'file',groupId:'research',locked:false,thumbnail:false,visible:false,opacity:1}
       ]},
       webdav:{enabled:true,url:'https://nas.example.invalid/webdav',remotePath:'/Lasso/config.json',username:'lasso-fixture',hasPassword:true,autoSync:false,status:'synced',lastSyncedAt:timestamp,message:'已同步到飞牛 NAS'},
       receipts:[]
@@ -267,7 +267,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       'shell:capture-history-clear': () => {state.history.items=[];state.history.totalBytes=0;receipt('clearCaptureHistory');return {error:null};},
       'shell:pin-workspace': () => state.workspace,
       'shell:pin-workspace-save': async (event,settings) => {state.workspace.settings=structuredClone(settings);for(const pin of state.workspace.pins)if(!settings.groups.some(group=>group.id===pin.groupId))pin.groupId=settings.activeGroupId;receipt('savePinWorkspace',[settings]);await publish(event);return {error:null};},
-      'shell:pin-create': (_event,input) => {state.workspace.pins.push({...state.workspace.pins[0],id:'created-'+state.receipts.length,title:input.text?.slice(0,24)||'新贴图',kind:input.kind,preview:input.text||input.color||input.filePath||'',groupId:input.groupId||state.workspace.settings.activeGroupId});receipt('createPin',[input]);publish();return {error:null};},
+      'shell:pin-create': (_event,input) => {state.workspace.pins.push({...state.workspace.pins[0],id:'created-'+state.receipts.length,title:input.text?.slice(0,24)||'新贴图',kind:input.kind,groupId:input.groupId||state.workspace.settings.activeGroupId});receipt('createPin',[input]);publish();return {error:null};},
       'shell:pin-clipboard': () => {receipt('pinClipboard');return {error:null};},
       'shell:pin-reopen': () => {state.workspace.closedCount=Math.max(0,state.workspace.closedCount-1);receipt('reopenClosedPin');publish();return {error:null};},
       'shell:pins-arrange': (_event,mode,groupId) => {receipt('arrangePins',[mode,groupId]);return {error:null};},

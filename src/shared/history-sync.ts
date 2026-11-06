@@ -36,13 +36,8 @@ export interface PinSummary {
   groupId: string;
   locked: boolean;
   thumbnail: boolean;
-  topmost: boolean;
   visible: boolean;
   opacity: number;
-  width: number;
-  height: number;
-  preview: string;
-  updatedAt: number;
 }
 export interface PinWorkspaceState { settings: PinWorkspaceSettings; pins: PinSummary[]; closedCount: number }
 export interface PortableConfigBundle { schemaVersion: 1; exportedAt: string; settings: Record<string, unknown>; presets: unknown[] }
