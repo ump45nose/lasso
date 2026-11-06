@@ -131,7 +131,8 @@ export interface ShellState {
   delivery: DeliveryStatus | null;
 }
 export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
-  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-input' | 'retry-delivery';
+  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-input' | 'retry-delivery'
+  | 'open-island-board' | 'toggle-edge-notes' | 'open-finder-panel' | 'snap-coding-ai' | 'snap-equal-split';
 export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
 export interface DesktopAPI {
@@ -275,6 +276,7 @@ export interface IslandTaskItem {
 export interface IslandState {
   mode: IslandMode;
   glow: boolean;
+  notch?: { hasNotch: boolean; width: number; height: number };
   pomodoro: {
     active: boolean;
     paused: boolean;

@@ -588,6 +588,11 @@ function installIPC() {
       case 'copy-pending': tasks.copyPending(); break;
       case 'cancel-delivery': tasks.cancelDelivery(); break;
       case 'dismiss-delivery': tasks.dismissDelivery(); break;
+      case 'open-island-board': island?.openBoard(); break;
+      case 'toggle-edge-notes': island?.toggleNotesDrawer(true); break;
+      case 'open-finder-panel': island?.summonFinderPanel(); break;
+      case 'snap-coding-ai': island?.snapWindow('coding-ai'); break;
+      case 'snap-equal-split': island?.snapWindow('equal-split'); break;
       default: throw new Error('不支持的窗口操作');
     }
   });

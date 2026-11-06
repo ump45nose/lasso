@@ -2,6 +2,7 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <QuartzCore/QuartzCore.h>
+#import <objc/runtime.h>
 #include <vector>
 #include <string>
 
@@ -305,6 +306,103 @@ static napi_value frontmostApp(napi_env e, napi_callback_info) {
   return obj;
 }
 
+static napi_value notchGeometry(napi_env e, napi_callback_info) {
+  napi_value obj;
+  napi_create_object(e, &obj);
+  bool hasNotch = false;
+  double notchWidth = 156.0;
+  double notchHeight = 28.0;
+  double menuBarHeight = 28.0;
+  @autoreleasepool {
+    NSScreen* screen = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
+    if (screen) {
+      NSRect frame = screen.frame;
+      NSRect visible = screen.visibleFrame;
+      menuBarHeight = std::max(24.0, (double)(NSMaxY(frame) - NSMaxY(visible)));
+      if (@available(macOS 12.0, *)) {
+        NSEdgeInsets insets = screen.safeAreaInsets;
+        NSRect leftAux = screen.auxiliaryTopLeftArea;
+        NSRect rightAux = screen.auxiliaryTopRightArea;
+        if (insets.top > 0.0 && leftAux.size.width > 0.0 && rightAux.size.width > 0.0) {
+          hasNotch = true;
+          notchWidth = std::max(120.0, (double)(rightAux.origin.x - NSMaxX(leftAux)));
+          notchHeight = (double)insets.top;
+          menuBarHeight = std::max(menuBarHeight, notchHeight);
+        }
+      }
+    }
+  }
+  napi_value vHas;
+  napi_get_boolean(e, hasNotch, &vHas);
+  napi_set_named_property(e, obj, "hasNotch", vHas);
+  prop(e, obj, "width", notchWidth);
+  prop(e, obj, "height", notchHeight);
+  prop(e, obj, "menuBarHeight", menuBarHeight);
+  return obj;
+}
+
+static const void* kUnconstrainedNotchWindowKey = &kUnconstrainedNotchWindowKey;
+static IMP g_origConstrainFrameRect = nullptr;
+
+static NSRect lasso_constrainFrameRect(id self, SEL _cmd, NSRect frameRect, NSScreen* screen) {
+  NSNumber* flag = objc_getAssociatedObject(self, kUnconstrainedNotchWindowKey);
+  if (flag && [flag boolValue]) {
+    return frameRect;
+  }
+  if (g_origConstrainFrameRect) {
+    using Fn = NSRect(*)(id, SEL, NSRect, NSScreen*);
+    return ((Fn)g_origConstrainFrameRect)(self, _cmd, frameRect, screen);
+  }
+  return frameRect;
+}
+
+static napi_value pinWindowToNotch(napi_env e, napi_callback_info info) {
+  size_t n = 3;
+  napi_value args[3];
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  bool ok = false;
+  if (n >= 3) {
+    void* bufData = nullptr;
+    size_t bufLen = 0;
+    double winW = 540.0, winH = 440.0;
+    napi_get_buffer_info(e, args[0], &bufData, &bufLen);
+    napi_get_value_double(e, args[1], &winW);
+    napi_get_value_double(e, args[2], &winH);
+    if (bufData && bufLen >= sizeof(void*)) {
+      void* rawPtr = *reinterpret_cast<void* const*>(bufData);
+      if (rawPtr) {
+        @autoreleasepool {
+          NSView* view = (__bridge NSView*)rawPtr;
+          NSWindow* win = [view window];
+          NSScreen* screen = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
+          if (win && screen) {
+            Class cls = [win class];
+            SEL sel = @selector(constrainFrameRect:toScreen:);
+            Method m = class_getInstanceMethod(cls, sel);
+            if (m && !g_origConstrainFrameRect) {
+              g_origConstrainFrameRect = method_setImplementation(m, (IMP)lasso_constrainFrameRect);
+            }
+            objc_setAssociatedObject(win, kUnconstrainedNotchWindowKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            NSRect sf = screen.frame;
+            CGFloat x = std::round(sf.origin.x + (sf.size.width - winW) / 2.0);
+            CGFloat y = NSMaxY(sf) - winH;
+            [win setLevel:NSScreenSaverWindowLevel + 1];
+            [win setCollectionBehavior:(NSWindowCollectionBehaviorCanJoinAllSpaces |
+                                        NSWindowCollectionBehaviorFullScreenAuxiliary |
+                                        NSWindowCollectionBehaviorStationary |
+                                        NSWindowCollectionBehaviorIgnoresCycle)];
+            [win setFrame:NSMakeRect(x, y, winW, winH) display:YES];
+            ok = true;
+          }
+        }
+      }
+    }
+  }
+  napi_value res;
+  napi_get_boolean(e, ok, &res);
+  return res;
+}
+
 static napi_value init(napi_env e,napi_value exports){
   napi_property_descriptor d[]={
     {"query",nullptr,query,nullptr,nullptr,nullptr,napi_default,nullptr},
@@ -316,7 +414,9 @@ static napi_value init(napi_env e,napi_value exports){
     {"postBridge",nullptr,postBridge,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"snapWindow",nullptr,snapWindow,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"tileTwoWindows",nullptr,tileTwoWindows,nullptr,nullptr,nullptr,napi_default,nullptr},
-    {"frontmostApp",nullptr,frontmostApp,nullptr,nullptr,nullptr,napi_default,nullptr}
+    {"frontmostApp",nullptr,frontmostApp,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"notchGeometry",nullptr,notchGeometry,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"pinWindowToNotch",nullptr,pinWindowToNotch,nullptr,nullptr,nullptr,napi_default,nullptr}
   };
   napi_define_properties(e,exports,sizeof(d)/sizeof(d[0]),d);
   return exports;

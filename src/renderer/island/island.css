@@ -7,45 +7,129 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding-top: 6px;
+  padding-top: 0;
 }
 
 .isl-shell {
+  --notch-w: 156px;
+  --notch-h: 28px;
   position: relative;
   display: flex;
   flex-direction: column;
-  background: var(--ink);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 1) 0%, rgba(0, 0, 0, 1) var(--notch-h), var(--ink) 100%);
   color: var(--on-ink);
   font-family: var(--font-ui);
-  border-radius: 18px;
+  border-radius: 0 0 18px 18px;
   box-shadow:
-    inset 0 0 0 0.5px rgba(250, 249, 245, 0.14),
-    0 16px 36px -14px rgba(20, 20, 19, 0.65),
-    0 2px 6px rgba(20, 20, 19, 0.25);
-  overflow: hidden;
+    inset 0 -0.5px 0 0 rgba(250, 249, 245, 0.16),
+    inset 0.5px 0 0 0 rgba(250, 249, 245, 0.12),
+    inset -0.5px 0 0 0 rgba(250, 249, 245, 0.12),
+    0 16px 36px -12px rgba(20, 20, 19, 0.72),
+    0 2px 6px rgba(20, 20, 19, 0.32);
+  overflow: visible;
+}
+
+.isl-shell::before,
+.isl-shell::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 10px;
+  pointer-events: none;
+}
+
+.isl-shell::before {
+  left: -10px;
+  background: radial-gradient(circle at 0 100%, transparent 10px, rgba(0, 0, 0, 1) 10.5px);
+}
+
+.isl-shell::after {
+  right: -10px;
+  background: radial-gradient(circle at 100% 100%, transparent 10px, rgba(0, 0, 0, 1) 10.5px);
 }
 
 .isl-shell.glow-on {
   box-shadow:
-    inset 0 0 0 1px var(--clay-line),
+    inset 0 -1px 0 0 var(--clay-line),
     0 0 0 3px var(--clay-halo),
-    0 18px 40px -14px rgba(20, 20, 19, 0.7);
+    0 18px 40px -14px rgba(20, 20, 19, 0.75);
 }
 
-.isl-shell.mode-idle { width: 196px; height: 32px; border-radius: 16px; }
-.isl-shell.mode-toast { min-width: 260px; max-width: 420px; height: 34px; border-radius: 17px; padding: 0 12px; justify-content: center; }
-.isl-shell.mode-focus { width: 288px; height: 34px; border-radius: 17px; }
-.isl-shell.mode-focus-hover { width: 396px; border-radius: 18px; padding: 11px 13px; }
-.isl-shell.mode-slacking { width: 412px; border-radius: 18px; padding: 12px 14px; }
-.isl-shell.mode-nook-alert { width: 436px; border-radius: 18px; padding: 12px 14px; }
-.isl-shell.mode-board { width: 468px; border-radius: 20px; padding: 13px 15px; }
+.isl-shell.mode-idle {
+  width: calc(var(--notch-w) + 196px);
+  height: calc(var(--notch-h) + 4px);
+  border-radius: 0 0 15px 15px;
+}
+
+.isl-shell.mode-focus {
+  width: calc(var(--notch-w) + 244px);
+  height: calc(var(--notch-h) + 4px);
+  border-radius: 0 0 15px 15px;
+}
+
+.isl-shell.mode-toast {
+  min-width: calc(var(--notch-w) + 210px);
+  max-width: 440px;
+  border-radius: 0 0 17px 17px;
+  padding: 0 14px 9px;
+}
+
+.isl-shell.mode-focus-hover { width: 404px; border-radius: 0 0 18px 18px; padding: 0 13px 12px; }
+.isl-shell.mode-slacking { width: 416px; border-radius: 0 0 18px 18px; padding: 0 14px 12px; }
+.isl-shell.mode-nook-alert { width: 440px; border-radius: 0 0 18px 18px; padding: 0 14px 12px; }
+.isl-shell.mode-board { width: 472px; border-radius: 0 0 20px 20px; padding: 0 15px 14px; }
+
+.isl-notch-cap {
+  height: var(--notch-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.isl-cap-ear {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: rgba(250, 249, 245, 0.52);
+}
+
+.isl-cap-ear.right {
+  justify-content: flex-end;
+  color: var(--clay);
+}
+
+.isl-notch-cutout {
+  width: var(--notch-w);
+  height: var(--notch-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0 0 10px 10px;
+  background: rgba(0, 0, 0, 1);
+}
+
+.isl-cam-lens {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 35% 35%, rgba(250, 249, 245, 0.22) 0%, rgba(20, 20, 19, 0.95) 55%, rgba(0, 0, 0, 1) 100%);
+  box-shadow: inset 0 0 0 1px rgba(250, 249, 245, 0.12);
+}
 
 .isl-pill-btn {
   width: 100%;
   height: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 0;
   padding: 0 12px;
   border: 0;
   background: transparent;
@@ -53,16 +137,35 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
   text-align: left;
 }
 
+.isl-wing {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.isl-wing.left {
+  padding-right: 8px;
+  justify-content: flex-start;
+}
+
+.isl-wing.right {
+  padding-left: 8px;
+  justify-content: flex-end;
+}
+
 .isl-idle-title {
   font-family: var(--font-display);
-  font-size: 13.5px;
+  font-size: 13px;
   letter-spacing: 0.01em;
 }
 
 .isl-idle-sub {
-  margin-left: auto;
   font-size: 11px;
-  color: rgba(250, 249, 245, 0.62);
+  color: rgba(250, 249, 245, 0.72);
+  white-space: nowrap;
 }
 
 .isl-row {

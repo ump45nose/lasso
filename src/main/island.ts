@@ -24,6 +24,8 @@ interface NativeAxBridge {
   snapWindow?: (x: number, y: number, w: number, h: number) => boolean;
   tileTwoWindows?: (x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number) => number;
   frontmostApp?: () => { bundleId: string; name: string; pid: number };
+  notchGeometry?: () => { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
+  pinWindowToNotch?: (handle: Buffer, width: number, height: number) => boolean;
 }
 
 const WIN_W = 540, WIN_H = 440;
@@ -206,6 +208,7 @@ export class NotchIsland {
       focusable: false,
       skipTaskbar: true,
       alwaysOnTop: true,
+      enableLargerThanScreen: true,
       acceptFirstMouse: true,
       transparent: true,
       hasShadow: false,
@@ -213,7 +216,7 @@ export class NotchIsland {
       webPreferences: { preload: preloadPath, nodeIntegration: false, contextIsolation: true, sandbox: true }
     });
     this.window.setIgnoreMouseEvents(true, { forward: true });
-    this.window.setAlwaysOnTop(true, 'screen-saver');
+    this.window.setAlwaysOnTop(true, 'screen-saver', 2);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.window.webContents.on('will-navigate', event => event.preventDefault());
@@ -419,7 +422,10 @@ export class NotchIsland {
 
     this.window.once('ready-to-show', () => {
       this.placeWindows();
-      if (!process.env.LASSO_DATA_ROOT) this.window.showInactive();
+      if (!process.env.LASSO_DATA_ROOT) {
+        this.window.showInactive();
+        this.placeWindows();
+      }
       this.publish();
     });
     this.notesWindow.once('ready-to-show', () => {
@@ -459,6 +465,11 @@ export class NotchIsland {
       const x = Math.round(primary.bounds.x + (primary.bounds.width - WIN_W) / 2);
       const y = primary.bounds.y;
       this.window.setBounds({ x, y, width: WIN_W, height: WIN_H });
+      try {
+        this.ax.pinWindowToNotch?.(this.window.getNativeWindowHandle(), WIN_W, WIN_H);
+      } catch {
+        // ignore if window handle is not yet attached
+      }
     }
     if (!this.notesWindow.isDestroyed()) {
       const area = primary.workArea;
@@ -475,9 +486,13 @@ export class NotchIsland {
   }
 
   private snapshot(): IslandState {
+    const geo = this.ax.notchGeometry?.();
     return {
       mode: this.mode,
       glow: this.glow,
+      notch: geo
+        ? { hasNotch: geo.hasNotch, width: Math.round(geo.width), height: Math.round(geo.height) }
+        : { hasNotch: true, width: 156, height: 28 },
       pomodoro: this.pomodoro,
       toast: this.toastItem,
       alerts: this.alerts,
@@ -520,6 +535,13 @@ export class NotchIsland {
     this.publish();
     this.publishNotes();
     this.publishFinder();
+  }
+
+  openBoard() {
+    this.nookTasks = readNookTasks();
+    this.mode = 'board';
+    this.window.setIgnoreMouseEvents(false);
+    this.publish();
   }
 
   toggleNotesDrawer(open: boolean) {

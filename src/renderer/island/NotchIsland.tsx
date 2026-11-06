@@ -33,7 +33,10 @@ export function NotchIsland() {
   }, []);
 
   if (!state) return null;
-  const { mode, pomodoro, toast, alerts, nookTasks, glow } = state;
+  const { mode, pomodoro, toast, alerts, nookTasks, glow, notch } = state;
+  const notchW = notch?.hasNotch === false ? 0 : (notch?.width ?? 156);
+  const notchH = notch?.hasNotch === false ? 24 : (notch?.height ?? 28);
+  const compactMode = mode === 'idle' || mode === 'focus';
 
   function enterShell() {
     window.island.hit(true);
@@ -58,12 +61,27 @@ export function NotchIsland() {
       <motion.div
         layout
         transition={spring}
-        className={`isl-shell mode-${mode}${glow ? ' glow-on' : ''}`}
+        style={{ '--notch-w': `${notchW}px`, '--notch-h': `${notchH}px` } as React.CSSProperties}
+        className={`isl-shell mode-${mode}${glow ? ' glow-on' : ''}${notch?.hasNotch === false ? ' no-notch' : ''}`}
         role="region"
         aria-label="Lasso 刘海岛"
         onPointerEnter={enterShell}
         onPointerLeave={leaveShell}
       >
+        {!compactMode && (
+          <div className="isl-notch-cap" aria-hidden="true">
+            <span className="isl-cap-ear left">
+              <BrandMark size={11} ink="var(--on-ink)" />
+              <span className="mono">LASSO</span>
+            </span>
+            <span className="isl-notch-cutout">
+              <span className="isl-cam-lens" />
+            </span>
+            <span className="isl-cap-ear right mono">
+              {pomodoro?.active ? formatClock(pomodoro.remainingSeconds) : `${nookTasks.length} OPEN`}
+            </span>
+          </div>
+        )}
         <AnimatePresence mode="popLayout" initial={false}>
           {mode === 'idle' && (
             <motion.button
@@ -75,9 +93,17 @@ export function NotchIsland() {
               exit={{ opacity: 0 }}
               onClick={() => window.island.setMode('board')}
             >
-              <BrandMark size={14} ink="var(--on-ink)" draw="once" />
-              <span className="isl-idle-title">Lasso</span>
-              <span className="isl-idle-sub mono">{nookTasks.length} 项待办</span>
+              <span className="isl-wing left">
+                <BrandMark size={13} ink="var(--on-ink)" draw="once" />
+                <span className="isl-idle-title">Lasso</span>
+              </span>
+              <span className="isl-notch-cutout" aria-hidden="true">
+                <span className="isl-cam-lens" />
+              </span>
+              <span className="isl-wing right">
+                <span className="dot complete" />
+                <span className="isl-idle-sub mono">{nookTasks.length} 项待办</span>
+              </span>
             </motion.button>
           )}
 
@@ -99,9 +125,16 @@ export function NotchIsland() {
               exit={{ opacity: 0 }}
               onClick={() => window.island.setMode('board')}
             >
-              <span className="dot running" />
-              <span className="isl-focus-task">{pomodoro.taskTitle}</span>
-              <span className="isl-clock mono">{formatClock(pomodoro.remainingSeconds)}</span>
+              <span className="isl-wing left">
+                <span className="dot running" />
+                <span className="isl-focus-task">{pomodoro.taskTitle}</span>
+              </span>
+              <span className="isl-notch-cutout" aria-hidden="true">
+                <span className="isl-cam-lens" />
+              </span>
+              <span className="isl-wing right">
+                <span className="isl-clock mono">{formatClock(pomodoro.remainingSeconds)}</span>
+              </span>
             </motion.button>
           )}
 
