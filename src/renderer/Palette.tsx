@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AppWindow, AppWindowMac, Image, Maximize2, Minimize2, Minus, Monitor, Pin, RotateCw, ScanLine, Search, Settings2, Timer, X } from 'lucide-react';
+import { AppWindow, AppWindowMac, Braces, Image, Maximize2, Minimize2, Minus, Monitor, Pin, RotateCw, ScanLine, Search, Settings2, Timer, X } from 'lucide-react';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import { presetTargetLabels as targetLabels } from '../shared/contracts';
 import type { Action, PaletteScope, Preset, ShellState, Target, TaskSummary } from '../shared/contracts';
@@ -13,6 +13,7 @@ const panelMotion = { hidden: { opacity: 0, y: -6, scale: 0.98, transition: { du
 
 type Row = { key: string; label: string; disabled?: boolean } & (
   | { kind: 'preset'; preset: Preset }
+  | { kind: 'script'; id: string }
   | { kind: 'task'; task: TaskSummary }
   | { kind: 'new'; target: Target; cwd?: boolean }
   | { kind: 'cmd'; icon: ReactNode; hint?: string; run: () => unknown; keepOpen?: boolean });
@@ -40,6 +41,10 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
     if (scope === 'all' || scope === 'images') {
       const rows: Row[] = state.presets.filter(preset => preset.enabled && (scope !== 'images' || preset.kind === 'image') && match(preset.name)).map(preset => ({ key: 'p-' + preset.id, kind: 'preset', preset, label: preset.name, disabled: preset.needsSelection && !selection && !(scope === 'images' && imagePrompt.trim()) }));
       if (rows.length) out.push({ title: '预设', rows });
+    }
+    if (scope === 'all') {
+      const rows: Row[] = settings.scriptActions.filter(script => script.enabled && match(script.name)).map(script => ({ key: 's-' + script.id, kind: 'script', id: script.id, label: script.name }));
+      if (rows.length) out.push({ title: '脚本动作', rows });
     }
     if (scope !== 'new' && scope !== 'images') {
       const rows: Row[] = state.tasks.filter(task => (scope === 'tasks' || task.id !== state.activeTaskId) && match(task.title)).map(task => ({ key: 't-' + task.id, kind: 'task', task, label: task.title }));
@@ -70,7 +75,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
       if (rows.length) out.push({ title: '图片与窗口', rows });
     }
     return out;
-  }, [query, imagePrompt, scope, state.presets, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.captureShortcuts, captureBusy, state.captureEfficiency.phase]);
+  }, [query, imagePrompt, scope, state.presets, settings.scriptActions, state.tasks, state.activeTaskId, state.pinned, state.expanded, state.hasPage, state.activeTarget, selection, settings.captureShortcuts, captureBusy, state.captureEfficiency.phase]);
   const flat = groups.flatMap(group => group.rows).filter(row => !row.disabled);
   const current = flat[Math.min(index, flat.length - 1)];
   useEffect(() => { setIndex(0); setError(''); }, [query, scope]);
@@ -84,6 +89,9 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
       const target = targetOf(row.preset);
       const result = await window.desktop.runPreset(row.preset.id, { ...(target !== row.preset.target && target !== 'api' ? { target } : {}), ...(scope === 'images' && imagePrompt.trim() ? { imagePrompt } : {}) });
       if (result.error) setError(result.error);
+    } else if (row.kind === 'script') {
+      const result = await window.desktop.runScriptAction(row.id);
+      if (result.error) setError(result.error); else await close();
     } else if (row.kind === 'task') await window.desktop.selectTask(row.task.id);
     else if (row.kind === 'new') {
       const cwd = row.cwd ? (await window.desktop.choosePath('directory'))?.path : undefined;
@@ -132,8 +140,10 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
               {row.kind === 'task' && <><span className={'dot ' + taskDot(row.task)} aria-hidden="true" /><Badge target={row.task.target} /></>}
               {row.kind === 'new' && <Badge target={row.target} />}
               {row.kind === 'cmd' && <span className="l-pal-icon">{row.icon}</span>}
+              {row.kind === 'script' && <span className="l-pal-icon"><Braces size={14} /></span>}
               <span className="l-pal-label">{row.label}</span>
               {row.kind === 'preset' && <PresetMeta preset={row.preset} target={targetOf(row.preset)} selected={selected} disabled={row.disabled} />}
+              {row.kind === 'script' && <small className="push">复制结果</small>}
               {row.kind === 'task' && <small className="push">{taskStatus(row.task)}</small>}
               {row.kind === 'cmd' && row.hint && <small className="push mono">{row.hint}</small>}
               {selected && <span className={'l-kbd' + (row.kind === 'new' || (row.kind === 'cmd' && !row.hint) ? ' push' : '')}>↵</span>}

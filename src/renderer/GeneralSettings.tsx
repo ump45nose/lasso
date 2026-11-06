@@ -53,6 +53,7 @@ function ScriptSettings({ actions, save }: { actions: ScriptAction[]; save: (act
   }
   return <section id="script-actions" className="l-set-section">
     <div className="l-set-row-head l-gap"><h3>JS 脚本动作</h3><button className="l-text-btn" disabled={busy} onClick={() => edit({ id: crypto.randomUUID(), name: '新脚本', enabled: true, code: 'return input.text.trim();' })}><Plus size={14} />新建脚本</button></div>
+    <p className="l-field-help">启用的脚本也会出现在划词动作条的 ··· 菜单和指令面板中，运行结果直接复制。</p>
     <ul className="l-group">{actions.length ? actions.map(action => <li key={action.id}><button className="l-preset" aria-pressed={draft?.id === action.id} disabled={busy} onClick={() => edit(action)}><strong>{action.name}</strong><span>{action.enabled ? '已启用' : '已停用'}{draft?.id === action.id && dirty ? ' · 有未保存更改' : ''}</span></button></li>) : <li><p className="l-field-help">添加脚本来处理文字，运行结果可复制或贴到桌面。</p></li>}</ul>
     {draft && <fieldset className="l-script-editor" disabled={busy}>
       <div className="l-row"><div className="l-field"><label htmlFor="script-name">脚本名称</label><input id="script-name" className="l-input" value={draft.name} maxLength={80} onChange={e => patch({ name: e.target.value })} /></div><span className="l-field-help">启用</span><Switch label="启用脚本动作" value={draft.enabled} change={() => patch({ enabled: !draft.enabled })} /></div>
