@@ -1,4 +1,3 @@
-import type { RecordingAction, RecordingFormat, RecordingSessionState } from '../shared/recording';
 import { RecordingManager } from './capture/recording';
 import { saveRecordingOutput } from './capture/output';
 import type { CustomCaptureRequest,RegionPreset } from '../shared/capture-regions';
@@ -20,10 +19,10 @@ import { applicationIcon } from './app-icons';
 import { MediaWindow } from './media-window';
 import { readSettings, writeSettings, validateGeneralSettings, runControlledScript } from './settings';
 import { WebDavSyncService } from './sync-webdav';
-import type { PinArrangeMode, PinWorkspaceSettings, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
+import type { WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
 import { fitToWorkArea, placeNear } from './position';
-import { SelectionCapture, frontmostApplicationId, ignoresApplication } from './selection';
+import { SelectionCapture } from './selection';
 import { WindowMotion } from './motion';
 import { initializeWindowPresence, setWindowPresence } from './window-presence';
 import { validMemorySettings, type MemorySettings } from '../shared/memory';
@@ -32,10 +31,14 @@ import { NotchIsland } from './island';
 import { TaskManager } from './tasks';
 import { readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
 import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
-import { canonicalShortcut, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type GlobalActionId, type EditorShortcutMap, type IgnoredAppRule } from '../shared/shortcuts';
+import { validateEditorShortcuts, type GlobalActionId, type EditorShortcutMap, type IgnoredAppRule } from '../shared/shortcuts';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
 import type { CaptureDelay, EfficiencyCaptureMode } from '../shared/capture-efficiency';
-import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope, DesktopAPI } from '../shared/contracts';
+import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope } from '../shared/contracts';
+import { RecordingPanel } from './recording-panel';
+import { ActionShortcuts } from './action-shortcuts';
+import { installCaptureLibraryIPC } from './capture-library';
+import { result } from './ipc';
 
 app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
@@ -62,8 +65,8 @@ let fontsDir: string;
 let images: Images;
 let screenshots: CaptureManager;
 let recording: RecordingManager | undefined;
-let recordingWindow: BrowserWindow | null = null;
-let recordingWindowReady: Promise<void> | null = null;
+let recordingPanel: RecordingPanel;
+let actionShortcuts: ActionShortcuts;
 let webdav: WebDavSyncService;
 let media: MediaWindow;
 let intelligence: IntelligenceService;
@@ -98,6 +101,7 @@ function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send('shell:changed', snapshot());
+  const recordingWindow = recordingPanel?.window;
   if (recordingWindow && !recordingWindow.isDestroyed()) recordingWindow.webContents.send('shell:changed', snapshot());
   actionBar?.update(state.presets, false, state.settings);
   island?.updateSettings(state.settings);
@@ -223,62 +227,6 @@ function selectTask(id: string) {
   closePalette(false); state.settingsOpen = false; state.inputOpen = false;
   tasks.select(id); layout(); showWindow(); publish();
 }
-function ownsRecordingPanel(event: IpcMainInvokeEvent) {
-  return !!recordingWindow && !recordingWindow.isDestroyed() && event.sender === recordingWindow.webContents && event.senderFrame === recordingWindow.webContents.mainFrame;
-}
-function layoutRecordingPanel(session: RecordingSessionState | null) {
-  if (!recordingWindow || recordingWindow.isDestroyed()) return;
-  const live = session && ['countdown', 'recording', 'paused'].includes(session.status);
-  const [width, height] = live ? [720, 200] : session?.status === 'review' ? [680, 680] : [520, 350];
-  const old = recordingWindow.getBounds(), area = screen.getDisplayMatching(old).workArea;
-  if(old.width!==width||old.height!==height)recordingWindow.setBounds(fitToWorkArea({ ...old, width, height }, area));
-}
-async function showRecordingPanel() {
-  if (quitting) return;
-  if (!recordingWindow || recordingWindow.isDestroyed()) {
-    const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
-    const panel = new BrowserWindow({ ...fitToWorkArea({ x: area.x + area.width - 540, y: area.y + 28, width: 520, height: 350 }, area), frame: false, show: false, resizable: false, fullscreenable: false, alwaysOnTop: true, backgroundColor: '#FAF9F5', title: 'Lasso 屏幕录制', webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
-    recordingWindow = panel;
-    panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    panel.webContents.on('will-navigate', event => event.preventDefault());
-    panel.on('close', event => { if (!quitting) { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });
-    panel.on('closed', () => { if (recordingWindow === panel) { recordingWindow = null; recordingWindowReady = null; } });
-    panel.webContents.on('before-input-event', (event, input) => { if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });
-    recordingWindowReady = panel.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'recording' } }).catch(error => { panel.destroy(); throw error; });
-  }
-  await recordingWindowReady;
-  if (!recordingWindow || recordingWindow.isDestroyed() || quitting) return;
-  layoutRecordingPanel(recording?.state() ?? null); recordingWindow.showInactive();
-}
-async function closeRecordingPanel() {
-  const panel = recordingWindow;
-  const result = await actRecording({ type: 'cancel' });
-  if (!result.error && panel && !panel.isDestroyed()) panel.destroy();
-}
-async function actRecording(action:RecordingAction){
-  if(!recording)return {state:null,error:'录制尚未就绪'};
-  if(action?.type==='cancel')screenshots.cancelRecordingSelection();
-  if(action?.type==='start')recordingWindow?.hide();
-  const result=await recording.action(action);
-  if(result.error){state.notice=result.error;layout();publish();}
-  if(action?.type==='start' && !quitting)await showRecordingPanel();
-  return result;
-}
-function recordingTrayItems():Electron.MenuItemConstructorOptions[]{
-  const session=recording?.state(),run=(action:RecordingAction)=>()=>{void actRecording(action);};
-  if(!session)return [{label:'打开录制面板…',click:()=>{void showRecordingPanel();}},...(['rect','window','screen'] as const).map(mode=>({label:{rect:'区域录制…',window:'窗口录制…',screen:'全屏录制'}[mode],enabled:!!recording&&!screenshots?.active,click:run({type:'start',mode})}))];
-  if(session.status==='recoverable')return [{label:'恢复未完成录制',click:run({type:'recover'})},{label:'删除未完成录制',click:run({type:'discard-recovery'})}];
-  if(session.status==='review')return [
-    ...(['mp4','gif','webp'] as RecordingFormat[]).map(format=>({label:format.toUpperCase(),submenu:(['save','quick-save','copy-file'] as const).map(action=>({label:{save:'保存…','quick-save':'快速保存','copy-file':'复制文件'}[action],click:run({type:'export',format,action})}))})),
-    {label:'动态贴图',click:run({type:'export',format:'gif',action:'pin'})},
-    {label:'结束本次录制',click:run({type:'cancel'})}
-  ];
-  return [
-    ...(session.status==='recording'?[{label:'暂停录制',click:run({type:'pause'})}]:session.status==='paused'?[{label:'继续录制',click:run({type:'resume'})}]:[]),
-    {label:'停止录制',enabled:session.frameCount>0,click:run({type:'stop'})},
-    {label:'取消录制',click:run({type:'cancel'})}
-  ];
-}
 function updateTray() {
   const capturePending=Boolean(screenshots&&screenshots.efficiency.state.phase!=='idle');
   tray.setContextMenu(Menu.buildFromTemplate([
@@ -292,7 +240,7 @@ function updateTray() {
     { label: captureModeLabels.rect, enabled:!capturePending, accelerator: state.settings.actionShortcuts.rect || undefined, click: () => void startScreenshot('rect') },
     { label: captureModeLabels.area, enabled:!capturePending, accelerator: state.settings.actionShortcuts.area || undefined, click: () => void startScreenshot('area') },
     { label:'自定义截图…',accelerator:state.settings.actionShortcuts['custom-capture']||undefined,click:()=>openCustomCapture() },
-    { label: '录制', submenu:recordingTrayItems() },
+    { label: '录制', submenu:recordingPanel.trayItems() },
     { label: '更多截图方式', submenu: [
       ...captureModes.filter(mode => mode !== 'area' && mode !== 'rect').map(mode => ({ label: captureModeLabels[mode], enabled:!capturePending, accelerator: state.settings.actionShortcuts[mode] || undefined, click: () => void startScreenshot(mode) })),
       {type:'separator'},
@@ -322,7 +270,6 @@ function updateTray() {
     { label: '退出 Lasso', click: requestQuit }
   ]));
 }
-const registeredActions = new Map<GlobalActionId, string>();
 async function runGlobalAction(action: GlobalActionId) {
   if (captureModes.includes(action as CaptureMode)) return startScreenshot(action as CaptureMode);
   if (action === 'open-launcher') { clearSelection(); capture?.current(); showWindow(); if (lastSelection) await openPalette('all'); }
@@ -331,31 +278,6 @@ async function runGlobalAction(action: GlobalActionId) {
   else if (action === 'scroll-capture') await startScreenshot('area', 0, true);
   else if (action.startsWith('delay-')) await startScreenshot('area', Number(action.slice(6, -1)) as CaptureDelay);
   else if (action === 'pin-clipboard') { capture.suppress(); await screenshots.pins.pinClipboard(); }
-}
-function registerActionShortcut(action: GlobalActionId, shortcut: string): string | null {
-  if (!shortcut) return null;
-  try {
-    return globalShortcut.register(shortcut, () => {
-      void (async () => {
-        const rules = state.settings.ignoredApps;
-        if (rules.some(rule => rule.enabled && rule.scopes.includes('shortcuts')) && ignoresApplication(rules, frontmostApplicationId(), 'shortcuts')) return;
-        await runGlobalAction(action);
-      })().catch(error => { state.notice = (error as Error).message; layout(); publish(); });
-    }) ? null : `${shortcut} 已被占用，请换一组快捷键。`;
-  } catch { return '快捷键格式无效。'; }
-}
-function configureActionShortcuts(settings: Settings): string[] {
-  for(const shortcut of registeredActions.values())globalShortcut.unregister(shortcut);
-  registeredActions.clear();state.shortcutError=null;
-  const conflicts:string[]=[],keys=new Set<string>();
-  for(const action of globalActionIds){
-    const shortcut=settings.actionShortcuts[action]||'',key=canonicalShortcut(shortcut);
-    const error=!isValidShortcut(shortcut)?'快捷键格式无效':key==='alt+space'?'Option+Space 已留给 Raycast':key&&keys.has(key)?'快捷键与其他动作重复':registerActionShortcut(action,shortcut);
-    if(key)keys.add(key);
-    if(error){conflicts.push(`${globalActionLabels[action]}：${error}`);if(action==='open-launcher')state.shortcutError=error;}
-    else if(shortcut)registeredActions.set(action,shortcut);
-  }
-  return conflicts;
 }
 function persistSettings(next: Settings) {
   const changed=JSON.stringify(next)!==JSON.stringify(state.settings);
@@ -370,31 +292,12 @@ function persistPresets(next: Preset[]) {
 }
 function applyImportedSettings(next: Settings) {
   validateScreenshotSettings(next.screenshot,screenshots.supportedLanguages());
-  const previous=state.settings,conflicts=configureActionShortcuts(next);
-  if(conflicts.length){configureActionShortcuts(previous);throw Error(conflicts.join('；'));}
-  try{intelligence.configure(next.vision);persistSettings(next);}catch(error){intelligence.configure(previous.vision);configureActionShortcuts(previous);throw error;}
+  const previous=state.settings,conflicts=actionShortcuts.configure(next);
+  if(conflicts.length){actionShortcuts.configure(previous);throw Error(conflicts.join('；'));}
+  try{intelligence.configure(next.vision);persistSettings(next);}catch(error){intelligence.configure(previous.vision);actionShortcuts.configure(previous);throw error;}
   actionBar.hide();clearSelection();capture.configure(next);screenshots.memoryChanged();tasks.memoryChanged();
   void screenshots.preferencesChanged().catch(error=>{state.notice=(error as Error).message;publish();});
   tasks.warmPreferred();updateTray();layout();publish();
-}
-function saveActionShortcut(action: GlobalActionId, shortcut: string) {
-  if (!globalActionIds.includes(action)) return { error: '未知的全局动作' };
-  if (!isValidShortcut(shortcut)) return { error: '支持 F1–F24 单键，其他按键请搭配修饰键；留空则取消绑定。' };
-  const key = canonicalShortcut(shortcut);
-  if (key === 'alt+space') return { error: 'Option+Space 已留给 Raycast，请选择其他快捷键。' };
-  const conflict = globalActionIds.find(id => id !== action && key && canonicalShortcut(state.settings.actionShortcuts[id] || '') === key);
-  if (conflict) return { error: `已用于「${globalActionLabels[conflict]}」。` };
-  const current = registeredActions.get(action), changed = !current || canonicalShortcut(current) !== key;
-  if (changed) { const error = registerActionShortcut(action, shortcut); if (error) return { error }; }
-  const next = { ...state.settings, actionShortcuts: { ...state.settings.actionShortcuts, [action]: shortcut },
-    shortcut: action === 'open-launcher' ? shortcut : state.settings.shortcut,
-    captureShortcuts: captureModes.includes(action as CaptureMode) ? { ...state.settings.captureShortcuts, [action]: shortcut } : state.settings.captureShortcuts };
-  try { persistSettings(next); }
-  catch (error) { if (changed && shortcut) globalShortcut.unregister(shortcut); return { error: (error as Error).message }; }
-  if (changed && current) globalShortcut.unregister(current);
-  if (shortcut) registeredActions.set(action, shortcut); else registeredActions.delete(action);
-  if (action === 'open-launcher') state.shortcutError = null;
-  updateTray(); publish(); return { error: null };
 }
 async function startScreenshot(mode: EfficiencyCaptureMode,delay:CaptureDelay=0,scroll=false) {
   if(screenshots.efficiency.state.phase!=='idle')return;
@@ -413,9 +316,6 @@ function assertLocal(event: IpcMainInvokeEvent) {
   if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
     throw new Error('只有本地窗口可以调用应用操作');
   }
-}
-function assertPinWorkspace(event: IpcMainInvokeEvent) {
-  if (!screenshots.pins.owns(event)) assertLocal(event);
 }
 function clearSelection() {
   if (!lastSelection) return;
@@ -527,10 +427,6 @@ function removeImage(taskId?: string) {
 }
 
 function installIPC() {
-  const assertRecording=(event:IpcMainInvokeEvent)=>{if(!ownsRecordingPanel(event)&&!screenshots?.ownsRecording(event)&&!screenshots?.pins.owns(event))assertLocal(event);};
-  ipcMain.handle('shell:recording-panel',async (event,open:boolean)=>{if(!ownsRecordingPanel(event))assertLocal(event);if(typeof open!=='boolean')throw Error('录制窗口操作无效');if(open)await showRecordingPanel();else await closeRecordingPanel();});
-  ipcMain.handle('shell:recording-state',async event=>{assertRecording(event);await recording?.initialized();return recording?.state()??null;});
-  ipcMain.handle('shell:recording-action',(event,action:RecordingAction)=>{assertRecording(event);return actRecording(action);});
   ipcMain.handle('shell:app-icon', (event, bundleId: string) => { assertLocal(event); return applicationIcon(bundleId); });
   ipcMain.handle('shell:media-config', event => { assertLocal(event); return media.service.connection(); });
   ipcMain.handle('shell:vision-config', event => { assertLocal(event); return intelligence.connection(); });
@@ -550,17 +446,6 @@ function installIPC() {
   });
   ipcMain.handle('shell:image-presets', event => { assertLocal(event); return openPalette('images'); });
   ipcMain.handle('shell:external', (event, url: string) => { assertLocal(event); if (URL.canParse(url) && ['https:', 'http:'].includes(new URL(url).protocol)) return shell.openExternal(url); });
-  const result = async (action: () => unknown) => { try { await action(); return { error: null }; } catch (error) { return { error: (error as Error).message }; } };
-  ipcMain.handle('shell:capture-history',(event,query?:string)=>{assertLocal(event);if(query!==undefined&&typeof query!=='string')throw Error('历史搜索词无效');return screenshots.history.state(query);});
-  ipcMain.handle('shell:capture-history-act',(event,id:string,action:Parameters<DesktopAPI['actCaptureHistory']>[1])=>{assertLocal(event);return result(()=>screenshots.actCaptureHistory(id,action));});
-  ipcMain.handle('shell:capture-history-clear',event=>{assertLocal(event);return result(()=>screenshots.history.clear());});
-  ipcMain.handle('shell:pin-workspace',async event=>{assertPinWorkspace(event);await screenshots.pins.ready;return screenshots.pins.state();});
-  ipcMain.handle('shell:pin-workspace-save',(event,settings:PinWorkspaceSettings)=>{assertPinWorkspace(event);return result(()=>screenshots.pins.saveWorkspace(settings));});
-  ipcMain.handle('shell:pin-create',(event,input:Parameters<DesktopAPI['createPin']>[0])=>{assertPinWorkspace(event);return result(()=>screenshots.pins.create(input));});
-  ipcMain.handle('shell:pin-clipboard',event=>{assertPinWorkspace(event);return result(()=>runGlobalAction('pin-clipboard'));});
-  ipcMain.handle('shell:pin-reopen',event=>{assertPinWorkspace(event);return result(()=>screenshots.pins.reopenClosedPin());});
-  ipcMain.handle('shell:pins-arrange',(event,mode:PinArrangeMode,groupId?:string)=>{assertPinWorkspace(event);return result(async()=>{await screenshots.pins.ready;screenshots.pins.arrange(mode,groupId);});});
-  ipcMain.handle('shell:pin-act',(event,id:string,action:Parameters<DesktopAPI['actPin']>[1],groupId?:string)=>{assertPinWorkspace(event);return result(async()=>{await screenshots.pins.ready;await screenshots.pins.actPin(id,action,groupId);});});
   ipcMain.handle('shell:config-export',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.exportConfig();}finally{nativeDialogs--;}});
   ipcMain.handle('shell:config-import',async event=>{assertLocal(event);nativeDialogs++;try{return await webdav.importConfig();}finally{nativeDialogs--;}});
   ipcMain.handle('shell:webdav-config',event=>{assertLocal(event);return webdav.config();});
@@ -675,7 +560,7 @@ function installIPC() {
     return { error: null };
   });
   ipcMain.handle('shell:preset-run', (event, id: string, options?: LaunchOptions) => { assertLocal(event); return runPreset(id, options?.imageId ? null : lastSelection, options); });
-  ipcMain.handle('shell:state', event => { if(!ownsRecordingPanel(event))assertLocal(event); return snapshot(); });
+  ipcMain.handle('shell:state', event => { if(!recordingPanel.owns(event))assertLocal(event); return snapshot(); });
   ipcMain.handle('shell:task-select', (event, id: string) => { assertLocal(event); selectTask(id); });
   ipcMain.handle('shell:task-close', (event, id: string) => { assertLocal(event); return tasks.close(id); });
   ipcMain.handle('shell:palette-open', (event, scope: PaletteScope) => { assertLocal(event); if (['all', 'tasks', 'new', 'images'].includes(scope)) return openPalette(scope); });
@@ -712,7 +597,6 @@ function installIPC() {
   ipcMain.handle('shell:custom-screenshot',async(event,r:CustomCaptureRequest)=>{assertLocal(event);try{const result=await screenshots.customCapture(r);if(result.status==='failed'||result.status==='reselect-required')return {error:result.error};state.customCaptureOpen=false;layout();publish();return {error:null};}catch(error){return {error:(error as Error).message};}});
   ipcMain.handle('shell:screenshot', async (event, mode: EfficiencyCaptureMode,delay:CaptureDelay=0) => { assertLocal(event); if ((mode==='repeat'||captureModes.includes(mode))&&[0,3,5,10].includes(delay)) await startScreenshot(mode,delay); });
   ipcMain.handle('shell:screenshot-cancel',event=>{assertLocal(event);screenshots.efficiency.cancel();});
-  ipcMain.handle('shell:action-shortcut', (event, action: GlobalActionId, shortcut: string) => { assertLocal(event); return saveActionShortcut(action, shortcut); });
   ipcMain.handle('shell:editor-shortcuts', (event, shortcuts: EditorShortcutMap) => {
     assertLocal(event); const error = validateEditorShortcuts(shortcuts); if (error) return { error };
     return result(() => saveSettings({ ...state.settings, editorShortcuts: shortcuts }));
@@ -802,6 +686,9 @@ async function boot() {
     callback(allowed);
   });
   }
+  recordingPanel = new RecordingPanel({ quitting: () => quitting, recording: () => recording, screenshots: () => screenshots, notice: message => { state.notice = message; layout(); publish(); }, assertLocal });
+  actionShortcuts = new ActionShortcuts({ state: () => state, persistSettings, run: runGlobalAction, notice: message => { state.notice = message; layout(); publish(); }, changed: () => { updateTray(); publish(); }, assertLocal });
+  installCaptureLibraryIPC({ screenshots: () => screenshots, pinClipboard: () => runGlobalAction('pin-clipboard'), assertLocal });
   installIPC();
   const appIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets/lasso-icon.png'));
   if (!appIcon.isEmpty()) app.dock?.setIcon(appIcon);
@@ -877,13 +764,12 @@ async function boot() {
     subscribeInput:handlers=>capture.subscribeInput(handlers),
     exportOutput:async(output,action)=>{
       if(action==='pin'){await screenshots.pins.putAnimated(output);return null;}
-      nativeDialogs++;try{return await saveRecordingOutput(output,action,state.settings.screenshot,recordingWindow??win);}finally{nativeDialogs--;}
+      nativeDialogs++;try{return await saveRecordingOutput(output,action,state.settings.screenshot,recordingPanel.window??win);}finally{nativeDialogs--;}
     },
     onChange:session=>{
       if(win&&!win.isDestroyed())win.webContents.send('shell:recording-changed',session);
       screenshots.publishRecording(session);
-      if(recordingWindow&&!recordingWindow.isDestroyed()){recordingWindow.webContents.send('shell:recording-changed',session);layoutRecordingPanel(session);}
-      if(session&&!quitting&&!recordingWindow?.isVisible())void showRecordingPanel();
+      recordingPanel.changed(session);
       const trayState=session?`${session.status}:${session.frameCount>0}`:'idle';
       if(trayState!==recordingTrayState){recordingTrayState=trayState;if(tray&&!quitting)updateTray();}
     }
@@ -921,7 +807,7 @@ async function boot() {
     if(starting){actionBar.hide();setWindowPresence(win,true);motion.show(true);}
     if(next.error)showWindow();
   });
-  const conflicts = configureActionShortcuts(state.settings);
+  const conflicts = actionShortcuts.configure(state.settings);
   if (conflicts.length) state.notice = conflicts.join('；');
   state.settingsOpen = Boolean(state.shortcutError);
   capture.configure(state.settings);
