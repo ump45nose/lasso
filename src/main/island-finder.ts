@@ -1,6 +1,6 @@
 import { app, clipboard, ipcMain, screen } from 'electron';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { FinderPanelState, IslandState } from '../shared/contracts';
@@ -24,7 +24,7 @@ function defaultFinderFolder(): string {
   return app.getPath('desktop');
 }
 
-function queryFinderContext(): { folder: string; selection: string[] } {
+async function queryFinderContext(): Promise<{ folder: string; selection: string[] }> {
   const fallback = { folder: defaultFinderFolder(), selection: [] };
   if (process.env.LASSO_DATA_ROOT) return fallback;
   try {
@@ -45,7 +45,9 @@ function queryFinderContext(): { folder: string; selection: string[] } {
         return folderPath & "\\n" & (selPaths as string)
       end tell
     `;
-    const out = execFileSync('osascript', ['-e', script], { encoding: 'utf8', timeout: 900 }).trim();
+    const out = await new Promise<string>((resolve, reject) => {
+      execFile('osascript', ['-e', script], { encoding: 'utf8', timeout: 900 }, (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
+    });
     const lines = out.split('\n').map(s => s.trim()).filter(Boolean);
     return {
       folder: lines[0] || fallback.folder,
@@ -65,6 +67,7 @@ export interface FinderPanelDeps {
 export class FinderPanel {
   readonly window: BrowserWindow;
   private state: FinderPanelState;
+  private summonSeq = 0;
 
   constructor(fonts: IslandState['fonts'], private deps: FinderPanelDeps) {
     this.state = {
@@ -103,8 +106,10 @@ export class FinderPanel {
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'finder-panel' } });
   }
 
-  summon() {
-    const ctx = queryFinderContext();
+  async summon() {
+    const seq = ++this.summonSeq;
+    const ctx = await queryFinderContext();
+    if (seq !== this.summonSeq || this.window.isDestroyed()) return;
     this.state = { ...ctx, fonts: this.state.fonts };
     const cursor = screen.getCursorScreenPoint();
     const area = screen.getDisplayNearestPoint(cursor).workArea;

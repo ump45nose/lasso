@@ -161,7 +161,7 @@ export class NotchIsland {
         return;
       }
       if (action === 'open-finder-panel') {
-        this.finder.summon();
+        void this.finder.summon();
         return;
       }
       this.callbacks.onQuickAction(action);
@@ -196,7 +196,7 @@ export class NotchIsland {
       ['Control+Option+Down', () => this.snapWindow('center')],
       ['Control+Option+Return', () => this.snapWindow('coding-ai')],
       ['Control+Option+N', () => this.notes.toggleDrawer()],
-      ['Control+Option+F', () => this.finder.summon()]
+      ['Control+Option+F', () => void this.finder.summon()]
     ];
     for (const [acc, fn] of binds) {
       try {
