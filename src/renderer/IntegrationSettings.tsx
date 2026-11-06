@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AppWindow, Check } from 'lucide-react';
 import type { Settings, AppPrompt, LocalTarget } from '../shared/contracts';
 import { targetLabels } from '../shared/contracts';
+import { Switch } from './Switch';
 
 /** Both sections save local CLI paths and app rules together, so the save bar compares against the stored pair. */
 export function IntegrationSettings({ settings, section }: { settings: Settings; section: 'local' | 'apps' }) {
@@ -44,7 +45,7 @@ export function IntegrationSettings({ settings, section }: { settings: Settings;
               <input className="l-inline-input" aria-label="应用名称" placeholder="应用名称" value={rule.name} onChange={e => update(i, { name: e.target.value })} />
               <input className="l-inline-input mono" aria-label="应用 bundle ID" placeholder="com.example.app" value={rule.bundleId} spellCheck={false} onChange={e => update(i, { bundleId: e.target.value })} />
             </div>
-            <button className="l-switch" role="switch" aria-checked={rule.enabled} aria-label={'启用 ' + (rule.name || '这条规则')} onClick={() => update(i, { enabled: !rule.enabled })}><span /></button>
+            <Switch label={'启用 ' + (rule.name || '这条规则')} value={rule.enabled} change={() => update(i, { enabled: !rule.enabled })} />
           </div>
           <textarea className="l-textarea l-textarea-short" aria-label={`${rule.name} 的背景提示词`} placeholder="例如：选中文字来自工作沟通，请保留人物、日期和待办事项。" value={rule.prompt} onChange={e => update(i, { prompt: e.target.value })} />
           <button className="l-text-btn l-danger l-end" onClick={() => { setRules(rules.filter((_, n) => n !== i)); edited(); }}>删除</button>

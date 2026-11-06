@@ -3,12 +3,10 @@ import { Copy, Eye, EyeOff, Image, Lock, Pencil, Pin, RefreshCw, Search, Trash2,
 import type { CaptureHistoryPolicy, CaptureHistoryState, PinArrangeMode, PinGroup, PinWorkspaceSettings, PinWorkspaceState } from '../shared/history-sync';
 import { validatePinWorkspaceSettings } from '../shared/history-sync';
 import { Segmented } from './motion';
+import { Switch } from './Switch';
 
 const date = (value: number) => new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 const bytes = (value: number) => `${(value / 1024 / 1024).toFixed(1)} MB`;
-function Switch({ label, value, change, disabled }: { label: string; value: boolean; change: () => void; disabled?: boolean }) {
-  return <button className="l-switch" role="switch" aria-label={label} aria-checked={value} disabled={disabled} onClick={change}><span /></button>;
-}
 
 export function CaptureHistory({ policy, change, pinned }: { policy: CaptureHistoryPolicy; change: (value: CaptureHistoryPolicy) => void; pinned: () => void }) {
   const [query, setQuery] = useState(''), [history, setHistory] = useState<CaptureHistoryState | null>(null);

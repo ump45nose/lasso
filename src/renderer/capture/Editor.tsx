@@ -10,6 +10,7 @@ import { screenshotDefaults, screenshotOutputFormats, type AnnotationStyleMemory
 import { defaultEditorShortcuts, type EditorShortcutMap } from '../../shared/shortcuts';
 import { pixelRect } from '../../shared/capture';
 import { Glide, Segmented, spring } from '../motion';
+import { Switch } from '../Switch';
 import { AnnotationEditor, intersects, type Style, type Tool } from './annotations';
 import { editorActionForEvent, toolKeys } from './editor-shortcuts';
 import './text-layer.css';
@@ -238,7 +239,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   useEffect(()=>{if(!armed)return;const timer=setTimeout(()=>setArmed(null),3000);return()=>clearTimeout(timer);},[armed]);
   const reselect=()=>{if(editor?.count&&armed!=='reselect'){setArmed('reselect');return;}void window.screenshot.action('reselect').then(result=>{if(result.error)setError(result.error);}).catch(e=>setError(e.message));};
   const startScroll=async()=>{if(!editor||exporting.current||mutating.current)return;if(editor.count&&!scrollArmed){setScrollArmed(true);return;}exporting.current=true;setBusy(true);try{const result=await window.screenshot.startScroll(editor.crop);if(result.error)setError(result.error);}catch(e){setError((e as Error).message);}finally{exporting.current=false;if(alive.current){setBusy(false);setScrollArmed(false);}}};
-  const backgroundControl=<label className="ed-toggle"><span>文字背景衬底</span><button className="l-switch" role="switch" aria-label="文字背景衬底" aria-checked={selectedBackground??style.textBackground} disabled={busy} onClick={()=>changeStyle({textBackground:!(selectedBackground??style.textBackground)})}><span/></button></label>;
+  const backgroundControl=<label className="ed-toggle"><span>文字背景衬底</span><Switch label="文字背景衬底" value={selectedBackground??style.textBackground} disabled={busy} change={()=>changeStyle({textBackground:!(selectedBackground??style.textBackground)})}/></label>;
   const panelKind=adjustOpen?'adjust':['spotlight','magnifier','watermark','auto-mosaic','inpaint'].includes(tool)?tool:styled.includes(tool)?'style':selectedBackground!==null&&tool==='select'?'text-background':['redact','mosaic','blur'].includes(tool)?'privacy':tool==='crop'?'crop':null;
   const panel=panelKind==='adjust'?<>
       {([['旋转90°',<RotateCw/>,()=>editor?.adjust({turns:(editor.effects.turns+1)%4})],['水平翻转',<FlipHorizontal2/>,()=>editor?.adjust({flipX:!editor.effects.flipX})],['垂直翻转',<FlipVertical2/>,()=>editor?.adjust({flipY:!editor.effects.flipY})],['灰度',<Contrast/>,()=>editor?.adjust({grayscale:!editor.effects.grayscale})]] as [string,ReactNode,()=>void][]).map(([label,icon,run])=><button className="ed-text" aria-label={label} aria-pressed={label==='灰度'?editor?.effects.grayscale:label==='水平翻转'?editor?.effects.flipX:label==='垂直翻转'?editor?.effects.flipY:undefined} key={label} disabled={busy} onClick={run}>{icon}{label}</button>)}
@@ -265,7 +266,7 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
         <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void sendText()}><Send/>文字预设</button><button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>maskSame()}><Link2/>联动遮挡相同文字</button></motion.span>}</AnimatePresence>
       <AnimatePresence>{ocrOpen&&<motion.div className="ed-pop" initial={{opacity:0,y:-4,scale:.98}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,transition:{duration:.1}}} transition={spring}>
         <Segmented label="文字识别模式" value={ocrMode} onChange={mode=>changeOCR(mode,enhance)} options={[['text','正文'],['code','代码 / 网址']]}/>
-        <div className="ed-pop-row"><span>小字增强</span><button className="l-switch" role="switch" aria-checked={enhance} aria-label="小字增强" disabled={!ready||busy} onClick={()=>changeOCR(ocrMode,!enhance)}><span/></button></div>
+        <div className="ed-pop-row"><span>小字增强</span><Switch label="小字增强" value={enhance} disabled={!ready||busy} change={()=>changeOCR(ocrMode,!enhance)}/></div>
         <button className="ed-text" disabled={!ready||busy} onClick={()=>{setOCROpen(false);changeOCR(ocrMode,enhance,true);}}>重新识别</button>
       </motion.div>}</AnimatePresence>
     </motion.div>;

@@ -8,6 +8,7 @@ import { validateVisionConfig, type VisionServiceConfig } from '../shared/intell
 import { Segmented, SubNav, SubPane, collapse, useSubNav } from './motion';
 import type { RecordingSettings } from '../shared/recording';
 import { CaptureHistory, PinWorkspace } from './CaptureWorkspaceSettings';
+import { Switch } from './Switch';
 import './styles/screenshot-settings.css';
 const labels = { ...captureModeLabels, scroll: '滚动截图' };
 const subTabs = [
@@ -19,9 +20,6 @@ const subTabs = [
 ] as const;
 const names = new Intl.DisplayNames(['zh-CN'], { type: 'language' });
 const languageName = (code: string) => { try { return names.of(code) || code; } catch { return code; } };
-function Switch({ label, value, change }: { label: string; value: boolean; change: () => void }) {
-  return <button className="l-switch" role="switch" aria-label={label} aria-checked={value} onClick={change}><span /></button>;
-}
 function VisionSettings() {
   const [saved, setSaved] = useState<VisionServiceConfig | null>(null), [draft, setDraft] = useState<VisionServiceConfig | null>(null);
   const [credential, setCredential] = useState(''), [clear, setClear] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');

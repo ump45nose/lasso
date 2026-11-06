@@ -4,6 +4,7 @@ import { Copy, Download, ExternalLink, Pin, RotateCw, X } from 'lucide-react';
 import type { BarcodeItem, CaptureFrame, OCRLine } from '../../shared/capture';
 import { webURL, type IntelligenceKind, type IntelligenceResult, type TranslationBlock } from '../../shared/intelligence';
 import { Segmented, rise } from '../motion';
+import { Switch } from '../Switch';
 
 export type IntelligenceView = IntelligenceKind | 'barcode';
 const languages = [['简体中文', '中文'], ['English', '英文'], ['日本語', '日文'], ['한국어', '韩文']] as const;
@@ -87,7 +88,7 @@ export function IntelligencePanel({ id, revision, kind, barcodes, lines, frame, 
       </div></article>)}</div>}
     {result?.kind === 'translate' && <>
       <div className="ed-translation-list">{translation.map((block, index) => <article key={index}><div><small>原文</small><p>{block.original}</p></div><div><small>译文</small><p>{block.translated}</p></div></article>)}</div>
-      <label className="ed-intel-toggle"><span>图上译文覆盖 · 仅预览</span><button className="l-switch" role="switch" aria-label="图上译文覆盖" aria-checked={cover} disabled={!translation.some(block => block.box)} onClick={() => setCover(!cover)}><span /></button></label>
+      <label className="ed-intel-toggle"><span>图上译文覆盖 · 仅预览</span><Switch label="图上译文覆盖" value={cover} disabled={!translation.some(block => block.box)} change={() => setCover(!cover)} /></label>
       {!translation.some(block => block.box) && <p className="ed-intel-status">未匹配到文字位置，可查看对照或复制译文。</p>}
       <button className="l-btn" disabled={working || !result.translatedText?.trim()} onClick={() => void copy(result.translatedText!, '已复制全部译文')}><Copy />复制全部译文</button>
     </>}

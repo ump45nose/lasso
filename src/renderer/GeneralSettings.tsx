@@ -5,6 +5,7 @@ import type { WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from '../sh
 import { shortcutLabel } from './targets';
 import { editorActionIds, editorActionLabels, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type EditorActionId, type GlobalActionId, type IgnoredAppRule, type IgnoredAppScope } from '../shared/shortcuts';
 import { Segmented, SubNav, SubPane, useSubNav } from './motion';
+import { Switch } from './Switch';
 import './styles/screenshot-settings.css';
 
 export type GeneralSubTab = 'system' | 'shortcuts' | 'editor' | 'sync';
@@ -54,7 +55,7 @@ function ScriptSettings({ actions, save }: { actions: ScriptAction[]; save: (act
     <div className="l-set-row-head l-gap"><h3>JS 脚本动作</h3><button className="l-text-btn" disabled={busy} onClick={() => edit({ id: crypto.randomUUID(), name: '新脚本', enabled: true, code: 'return input.text.trim();' })}><Plus size={14} />新建脚本</button></div>
     <ul className="l-group">{actions.length ? actions.map(action => <li key={action.id}><button className="l-preset" aria-pressed={draft?.id === action.id} disabled={busy} onClick={() => edit(action)}><strong>{action.name}</strong><span>{action.enabled ? '已启用' : '已停用'}{draft?.id === action.id && dirty ? ' · 有未保存更改' : ''}</span></button></li>) : <li><p className="l-field-help">添加脚本来处理文字，运行结果可复制或贴到桌面。</p></li>}</ul>
     {draft && <fieldset className="l-script-editor" disabled={busy}>
-      <div className="l-row"><div className="l-field"><label htmlFor="script-name">脚本名称</label><input id="script-name" className="l-input" value={draft.name} maxLength={80} onChange={e => patch({ name: e.target.value })} /></div><span className="l-field-help">启用</span><button className="l-switch" role="switch" aria-label="启用脚本动作" aria-checked={draft.enabled} onClick={() => patch({ enabled: !draft.enabled })}><span /></button></div>
+      <div className="l-row"><div className="l-field"><label htmlFor="script-name">脚本名称</label><input id="script-name" className="l-input" value={draft.name} maxLength={80} onChange={e => patch({ name: e.target.value })} /></div><span className="l-field-help">启用</span><Switch label="启用脚本动作" value={draft.enabled} change={() => patch({ enabled: !draft.enabled })} /></div>
       <div className="l-field"><label htmlFor="script-code">JavaScript 代码</label><textarea id="script-code" className="l-textarea mono l-script-code" spellCheck={false} value={draft.code} onChange={e => patch({ code: e.target.value })} /><p className="l-field-help">{'读取 input.text、input.width、input.height、input.app，用 return 返回文字。'}</p></div>
       <div className="l-field"><label htmlFor="script-input">运行输入</label><textarea id="script-input" className="l-textarea l-textarea-short" value={input} placeholder="留空时读取剪贴板文字" onChange={e => { setInput(e.target.value); reset(); }} /></div>
       <div className="l-workspace-actions"><button className="l-btn small" disabled={!dirty} onClick={() => void run('save')}>保存脚本</button><button className="l-btn small primary" disabled={!draft.enabled} onClick={() => void run('run')}><Play size={14} />{dirty ? '保存并运行' : '运行并复制'}</button><button className="l-btn small" onClick={() => { setDraft(null); reset(); }}>{dirty ? '放弃更改' : '关闭编辑'}</button><button className="l-btn small danger" onClick={() => removing ? void run('delete') : setRemoving(true)}><Trash2 size={14} />{removing ? '确认删除' : '删除脚本'}</button>{removing && <button className="l-text-btn" onClick={() => setRemoving(false)}>取消删除</button>}</div>
@@ -82,7 +83,7 @@ function SystemAppearanceSettings({ settings }: { settings: ShellState['settings
     <fieldset className="l-general-controls" disabled={busy}>
       <div id="system-settings" className="l-set-row-head"><h3>系统与外观</h3><span>立即保存</span></div>
       <ul className="l-group">
-        {([['launchAtLogin', '开机自启', launchAtLogin], ['autoCheckUpdates', '自动检查更新', autoCheckUpdates]] as const).map(([key, label, checked]) => <li key={key}><span className="l-row-label">{label}</span><button className="l-switch" role="switch" aria-label={label} aria-checked={checked} onClick={() => void save({ [key]: !checked })}><span /></button></li>)}
+        {([['launchAtLogin', '开机自启', launchAtLogin], ['autoCheckUpdates', '自动检查更新', autoCheckUpdates]] as const).map(([key, label, checked]) => <li key={key}><span className="l-row-label">{label}</span><Switch label={label} value={checked} change={() => void save({ [key]: !checked })} /></li>)}
         <li className="l-shot-option"><span>主题</span><Segmented label="界面主题" value={themeMode} onChange={themeMode => void save({ themeMode })} options={ [['paper', '纸面'], ['system', '跟随系统']] } /></li>
       </ul>
     </fieldset>
@@ -191,9 +192,9 @@ function ConfigSyncSettings() {
     <section id="webdav-settings" className="l-set-section">
       <div className="l-set-row-head l-gap"><h3>飞牛 WebDAV 同步</h3><button className="l-text-btn" disabled={!!busy} onClick={() => void refresh().then(() => setError('')).catch(error => setError(String(error)))}><RefreshCw size={13} />刷新同步状态</button></div>
       {draft ? <ul className="l-group">
-        <li><div className="l-row-label"><span>启用飞牛 WebDAV</span><span>同步可迁移配置，密码仅保存在本机。</span></div><button className="l-switch" role="switch" aria-label="启用飞牛 WebDAV" aria-checked={draft.enabled} disabled={syncing} onClick={() => patch({ enabled: !draft.enabled })}><span /></button></li>
+        <li><div className="l-row-label"><span>启用飞牛 WebDAV</span><span>同步可迁移配置，密码仅保存在本机。</span></div><Switch label="启用飞牛 WebDAV" value={draft.enabled} disabled={syncing} change={() => patch({ enabled: !draft.enabled })} /></li>
         <li className="col">{([['url', '服务器地址', 'https://nas.example.com/webdav'], ['remotePath', '远端路径', 'Lasso/config.json'], ['username', '用户名', 'WebDAV 用户名']] as const).map(([key, label, placeholder]) => <div className="l-field" key={key}><label htmlFor={'webdav-' + key}>{label}</label><input id={'webdav-' + key} aria-label={label} className="l-input mono" autoComplete="off" placeholder={placeholder} value={draft[key]} disabled={syncing} onChange={e => patch({ [key]: e.target.value })} /></div>)}<div className="l-field"><label htmlFor="webdav-password">密码</label><input id="webdav-password" aria-label="WebDAV 密码" className="l-input" type="password" autoComplete="new-password" value={password} disabled={syncing || clearPassword} placeholder={config?.hasPassword ? '已保存密码；留空保持不变' : '输入 WebDAV 密码'} onChange={e => { setPassword(e.target.value); setNotice(''); setError(''); }} /><div className="l-workspace-actions"><span className="l-field-help">{clearPassword ? '保存后清除本机密码' : config?.hasPassword ? '本机已保存密码' : '尚未保存密码'}</span>{config?.hasPassword && <button className="l-text-btn" disabled={syncing} onClick={() => { setClearPassword(!clearPassword); setPassword(''); }}>{clearPassword ? '保留密码' : '清除已存密码'}</button>}</div></div></li>
-        <li><div className="l-row-label"><span>自动同步</span><span>配置变化后检查本机与远端，遇到冲突等待选择。</span></div><button className="l-switch" role="switch" aria-label="WebDAV 自动同步" aria-checked={draft.autoSync} disabled={syncing} onClick={() => patch({ autoSync: !draft.autoSync })}><span /></button></li>
+        <li><div className="l-row-label"><span>自动同步</span><span>配置变化后检查本机与远端，遇到冲突等待选择。</span></div><Switch label="WebDAV 自动同步" value={draft.autoSync} disabled={syncing} change={() => patch({ autoSync: !draft.autoSync })} /></li>
       </ul> : <p className="l-field-help">正在读取 WebDAV 配置…</p>}
       {draft && <div className="l-workspace-actions"><button className="l-btn small primary" disabled={syncing || !dirty} onClick={() => void save()}>保存 WebDAV 配置</button>{dirty && <><button className="l-btn small" disabled={syncing} onClick={() => { if (config) setDraft(webdavInput(config)); setPassword(''); setClearPassword(false); setConfirm(null); }}>放弃更改</button><span className="l-field-help">请先保存，再同步配置。</span></>}</div>}
       <div className={'l-sync-status' + (config?.status === 'conflict' ? ' conflict' : '')} role="status"><span>{!config ? '正在读取同步状态…' : config.enabled ? syncLabels[config.status ?? 'idle'] : 'WebDAV 未启用'}</span>{config?.message && <p>{config.message}</p>}<span className="l-field-help">{config?.lastSyncedAt ? '上次同步：' + new Date(config.lastSyncedAt).toLocaleString('zh-CN') : '尚无成功同步记录'}</span></div>
@@ -253,7 +254,7 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
           <li className="col">
             <div className="l-row">
               <div className="l-row-label"><span>划词动作条</span><span className={'l-status' + (capture.status === 'error' ? ' error' : '')}><span className={'dot ' + captureDot} />{capture.message}</span></div>
-              <button className="l-switch" role="switch" aria-checked={settings.selectionEnabled} aria-label="划词动作条" onClick={() => void saveCapture({ selectionEnabled: !settings.selectionEnabled })}><span /></button>
+              <Switch label="划词动作条" value={settings.selectionEnabled} change={() => void saveCapture({ selectionEnabled: !settings.selectionEnabled })} />
             </div>
             {(capture.status === 'permission' || (capture.status !== 'active' && settings.selectionEnabled)) && <div className="l-row">
               {capture.status === 'permission' && <button className="l-btn small" onClick={() => void window.desktop.act('selection-permission')}>打开系统设置授权</button>}
@@ -261,7 +262,7 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
             </div>}
           </li>
           <li><div className="l-row-label"><span>允许模拟复制取词</span><span>只在辅助功能取不到文字时模拟 ⌘C，可能改动剪贴板。默认关闭。</span></div>
-            <button className="l-switch" role="switch" aria-checked={settings.clipboardFallback} aria-label="允许模拟复制取词" onClick={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })}><span /></button></li>
+            <Switch label="允许模拟复制取词" value={settings.clipboardFallback} change={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })} /></li>
         </ul>
         <div id="resident-suite" className="l-set-row-head l-gap"><h3>常驻桌面套件</h3><span>状态栏与全局热键</span></div>
         <ul className="l-group">
@@ -290,13 +291,13 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
         <div className="l-set-row-head l-gap"><h3>窗口与任务</h3></div>
         <ul className="l-group">
           <li><div className="l-row-label"><span>始终置顶</span><span>未置顶时，点击窗外会隐藏小窗；任务继续在后台运行。</span></div>
-            <button className="l-switch" role="switch" aria-checked={state.pinned} aria-label="始终置顶" onClick={() => void window.desktop.act('pin')}><span /></button></li>
+            <Switch label="始终置顶" value={state.pinned} change={() => void window.desktop.act('pin')} /></li>
           <li><div className="l-row-label"><span>{resident} 个驻留 · {released} 个已休眠</span><span>任务休眠后可按原链接或原会话恢复；生成中的任务和网页草稿保留。</span></div></li>
           <li><div className="l-row-label"><span>网页与账户</span><span>在小窗内登录 ChatGPT、Gemini 一次，以后保持登录。网页仍使用自己的模型、工具和会话。</span></div></li>
         </ul>
         <div id="memory-settings" className="l-set-row-head l-gap"><h3>内存</h3></div>
         <ul className="l-group">
-          <li><div className="l-row-label"><span>闲置休眠</span><span>隐藏或最小化后开始计时，返回时恢复；正在处理的操作保持运行。</span></div><button className="l-switch" role="switch" aria-checked={settings.memory.enabled} aria-label="闲置休眠" onClick={() => void saveMemory(undefined, !settings.memory.enabled)}><span /></button></li>
+          <li><div className="l-row-label"><span>闲置休眠</span><span>隐藏或最小化后开始计时，返回时恢复；正在处理的操作保持运行。</span></div><Switch label="闲置休眠" value={settings.memory.enabled} change={() => void saveMemory(undefined, !settings.memory.enabled)} /></li>
           <li className="col"><div className="l-field"><label htmlFor="memory-minutes">休眠时间（分钟）</label>
             <Segmented label="闲置休眠时间" value={String(settings.memory.idleMinutes)} options={[5,15,30,60].map(value => [String(value), String(value)] as const)} onChange={value => void saveMemory(Number(value))} />
             <div className="l-row"><input id="memory-minutes" className="l-input mono" type="number" min="1" max="1440" value={minutes} onChange={event => setMinutes(event.target.value)} /><button className="l-btn small" onClick={() => void saveMemory(Number(minutes))}>应用</button></div>
@@ -316,7 +317,7 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
         <div id="ignored-apps" className="l-set-row-head l-gap"><h3>忽略应用</h3><button className="l-text-btn" disabled={ignoredSaving} onClick={() => void addIgnored()}>选择忽略应用…</button></div>
         <p className="l-field-help">在这些应用中暂停所选功能。窗口候选只过滤截图可选窗口，修改后立即保存。</p>
         <ul className="l-group">{settings.ignoredApps.length ? settings.ignoredApps.map((rule, index) => <li className="col" key={rule.bundleId}>
-          <div className="l-row"><div className="l-row-label"><span>{rule.name}</span><span className="mono">{rule.bundleId}</span></div><button className="l-switch" role="switch" aria-label={'启用忽略 ' + rule.name} aria-checked={rule.enabled} disabled={ignoredSaving} onClick={() => updateIgnored(index, { enabled: !rule.enabled })}><span /></button><button className="l-icon" aria-label={'删除忽略应用 ' + rule.name} disabled={ignoredSaving} onClick={() => void saveIgnored(settings.ignoredApps.filter((_, i) => i !== index))}><X size={14} /></button></div>
+          <div className="l-row"><div className="l-row-label"><span>{rule.name}</span><span className="mono">{rule.bundleId}</span></div><Switch label={'启用忽略 ' + rule.name} value={rule.enabled} disabled={ignoredSaving} change={() => updateIgnored(index, { enabled: !rule.enabled })} /><button className="l-icon" aria-label={'删除忽略应用 ' + rule.name} disabled={ignoredSaving} onClick={() => void saveIgnored(settings.ignoredApps.filter((_, i) => i !== index))}><X size={14} /></button></div>
           <div className="l-ignored-scopes">{ignoredScopes.map(([scope, label]) => <button key={scope} className="l-btn small" role="checkbox" aria-label={`${rule.name}：忽略${label}`} aria-checked={rule.scopes.includes(scope)} disabled={ignoredSaving} onClick={() => updateIgnored(index, { scopes: rule.scopes.includes(scope) ? rule.scopes.filter(value => value !== scope) : [...rule.scopes, scope] })}><Check size={14} aria-hidden="true" />{label}</button>)}</div>
         </li>) : <li><p className="l-field-help">尚未添加忽略应用</p></li>}</ul>
         {ignoredError && <p className="l-field-help error" role="alert">{ignoredError}</p>}

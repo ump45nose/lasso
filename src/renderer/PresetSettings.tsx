@@ -9,6 +9,7 @@ import { presetTargetLabels as targetLabels } from '../shared/contracts';
 import type { Preset } from '../shared/contracts';
 import { targets } from './targets';
 import { Segmented, rise, spring } from './motion';
+import { Switch } from './Switch';
 
 const BAR_SIZE = 4;
 const preview = (template: string) => template.replace(/\s+/g, ' ').split('{{selection}}');
@@ -36,7 +37,7 @@ export function PresetSettings({ presets }: { presets: Preset[] }) {
       <span>{preview(preset.template).map((part, i) => <Fragment key={i}>{i > 0 && <span className="l-placeholder-chip">选区</span>}{part}</Fragment>)}</span>
     </button>
     <span className="l-row-meta">{targetLabels[preset.target]} · {preset.mode === 'edit' ? '先编辑' : '直接发送'}</span>
-    <button className="l-switch" role="switch" aria-checked={preset.enabled} aria-label={'启用 ' + preset.name} onClick={() => void save(presets.map(p => p.id === preset.id ? { ...p, enabled: !p.enabled } : p))}><span /></button>
+    <Switch label={'启用 ' + preset.name} value={preset.enabled} change={() => void save(presets.map(p => p.id === preset.id ? { ...p, enabled: !p.enabled } : p))} />
   </motion.li>;
   return <AnimatePresence mode="wait" initial={false}>{editing ? <motion.div key={editing.id} className="l-view" {...rise}><PresetEditor key={editing.id} preset={editing} isNew={!presets.some(p => p.id === editing.id)} back={() => setEditing(null)}
     save={preset => save(presets.some(p => p.id === preset.id) ? presets.map(p => p.id === preset.id ? preset : p) : [...presets, preset])}
@@ -88,8 +89,8 @@ function PresetEditor({ preset, isNew, save, remove, back, error }: { preset: Pr
       <div className="l-field"><span className="l-field-label">执行方式</span>
         <Segmented label="执行方式" value={draft.mode} onChange={mode => set({ mode })} options={[['edit', '先填入，再编辑'], ['send', '填入后直接发送']]} /></div>
       <ul className="l-group">
-        <li><div className="l-row-label"><span>需要内容</span><span>没有选中文字或图片时，这个预设不可用</span></div><button className="l-switch" role="switch" aria-checked={draft.needsSelection} aria-label="需要内容" onClick={() => set({ needsSelection: !draft.needsSelection })}><span /></button></li>
-        <li><div className="l-row-label"><span>启用</span><span>停用后不出现在动作条和指令面板</span></div><button className="l-switch" role="switch" aria-checked={draft.enabled} aria-label="启用预设" onClick={() => set({ enabled: !draft.enabled })}><span /></button></li>
+        <li><div className="l-row-label"><span>需要内容</span><span>没有选中文字或图片时，这个预设不可用</span></div><Switch label="需要内容" value={draft.needsSelection} change={() => set({ needsSelection: !draft.needsSelection })} /></li>
+        <li><div className="l-row-label"><span>启用</span><span>停用后不出现在动作条和指令面板</span></div><Switch label="启用预设" value={draft.enabled} change={() => set({ enabled: !draft.enabled })} /></li>
       </ul>
       {!isNew && <button className="l-btn danger l-quit" onClick={() => confirm === 'delete' ? void remove(preset.id) : setConfirm('delete')}><Trash2 size={14} />{confirm === 'delete' ? `再点一次删除「${preset.name}」` : '删除预设'}</button>}
     </div>
