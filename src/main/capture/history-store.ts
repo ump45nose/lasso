@@ -7,7 +7,7 @@ import { validateAnnotations, type PinnedDocument } from './document';
 import { writeFileAtomic } from '../files';
 
 type Entry = Omit<CaptureHistoryItem, 'thumbnailDataUrl'> & { storage: string };
-interface HistoryMeta { id?: string; captureKind?: string; ocrSnippet?: string; createdAt?: number }
+interface HistoryMeta { id?: string; captureKind?: string; ocrSnippet?: string }
 const validId = (id: unknown): id is string => typeof id === 'string' && /^[\w-]{1,128}$/.test(id);
 
 /** Immutable image revisions become visible together through one atomic index replacement. */
@@ -57,8 +57,7 @@ export class CaptureHistoryStore {
     const { width, height } = document.image.getSize(), ratio = Math.min(1, 240 / width, 160 / height);
     const files = { 'source.png': document.source.toPNG(), 'result.png': document.image.toPNG(), 'annotations.json': Buffer.from(JSON.stringify(annotations) + '\n'), 'thumbnail.png': document.image.resize({ width: Math.max(1, Math.round(width * ratio)), height: Math.max(1, Math.round(height * ratio)) }).toPNG() };
     const now = Date.now(), previous = this.entries.find(item => item.id === id);
-    const item: Entry = { id, storage, createdAt: previous?.createdAt ?? meta.createdAt ?? now, width, height, byteSize: Object.values(files).reduce((sum, data) => sum + data.length, 0), captureKind: meta.captureKind ?? 'rect', ocrSnippet: (meta.ocrSnippet ?? '').slice(0, 2000), hasAnnotations: annotations.objects.length > 0 || annotations.privacy.length > 0, pixelScale: document.pixelScale };
-    if (!Number.isFinite(item.createdAt)) throw Error('截图历史时间无效');
+    const item: Entry = { id, storage, createdAt: previous?.createdAt ?? now, width, height, byteSize: Object.values(files).reduce((sum, data) => sum + data.length, 0), captureKind: meta.captureKind ?? 'rect', ocrSnippet: (meta.ocrSnippet ?? '').slice(0, 2000), hasAnnotations: annotations.objects.length > 0 || annotations.privacy.length > 0, pixelScale: document.pixelScale };
     const pending = join(this.directory, storage + '.tmp'), complete = join(this.directory, storage);
     mkdirSync(pending, { mode: 0o700 });
     try {

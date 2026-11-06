@@ -59,7 +59,7 @@ export class IntelligenceService {
     const hints = lines.map((line, lineIndex) => ({ lineIndex, text: line.text, box: { x: line.x, y: line.y, width: line.width, height: line.height } }));
     if (JSON.stringify(hints).length > 500000) throw Error('OCR 辅助文字过长');
     const schema = input.kind === 'translate'
-      ? 'Translate into the requested targetLanguage. Return {"blocks":[{"original":"source text","translated":"translation","lineIndex":0}],"sourceText":"all source text","translatedText":"all translation"}. Match each block to OCR lineIndex when available; otherwise omit lineIndex.'
+      ? 'Translate into the requested targetLanguage. Return {"blocks":[{"original":"source text","translated":"translation","lineIndex":0}]}. Match each block to OCR lineIndex when available; otherwise omit lineIndex.'
       : input.kind === 'table' ? 'Extract the complete table in reading order. Return {"table":[["cell text"]]}. Every cell must be a string. Preserve empty cells. Flatten merged cells with empty covered cells.'
       : 'Extract only the mathematical formula as LaTeX. Return {"latex":"LaTeX without dollar delimiters or document wrappers"}.';
     const endpoint = baseURL.replace(/\/+$/, '') + (baseURL.endsWith('/v1') ? '/' : '/v1/') + 'chat/completions';
