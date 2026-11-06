@@ -13,8 +13,7 @@ export interface MediaServiceAdapters {
   /** The host supplies Electron safeStorage; no credential crosses into the renderer. */
   secrets: { available(): boolean; encrypt(value: string): Buffer; decrypt(value: Buffer): string };
   normalizeImage(buffer: Buffer): NormalizedMediaImage;
-  fetch?: typeof fetch;
-  changed?: (state: MediaServiceState) => void;
+  changed: (state: MediaServiceState) => void;
 }
 type SavedConfig = Omit<MediaConfig, 'hasCredential'> & { schemaVersion: 2; credential?: string };
 interface SavedMedia { version: 1; jobs: MediaJob[]; references: MediaReference[]; referenceId: string | null }
@@ -29,10 +28,8 @@ export class MediaService {
   private referenceId: string | null = null;
   private config: SavedConfig = { schemaVersion: 2, baseURL: '' };
   private active: Promise<void> | null = null;
-  private readonly request: typeof fetch;
 
   constructor(private directory: string, private adapters: MediaServiceAdapters) {
-    this.request = adapters.fetch || fetch;
     mkdirSync(join(directory, 'images'), { recursive: true, mode: 0o700 });
     const configPath = join(directory, 'config.json');
     if (existsSync(configPath)) {
@@ -329,7 +326,7 @@ export class MediaService {
     }
   }
   private async fetchOnce(url: string, init: RequestInit, stage = '图片请求'): Promise<Response> {
-    try { return await this.request(url, { ...init, redirect: 'error' }); }
+    try { return await fetch(url, { ...init, redirect: 'error' }); }
     catch { throw Error(stage === '下载图片' ? '下载图片连接失败或超时；生成请求已完成，未重新生成' : '图片服务连接失败或等待超时；请求结果未知，未自动重试，上游可能仍在处理'); }
   }
   private async responseError(stage: string, response: Response, config: SavedConfig): Promise<Error> {
@@ -390,5 +387,5 @@ export class MediaService {
       if (existsSync(this.imagePath(id))) unlinkSync(this.imagePath(id));
     }
   }
-  private publish(): MediaServiceState { const snapshot = this.snapshot(); this.adapters.changed?.(snapshot); return snapshot; }
+  private publish(): MediaServiceState { const snapshot = this.snapshot(); this.adapters.changed(snapshot); return snapshot; }
 }

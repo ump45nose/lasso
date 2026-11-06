@@ -15,7 +15,7 @@ export interface ActionBarFastCallbacks {
   stream(input: { model?: string; prompt: string; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
   paste(): void;
   pin(image: NativeImage): Promise<void>;
-  toast?(text: string, badge?: string): void;
+  toast(text: string, badge?: string): void;
   appPrompts(): AppPrompt[];
 }
 
@@ -37,7 +37,7 @@ export class ActionBar {
   constructor(
     private run: (id: string, selection: SelectionContext) => Promise<void>,
     private settings: () => void,
-    private fast?: ActionBarFastCallbacks
+    private fast: ActionBarFastCallbacks
   ) {
     this.window = new BrowserWindow({
       width: this.width + SIDE * 2, height: HEIGHT, frame: false, show: false, resizable: false, movable: false,
@@ -58,7 +58,7 @@ export class ActionBar {
       check(event);
       if (!this.selection || this.busy) return;
       const preset = this.presets.find(p => p.id === id && p.enabled);
-      if (preset && preset.target === 'api' && preset.kind !== 'image' && this.fast) {
+      if (preset && preset.target === 'api' && preset.kind !== 'image') {
         await this.startFastCard(preset, this.selection, 'auto');
         return;
       }
@@ -94,7 +94,7 @@ export class ActionBar {
         clipboard.writeText(text);
         const ms = this.fastCard?.firstTokenMs;
         this.hide();
-        this.fast?.toast?.('已复制结果到剪贴板', ms ? `${ms}ms` : undefined);
+        this.fast.toast('已复制结果到剪贴板', ms ? `${ms}ms` : undefined);
       }
     });
     ipcMain.handle('bar:fast-replace', async (event, text: string) => {
@@ -104,8 +104,8 @@ export class ActionBar {
         await Promise.resolve(clipboard.writeText(text));
         this.hide(true);
         setTimeout(() => {
-          this.fast?.paste();
-          this.fast?.toast?.('已替换选中文本', '↵');
+          this.fast.paste();
+          this.fast.toast('已替换选中文本', '↵');
           setTimeout(() => {
             void Promise.resolve(clipboard.readText()).then(current => {
               if (current === text) void Promise.resolve(clipboard.writeText(previous));
@@ -116,7 +116,7 @@ export class ActionBar {
     });
     ipcMain.handle('bar:fast-pin', async (event, text: string) => {
       check(event);
-      if (!this.fast || typeof text !== 'string' || !text.trim()) return;
+      if (typeof text !== 'string' || !text.trim()) return;
       const b = this.window.getBounds();
       const cardY = this.layout.menu === 'above' ? Math.max(0, b.height - (TIP + BAR + BAR_MENU.gap) - this.fastCardHeight) : TIP + BAR + BAR_MENU.gap;
       const rect = { x: SIDE, y: Math.max(0, cardY), width: Math.min(FAST_WIDTH, b.width - SIDE * 2), height: Math.min(this.fastCardHeight, b.height - cardY) };
@@ -124,7 +124,7 @@ export class ActionBar {
       this.hide();
       if (!image.isEmpty()) {
         await this.fast.pin(image);
-        this.fast.toast?.('已钉为桌面贴图', 'Pin');
+        this.fast.toast('已钉为桌面贴图', 'Pin');
       }
     });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'action-bar' } });
@@ -154,7 +154,6 @@ export class ActionBar {
 
   /** Opens the inline streaming card directly attached to the action bar (or summons the bar near cursor for OCR/palette runs). */
   async startFastCard(preset: Preset, selection: SelectionContext, targetLang: 'auto' | 'zh' | 'en' = 'auto') {
-    if (!this.fast) return;
     this.closeFast();
     this.menuOpen = false;
     this.selection = selection;

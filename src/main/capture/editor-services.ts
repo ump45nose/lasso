@@ -32,8 +32,8 @@ export function validCrop(crop: CaptureRect | undefined, size: { width: number; 
   return crop;
 }
 /** Settings both hosts hand to the shared renderer Editor with each edit. */
-export const editorSettings = (settings: ScreenshotSettings, general: Pick<Settings, 'editorShortcuts' | 'toolbarTools' | 'mouseActions'> | undefined) =>
-  ({ annotationMemory: settings.annotationMemory, screenshotSettings: settings, editorShortcuts: general?.editorShortcuts, toolbarTools: general?.toolbarTools, mouseActions: general?.mouseActions });
+export const editorSettings = (settings: ScreenshotSettings, general: Pick<Settings, 'editorShortcuts' | 'toolbarTools' | 'mouseActions'>) =>
+  ({ annotationMemory: settings.annotationMemory, screenshotSettings: settings, editorShortcuts: general.editorShortcuts, toolbarTools: general.toolbarTools, mouseActions: general.mouseActions });
 const editorText = (value: unknown, message: string) => { if (typeof value !== 'string' || !value.trim() || value.length > 100000) throw Error(message); return value; };
 const message = (error: unknown) => (error as Error).message;
 

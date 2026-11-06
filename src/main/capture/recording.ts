@@ -17,14 +17,13 @@ export interface RecordingInputHandlers {
   error: (error: Error) => void;
 }
 export interface RecordingManagerOptions {
-  directory?: string; settings: () => RecordingSettings; media?: RecordingMedia;
-  prepareCapture?: (mode: RecordingMode, bounds?: CaptureRect) => Promise<{ bounds: CaptureRect; displayId: number }>;
+  settings: () => RecordingSettings;
+  prepareCapture: (mode: RecordingMode, bounds?: CaptureRect) => Promise<{ bounds: CaptureRect; displayId: number }>;
   captureFrame: (mode: RecordingMode, bounds: CaptureRect) => Promise<{ image: NativeImage; hostTimeMs: number }>;
-  releaseCapture?: () => Promise<void> | void;
-  subscribeInput?: (handlers: RecordingInputHandlers) => Promise<() => void>;
-  exportOutput?: (output: RecordingOutput, action: RecordingExportAction) => Promise<string | null>;
-  onChange?: (state: RecordingSessionState | null) => void;
-  now?: () => number; autoTick?: boolean;
+  releaseCapture: () => Promise<void> | void;
+  subscribeInput: (handlers: RecordingInputHandlers) => Promise<() => void>;
+  exportOutput: (output: RecordingOutput, action: RecordingExportAction) => Promise<string | null>;
+  onChange: (state: RecordingSessionState | null) => void;
 }
 interface StoredFrame { file: string; timestampMs: number }
 interface StoredSession { version: 1; state: RecordingSessionState; frames: StoredFrame[]; keys: KeystrokeCue[]; clicks: MouseClickCue[]; media?: RecordingMediaManifest }
@@ -44,9 +43,8 @@ const immediatelyBefore = (timestamp: number) => {
 /** Owns disk-backed frames, media and paired capture/input lifetimes. */
 export class RecordingManager {
   private session: StoredSession | null = null;
-  private readonly directory: string;
-  private readonly now: () => number;
-  private readonly media: RecordingMedia;
+  private readonly directory = join(app.getPath('userData'), 'recording-sessions');
+  private readonly media = new NativeRecordingMedia();
   private ready: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   private countdownUntil = 0;
@@ -64,21 +62,18 @@ export class RecordingManager {
   private generation = 0;
   private sessionGeneration = 0;
   constructor(private readonly options: RecordingManagerOptions) {
-    this.directory = options.directory ?? join(app.getPath('userData'), 'recording-sessions');
-    this.media = options.media ?? new NativeRecordingMedia();
-    this.now = options.now ?? (() => this.media.nowMs());
     this.ready = this.loadRecovery();
   }
   state(): RecordingSessionState | null { return this.session ? structuredClone(this.session.state) : null; }
   async initialized(): Promise<void> { await this.ready; }
   private path(id = this.session!.state.id) { return join(this.directory, id); }
-  private emit() { this.options.onChange?.(this.state()); }
+  private emit() { this.options.onChange(this.state()); }
   private isCurrent(generation: number) { return !this.disposed && generation === this.generation; }
   private assertCurrent(generation: number) {
     if (!this.isCurrent(generation)) throw Error(this.disposed ? '录制器已关闭' : '录制已取消');
   }
   private invalidate() { this.generation++; this.unschedule(); }
-  private duration() { return this.elapsed + (this.session?.state.status === 'recording' ? Math.max(0, this.now() - this.activeAt) : 0); }
+  private duration() { return this.elapsed + (this.session?.state.status === 'recording' ? Math.max(0, this.media.nowMs() - this.activeAt) : 0); }
   private async persist() {
     if (!this.session) return;
     const path = this.path(); await mkdir(path, { recursive: true });
@@ -117,7 +112,6 @@ export class RecordingManager {
     if (recovery && !this.disposed) { this.session = await this.readSession(recovery.id); this.session.state.status = 'recoverable'; this.emit(); }
   }
   private schedule() {
-    if (this.options.autoTick === false) return;
     this.timer = setInterval(() => { void this.tick().catch(error => console.warn('[recording]', String(error))); }, 1000 / this.session!.state.settings.fps);
   }
   private unschedule() { if (this.timer) clearInterval(this.timer); this.timer = undefined; }
@@ -143,7 +137,7 @@ export class RecordingManager {
     this.releaseInput = undefined;
     if (this.capturePrepared) {
       this.capturePrepared = false;
-      try { await this.options.releaseCapture?.(); } catch (error) { failure ??= error; }
+      try { await this.options.releaseCapture(); } catch (error) { failure ??= error; }
     }
     if (failure) throw failure;
   }
@@ -171,7 +165,7 @@ export class RecordingManager {
     const s = this.session.state;
     this.frameTask = (async () => {
       if (s.status === 'countdown') {
-        s.countdownLeft = Math.max(0, Math.ceil((this.countdownUntil - this.now()) / 1000));
+        s.countdownLeft = Math.max(0, Math.ceil((this.countdownUntil - this.media.nowMs()) / 1000));
         if (s.countdownLeft) { this.emit(); return; }
         const boundary = await this.media.begin(s.id);
         if (!this.isCurrent(generation) || s.status !== 'countdown') return;
@@ -236,7 +230,7 @@ export class RecordingManager {
       this.sessionGeneration = generation;
       this.capturePrepared = true;
       try {
-        const prepared = this.options.prepareCapture ? await this.options.prepareCapture(action.mode, action.bounds) : { bounds: action.bounds, displayId: 0 };
+        const prepared = await this.options.prepareCapture(action.mode, action.bounds);
         this.assertCurrent(generation);
         if (!validBounds(prepared.bounds)) throw Error('请先选择有效的录制范围');
         const state: RecordingSessionState = { id: `${Date.now()}-${randomUUID()}`, status: 'countdown', mode: action.mode,
@@ -246,13 +240,13 @@ export class RecordingManager {
         await this.persist(); this.assertCurrent(generation); this.mediaPrepared = true;
         await this.media.prepare({ sessionId: state.id, directory: this.path(), displayId: prepared.displayId, systemAudio: settings.systemAudio, microphone: settings.microphone, camera: settings.cameraOverlay });
         this.assertCurrent(generation);
-        if (settings.showKeystrokes || settings.showMouseClicks) this.releaseInput = await this.options.subscribeInput?.({ keystroke: cue => this.recordKeystroke(cue), mouseClick: cue => this.recordMouseClick(cue), error: error => { void this.interrupt(error); } });
+        if (settings.showKeystrokes || settings.showMouseClicks) this.releaseInput = await this.options.subscribeInput({ keystroke: cue => this.recordKeystroke(cue), mouseClick: cue => this.recordMouseClick(cue), error: error => { void this.interrupt(error); } });
         this.assertCurrent(generation);
         if (state.status !== 'countdown') {
           this.releaseInput?.(); this.releaseInput = undefined;
           throw Error(state.message || '录制准备已中断');
         }
-        this.countdownUntil = this.now() + settings.countdown * 1000;
+        this.countdownUntil = this.media.nowMs() + settings.countdown * 1000;
         this.schedule(); await this.tick(); this.assertCurrent(generation);
       } catch (error) {
         await this.frameTask?.catch(() => {}); await this.interruption;
@@ -296,7 +290,7 @@ export class RecordingManager {
             this.session.media = await this.media.snapshot(s.id);
             this.assertCurrent(generation);
             const latest = this.session.media.intervals.at(-1);
-            this.activeAt = latest?.hostStartMs ?? this.now(); s.status = 'recording';
+            this.activeAt = latest?.hostStartMs ?? this.media.nowMs(); s.status = 'recording';
             this.schedule(); await this.tick();
           } else {
             this.elapsed = this.duration(); s.status = 'paused';
@@ -324,7 +318,6 @@ export class RecordingManager {
         Object.assign(s, preview); s.trimStartMs = action.startMs; s.trimEndMs = action.endMs;
       } else if (action.type === 'export') {
         if (s.status !== 'review' || !recordingFormats.includes(action.format) || !['save', 'quick-save', 'copy-file', 'pin'].includes(action.action)) throw Error('当前不能导出录制');
-        if (!this.options.exportOutput) throw Error('录制输出尚未接入');
         path = await this.options.exportOutput(await this.output(action.format), action.action);
       }
       if (action.type !== 'camera') await this.persist();

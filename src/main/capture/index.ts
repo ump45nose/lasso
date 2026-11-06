@@ -29,7 +29,7 @@ import { setWindowPresence } from '../window-presence';
 import { applicationBundleIds, frontmostApplicationId, ignoresApplication } from '../selection';
 import { IdleSleep } from '../idle-sleep';
 import { fromMainFrame, result, sealLocal } from '../ipc';
-import { memoryDefaults, type MemorySettings } from '../../shared/memory';
+import type { MemorySettings } from '../../shared/memory';
 import type { IntelligenceService } from './intelligence';
 type WindowRect = CaptureRect & { pid: number; id: number };
 const bindDisplay=(display:Electron.Display):CaptureDisplayBinding=>({id:display.id,bounds:{...display.bounds},scaleFactor:display.scaleFactor,rotation:display.rotation});
@@ -115,7 +115,7 @@ export class CaptureManager {
       const acquired=await this.start(request.mode==='repeat'?'area':request.mode,request);
       return request.signal.aborted||!acquired?null:{};
     }
-  },undefined,area=>{this.regionsStore?.remember(area);if(this.customRequest?.presetId)this.regionsStore?.place(this.customRequest.presetId,area);});
+  },area=>{this.regionsStore?.remember(area);if(this.customRequest?.presetId)this.regionsStore?.place(this.customRequest.presetId,area);});
   private displayAdded=()=>{this.native.invalidate();};
   private displayRemoved=(_event:Electron.Event,display:Electron.Display)=>{if(display.id===this.displayId)this.displayChanged();else this.native.invalidate();};
   private displayMetrics=(_event:Electron.Event,display:Electron.Display,metrics:string[])=>{if(metrics.some(metric=>['bounds','scaleFactor','rotation'].includes(metric))){if(display.id===this.displayId)this.displayChanged();else this.native.invalidate();}};
@@ -128,7 +128,7 @@ export class CaptureManager {
   }
   private stopEditorServices: ()=>void;
   private ocr=new OCRService((id,revision)=>this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);
-  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private receiveMedia: ((image:NativeImage)=>Promise<void>) | undefined, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance?:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'|'toolbarTools'|'mouseActions'>,memory:()=>MemorySettings=memoryDefaults,private savePreferences?:(settings:ScreenshotSettings)=>void,private intelligence?:()=>IntelligenceService) {
+  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'|'toolbarTools'|'mouseActions'>,memory:()=>MemorySettings,private savePreferences:(settings:ScreenshotSettings)=>void,private intelligence:()=>IntelligenceService) {
     rmSync(this.sleepDirectory,{recursive:true,force:true});
     this.idle=new IdleSleep(memory,async()=>{if(!this.sleepJob){this.sleepJob=this.suspendEditor();try{await this.sleepJob;}finally{this.sleepJob=null;}}});
     this.regionsStore=new RegionStore(join(app.getPath('userData'),'capture-regions.json'),()=>this.settings().rememberRegionAcrossLaunches);
@@ -138,7 +138,7 @@ export class CaptureManager {
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
     this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
-    this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,preferences:()=>this.settings(),generalSettings:()=>this.appearance?.(),saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligenceService(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences?.({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
+    this.pins=new PinManager({image:receive,text:receiveText,suppress:()=>this.after(),changed,preferences:()=>this.settings(),generalSettings:()=>this.appearance(),saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligence(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
     const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>fromMainFrame(e,this.cachedWindow);
     const assert=(e:IpcMainEvent|IpcMainInvokeEvent)=>{if(!owns(e))throw new Error('截图操作只允许截图窗口调用');};
     ipcMain.handle('screenshot:checkpoint',(e,editId:string,checkpoint:EditorCheckpoint|null)=>{assert(e);if(this.state?.editId===editId)this.checkpointReply?.(checkpoint);});
@@ -178,7 +178,7 @@ export class CaptureManager {
       textSent:id=>{if(this.state?.editId===id)this.cancel();},
       recognized:result=>{if(this.state?.editId===result.id&&this.editRevision===result.revision)this.historyOCR={id:result.id,revision:result.revision,text:result.lines.map(line=>line.text).join('\n')};}
     };};
-    this.stopEditorServices=handleEditorServices({recognize:'screenshot:recognize',analyze:'screenshot:analyze',visionLanguage:'screenshot:vision-language',previewFormula:'screenshot:preview-formula',openURL:'screenshot:open-url',exportTable:'screenshot:export-table',pinFormula:'screenshot:pin-formula',copyText:'screenshot:copy-text',sendText:'screenshot:send-text',invalidateOCR:'screenshot:invalidate-ocr'},session,{settings:()=>this.settings(),intelligence:()=>this.intelligenceService(),suppress:()=>this.after(),text:text=>this.receiveText(text)});
+    this.stopEditorServices=handleEditorServices({recognize:'screenshot:recognize',analyze:'screenshot:analyze',visionLanguage:'screenshot:vision-language',previewFormula:'screenshot:preview-formula',openURL:'screenshot:open-url',exportTable:'screenshot:export-table',pinFormula:'screenshot:pin-formula',copyText:'screenshot:copy-text',sendText:'screenshot:send-text',invalidateOCR:'screenshot:invalidate-ocr'},session,{settings:()=>this.settings(),intelligence:()=>this.intelligence(),suppress:()=>this.after(),text:text=>this.receiveText(text)});
     screen.on('display-added',this.displayAdded);
     screen.on('display-removed',this.displayRemoved);
     screen.on('display-metrics-changed',this.displayMetrics);
@@ -327,7 +327,7 @@ export class CaptureManager {
   }
   closeFocused(){if(this.native.snapshot().focused){this.cancel();return true;}if(this.pins.closeFocused())return true;if(this.win&&BrowserWindow.getFocusedWindow()===this.win){this.win.close();return true;}return false;}
   supportedLanguages(): string[] { return visionOCR().supportedLanguages(); }
-  private configureNativeAppearance(){const settings=this.appearance?.(),{includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat}=this.settings(),screenshot={includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat};const key=JSON.stringify({fonts:settings?.fonts,importedFonts:settings?.importedFonts,...screenshot});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings,screenshot);}}
+  private configureNativeAppearance(){const settings=this.appearance(),{includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat}=this.settings(),screenshot={includeCursor,showCrosshair,showLoupeGrid,loupeMagnification,loupeColorFormat};const key=JSON.stringify({fonts:settings.fonts,importedFonts:settings.importedFonts,...screenshot});if(key!==this.appearanceKey){this.appearanceKey=key;updateNativeAppearance(this.native,settings,screenshot);}}
   private assertCaptureDisplay(){if(!this.captureDisplay||!screen.getAllDisplays().some(display=>sameCaptureDisplay(this.captureDisplay!,bindDisplay(display))))throw new CaptureReselectRequiredError();}
   async start(mode:CaptureMode='area',request?:{area?:SuccessfulCaptureArea;signal:AbortSignal;custom?:CustomCaptureRequest}) {
     if(this.recordingPreparing||this.recordingSource)throw Error('请先停止当前录制');
@@ -417,17 +417,17 @@ export class CaptureManager {
   private detectScale={x:1,y:1};
   /** State notifications carry metadata; immutable pixels are read once by frame reference. */
   private editorState(){
-    if(this.state)Object.assign(this.state,editorSettings(this.settings(),this.appearance?.()));
+    if(this.state)Object.assign(this.state,editorSettings(this.settings(),this.appearance()));
     return this.state;
   }
   private publish(){if(this.state&&this.win&&!this.win.isDestroyed())this.win.webContents.send('screenshot:changed',this.editorState());}
   private saveAnnotationMemory(memory:AnnotationStyleMemory){
     validateAnnotationMemory(memory);
-    this.savePreferences?.({...this.settings(),annotationMemory:memory});
+    this.savePreferences({...this.settings(),annotationMemory:memory});
     if(this.preferences)this.preferences.annotationMemory=memory;
   }
   private candidateWindows(frontOnly=false){
-    const all=this.ax.windows(),windows=frontOnly?all.slice(0,1):all,rules=this.appearance?.().ignoredApps??[];
+    const all=this.ax.windows(),windows=frontOnly?all.slice(0,1):all,rules=this.appearance().ignoredApps;
     if(!rules.some(rule=>rule.enabled&&rule.scopes.includes('capture-candidates')))return windows;
     const ids=applicationBundleIds();
     return windows.filter(window=>!ignoresApplication(rules,ids[window.pid]??'','capture-candidates'));
@@ -458,8 +458,8 @@ export class CaptureManager {
       .map(([id,area])=>[id,area.display.id]));
     return {presets,displays,presetDisplayIds};
   }
-  saveRegionPreset(p:RegionPreset){validateRegionPreset(p);const presets=this.settings().regionPresets.filter(v=>v.id!==p.id);if(presets.length>=100)throw Error('最多保存 100 个区域预设');this.savePreferences?.({...this.settings(),regionPresets:[...presets,{...p,name:p.name.trim()}]});}
-  deleteRegionPreset(id:string){this.savePreferences?.({...this.settings(),regionPresets:this.settings().regionPresets.filter(p=>p.id!==id)});delete this.regionsStore.placements[id];this.regionsStore.save();}
+  saveRegionPreset(p:RegionPreset){validateRegionPreset(p);const presets=this.settings().regionPresets.filter(v=>v.id!==p.id);if(presets.length>=100)throw Error('最多保存 100 个区域预设');this.savePreferences({...this.settings(),regionPresets:[...presets,{...p,name:p.name.trim()}]});}
+  deleteRegionPreset(id:string){this.savePreferences({...this.settings(),regionPresets:this.settings().regionPresets.filter(p=>p.id!==id)});delete this.regionsStore.placements[id];this.regionsStore.save();}
   async customCapture(r:CustomCaptureRequest){if(this.active)throw Error('请先完成或关闭当前截图');validateRegionPreset({id:r.presetId??'custom',name:'自定义',width:r.width,height:r.height,ratio:r.ratio,delay:r.delay});return this.efficiency.start('rect',r.delay,r);}
   private clearRegion(){
     const s=this.state,frame=this.screenFrame;if(!s?.editableRegion||!frame)throw Error('当前图片不能重新选区');this.assertCaptureDisplay();
@@ -760,7 +760,6 @@ export class CaptureManager {
     if(!this.state?.selection||this.state.phase!=='result'||id!==this.state.editId)throw Error('截图编辑会话已结束');
     if(!Number.isSafeInteger(revision)||revision<0||revision<this.editRevision)throw Error('图片已变化，请重试');
   }
-  private intelligenceService(){if(!this.intelligence)throw Error('智能识别尚未接入');return this.intelligence();}
   private acceptVersion(id:string,revision:number){this.assertVersion(id,revision);this.editRevision=revision;}
   private assertCrop(frame:CaptureFrame){
     this.assertVersion(frame?.id,frame?.revision);
@@ -798,8 +797,7 @@ export class CaptureManager {
         if(this.state?.editableRegion&&this.screenFrame){const data=await this.native.pixels(this.screenFrame.id,{format:'bgra',rect:crop});image=nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height});}
         else image=(await this.originalImage()).crop(crop);
       }else image=contentImage(result?.image??decodeFrameImage(frame),mode,this.state?.pixelScale);
-      if(action==='image')await this.receive(image);
-      else if(action==='media'){if(!this.receiveMedia)throw Error('图片生成尚未接入');await this.receiveMedia(image);}
+      if(action==='image'||action==='media')await this.receive(image);
       else if(action==='pin'){
         if(this.state?.pinId&&!this.pins.contains(this.state.pinId)){
           this.state.pinId=undefined;this.editorKey=null;this.publish();

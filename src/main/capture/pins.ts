@@ -25,17 +25,16 @@ type Pin = {win:BrowserWindow;state:PinState;document:PinnedDocument;storedDocum
 type PinInput = {kind:PinKind;text?:string;color?:string;filePath?:string;groupId?:string};
 type PinOptions = {
   image:(image:NativeImage)=>Promise<void>;
-  media:(image:NativeImage)=>Promise<void>;
   text:(text:string)=>Promise<void>;
   suppress:()=>void;
   changed:()=>void;
   preferences:()=>ScreenshotSettings;
-  generalSettings:()=>Pick<import('../../shared/contracts').Settings,'editorShortcuts'|'toolbarTools'|'mouseActions'>|undefined;
+  generalSettings:()=>Pick<import('../../shared/contracts').Settings,'editorShortcuts'|'toolbarTools'|'mouseActions'>;
   saveAnnotationMemory:(memory:AnnotationStyleMemory)=>void;
   canEdit:()=>boolean;
   intelligence:()=>IntelligenceService;
-  saveWorkspaceSettings?:(settings:PinWorkspaceSettings)=>void;
-  recordHistory?:(document:PinnedDocument,id?:string)=>Promise<void>;
+  saveWorkspaceSettings:(settings:PinWorkspaceSettings)=>void;
+  recordHistory:(document:PinnedDocument,id?:string)=>Promise<void>;
 };
 
 /** Logical window size for a pin. Keeping size uses the on-screen capture; otherwise it fits a smaller desk. */
@@ -128,7 +127,7 @@ export class PinManager {
   state():PinWorkspaceState {return {settings:structuredClone(this.settings),closedCount:this.closed.length,pins:[...this.pins.values()].map(pin=>({id:pin.state.id,title:pin.state.title||'贴图',kind:pin.state.kind||'image',groupId:pin.state.groupId||this.settings.activeGroupId,locked:!!pin.state.locked,thumbnail:!!pin.state.thumbnail,topmost:pin.state.topmost,visible:pin.win.isVisible(),opacity:pin.state.opacity,width:pin.state.width,height:pin.state.height,preview:pin.state.kind==='image'?pin.document.image.resize({width:160}).toDataURL():(pin.state.payload?.text||pin.state.payload?.colorHex||pin.state.payload?.fileName||''),updatedAt:pin.updatedAt}))};}
   async saveWorkspace(settings:PinWorkspaceSettings){
     await this.ready;validatePinWorkspaceSettings(settings);
-    const next=structuredClone(settings);this.options.saveWorkspaceSettings?.(next);this.settings=next;
+    const next=structuredClone(settings);this.options.saveWorkspaceSettings(next);this.settings=next;
     for(const pin of this.pins.values()){
       if(!next.groups.some(group=>group.id===pin.state.groupId))pin.state.groupId=next.activeGroupId;
       pin.state.groups=structuredClone(next.groups);pin.state.wheelAction=next.wheelAction;this.applyVisibility(pin);this.publish(pin);
@@ -436,10 +435,9 @@ export class PinManager {
     const crop=validCrop(frame.crop,pin.document.source.getSize());
     const historyDocument=frame.annotations?{...pin.document,image:decodeFrameImage(frame),annotations:validateAnnotations(frame.annotations,pin.document.source,crop)}:undefined;
     pin.editorRevision=frame.revision;this.options.suppress();
-    if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!preferences.cornerRadius&&!preferences.borderWidth){await copyPng(assertPng(frame.png,frame.outputSize?.width??crop.width,frame.outputSize?.height??crop.height));if(historyDocument)await this.options.recordHistory?.(historyDocument,pin.state.id);this.showPin(pin);return;}
+    if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!preferences.cornerRadius&&!preferences.borderWidth){await copyPng(assertPng(frame.png,frame.outputSize?.width??crop.width,frame.outputSize?.height??crop.height));if(historyDocument)await this.options.recordHistory(historyDocument,pin.state.id);this.showPin(pin);return;}
     const image=mode==='original'?pin.document.source.crop(crop):contentImage(historyDocument?.image??decodeFrameImage(frame),mode,pin.document.pixelScale);
-    if(action==='image')await this.options.image(image);
-    else if(action==='media')await this.options.media(image);
+    if(action==='image'||action==='media')await this.options.image(image);
     else if(action==='pin'){
       const annotations=validateAnnotations(frame.annotations,pin.document.source,frame.crop);
       const next={...pin.document,image,annotations},bytes=this.weight(next);
@@ -448,7 +446,7 @@ export class PinManager {
       pin.document=next;pin.storedDocument=serializePinnedDocument(next);pin.bytes=bytes;const nextSize=image.getSize();pin.state.revision++;pin.state.image=image.toDataURL();pin.state.width=nextSize.width;pin.state.height=nextSize.height;pin.state.lines=[];
     }
     else if(!await deliverImage(image,action,{preferences,format,mode,pixelScale:pin.document.pixelScale,owner:pin.win}))return;
-    if(historyDocument)await this.options.recordHistory?.(historyDocument,pin.state.id);
+    if(historyDocument)await this.options.recordHistory(historyDocument,pin.state.id);
     this.showPin(pin);this.persist();
   }
   private async exportPin(pin:Pin,action:'save'|'quick-save'|'copy-file'|'copy-path'){
@@ -479,7 +477,7 @@ export class PinManager {
       }
     }
     if(action==='copy-file')await copyFile(path);else if(action==='copy-path')await copyPath(path);else await runAfterSaveAction(path,settings.afterSaveAction);
-    if(payload.kind==='image')await this.options.recordHistory?.(pin.document,pin.state.id);
+    if(payload.kind==='image')await this.options.recordHistory(pin.document,pin.state.id);
   }
   private async action(pin:Pin,action:PinAction){
     if(action==='close'){await this.closePin(pin);return;}
@@ -502,7 +500,7 @@ export class PinManager {
       if(payload?.kind==='text')await clipboard.writeText(payload.text!);
       else if(payload?.kind==='color')await clipboard.writeText(payload.colorHex!);
       else if(payload?.kind==='file')await copyFile(payload.filePath!);
-      else{await copyImage(decorateScreenshot(pin.document.image,this.options.preferences()));await this.options.recordHistory?.(pin.document,pin.state.id);}return;
+      else{await copyImage(decorateScreenshot(pin.document.image,this.options.preferences()));await this.options.recordHistory(pin.document,pin.state.id);}return;
     }
     throw Error('不支持的贴图操作');
   }
