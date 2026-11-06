@@ -252,8 +252,8 @@ function updateTray() {
     { label: '贴出剪贴板内容', accelerator: state.settings.actionShortcuts['pin-clipboard'] || undefined, click: () => { void runGlobalAction('pin-clipboard').catch(error => { state.notice = error.message; publish(); }); } },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
     { label: '运行预设…', click: () => void openPalette('all') },
-    { label: 'EdgeNotes 边缘便签', accelerator: 'Control+Option+N', click: () => island?.toggleNotesDrawer(true) },
-    { label: 'Finder 超级动作面板…', accelerator: 'Control+Option+F', click: () => island?.summonFinderPanel() },
+    { label: 'EdgeNotes 边缘便签', accelerator: 'Control+Option+N', click: () => island?.notes.toggleDrawer(true) },
+    { label: 'Finder 超级动作面板…', accelerator: 'Control+Option+F', click: () => island?.finder.summon() },
     { label: '窗口分屏与工作区', submenu: [
       { label: '左半屏', accelerator: 'Control+Option+Left', click: () => island?.snapWindow('left-half') },
       { label: '右半屏', accelerator: 'Control+Option+Right', click: () => island?.snapWindow('right-half') },
@@ -589,8 +589,8 @@ function installIPC() {
       case 'cancel-delivery': tasks.cancelDelivery(); break;
       case 'dismiss-delivery': tasks.dismissDelivery(); break;
       case 'open-island-board': island?.openBoard(); break;
-      case 'toggle-edge-notes': island?.toggleNotesDrawer(true); break;
-      case 'open-finder-panel': island?.summonFinderPanel(); break;
+      case 'toggle-edge-notes': island?.notes.toggleDrawer(true); break;
+      case 'open-finder-panel': island?.finder.summon(); break;
       case 'snap-coding-ai': island?.snapWindow('coding-ai'); break;
       case 'snap-equal-split': island?.snapWindow('equal-split'); break;
       default: throw new Error('不支持的窗口操作');

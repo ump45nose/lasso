@@ -1,13 +1,10 @@
-import { app, BrowserWindow, clipboard, globalShortcut, ipcMain, screen } from 'electron';
+import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
-import { execFile, execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
 import type {
-  EdgeNoteItem,
-  EdgeNotesState,
-  FinderPanelState,
   IslandAlertItem,
   IslandMode,
   IslandState,
@@ -15,6 +12,8 @@ import type {
   Settings,
   SnapSlot
 } from '../shared/contracts';
+import { FinderPanel } from './island-finder';
+import { EdgeNotes } from './island-notes';
 
 interface NativeAxBridge {
   paste?: () => void;
@@ -25,12 +24,14 @@ interface NativeAxBridge {
   tileTwoWindows?: (x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number) => number;
   frontmostApp?: () => { bundleId: string; name: string; pid: number };
   notchGeometry?: () => { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
-  pinWindowToNotch?: (handle: Buffer, width: number, height: number) => boolean;
+  setStationaryWindow?: (handle: Buffer) => void;
 }
 
 const WIN_W = 540, WIN_H = 440;
-const NOTES_W = 376, NOTES_H = 548;
-const FINDER_W = 384, FINDER_H = 430;
+
+const MODES: readonly IslandMode[] = ['idle', 'focus', 'focus-hover', 'slacking', 'nook-alert', 'toast', 'board'];
+const SNAP_SLOTS: readonly SnapSlot[] = ['left-half', 'right-half', 'top-half', 'bottom-half', 'maximize', 'center', 'coding-ai', 'equal-split'];
+const QUICK_ACTIONS = ['screenshot-area', 'open-settings', 'toggle-notes', 'open-finder-panel'] as const;
 
 function loadNativeAx(): NativeAxBridge {
   if (process.env.LASSO_DATA_ROOT) return {};
@@ -70,91 +71,6 @@ function readNookTasks(): IslandTaskItem[] {
   return [];
 }
 
-function resolveNotesFolder(): string {
-  const folder = process.env.LASSO_DATA_ROOT
-    ? join(app.getPath('userData'), 'notes')
-    : join(homedir(), 'Documents/LassoNotes');
-  mkdirSync(folder, { recursive: true });
-  const scratchPath = join(folder, 'Scratchpad.md');
-  if (!existsSync(scratchPath)) {
-    writeFileSync(
-      scratchPath,
-      '# Scratchpad 随手记\n\n- 划词选择任意英文后点「翻译」即可走 New API 流式直出，按 `↵` 直接回填替换\n- 右侧贴边悬停即可拉出本抽屉，点击右下角「撕下为贴图」可将当前笔记钉在桌面\n- 常用命令：`launchctl kickstart -k gui/$UID/com.personalhub.app`\n',
-      'utf8'
-    );
-  }
-  const secondPath = join(folder, 'Workspace-Notes.md');
-  if (!existsSync(secondPath)) {
-    writeFileSync(
-      secondPath,
-      '# 研发分屏与巡检备忘\n\n1. `⌃⌥←` / `⌃⌥→` 左右半屏吸附\n2. `⌃⌥↵` 一键 2/3 编辑器 + 1/3 AI 双栏工作区\n3. `⌃⌥F` 唤起 Finder 超级动作面板\n',
-      'utf8'
-    );
-  }
-  return folder;
-}
-
-function loadNotesFromDisk(folder: string): EdgeNoteItem[] {
-  const files = readdirSync(folder).filter(name => name.endsWith('.md'));
-  const items: EdgeNoteItem[] = files.map(fileName => {
-    const full = join(folder, fileName);
-    const stat = statSync(full);
-    const content = readFileSync(full, 'utf8');
-    const firstHeading = content.split('\n').find(line => line.trim().startsWith('#'))?.replace(/^#+\s*/, '').trim();
-    const id = fileName.replace(/\.md$/i, '');
-    const pinned = fileName.toLowerCase() === 'scratchpad.md';
-    const d = stat.mtime;
-    const updatedAt = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return {
-      id,
-      title: firstHeading || id,
-      fileName,
-      pinned,
-      updatedAt,
-      content
-    };
-  });
-  items.sort((a, b) => (a.pinned === b.pinned ? a.fileName.localeCompare(b.fileName) : a.pinned ? -1 : 1));
-  return items;
-}
-
-function defaultFinderFolder(): string {
-  return app.getPath('desktop');
-}
-
-function queryFinderContext(frontAppName: string): { folder: string; selection: string[]; frontmostApp: string } {
-  const fallback = { folder: defaultFinderFolder(), selection: [], frontmostApp: frontAppName || 'Finder' };
-  if (process.env.LASSO_DATA_ROOT) return fallback;
-  try {
-    const script = `
-      tell application "Finder"
-        set folderPath to ""
-        if (count of Finder windows) > 0 then
-          set folderPath to POSIX path of (target of front Finder window as alias)
-        else
-          set folderPath to POSIX path of (desktop as alias)
-        end if
-        set selPaths to {}
-        set selList to selection as alias list
-        repeat with itemRef in selList
-          set end of selPaths to POSIX path of itemRef
-        end repeat
-        set AppleScript's text item delimiters to "\\n"
-        return folderPath & "\\n" & (selPaths as string)
-      end tell
-    `;
-    const out = execFileSync('osascript', ['-e', script], { encoding: 'utf8', timeout: 900 }).trim();
-    const lines = out.split('\n').map(s => s.trim()).filter(Boolean);
-    return {
-      folder: lines[0] || fallback.folder,
-      selection: lines.slice(1),
-      frontmostApp: frontAppName || 'Finder'
-    };
-  } catch {
-    return fallback;
-  }
-}
-
 export interface NotchIslandCallbacks {
   onQuickAction: (action: 'screenshot-area' | 'open-settings') => void;
   onPinImage: (image: NativeImage) => Promise<void>;
@@ -163,8 +79,8 @@ export interface NotchIslandCallbacks {
 
 export class NotchIsland {
   readonly window: BrowserWindow;
-  readonly notesWindow: BrowserWindow;
-  readonly finderWindow: BrowserWindow;
+  readonly notes: EdgeNotes;
+  readonly finder: FinderPanel;
   private ax: NativeAxBridge;
   private mode: IslandMode = 'idle';
   private glow = false;
@@ -176,28 +92,12 @@ export class NotchIsland {
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
-  private notesFolder: string;
-  private notesOpen = false;
-  private notesList: EdgeNoteItem[] = [];
-  private activeNoteId = 'Scratchpad';
-
-  private finderState: FinderPanelState;
   private readonly onDisplayMetricsChanged = () => this.placeWindows();
 
   constructor(private callbacks: NotchIslandCallbacks) {
     this.ax = loadNativeAx();
     this.nookTasks = readNookTasks();
-    this.notesFolder = resolveNotesFolder();
-    this.notesList = loadNotesFromDisk(this.notesFolder);
-    if (this.notesList[0]) this.activeNoteId = this.notesList[0].id;
-    this.finderState = {
-      folder: defaultFinderFolder(),
-      selection: [],
-      frontmostApp: 'Finder',
-      fonts: this.fonts
-    };
 
-    const preloadPath = join(__dirname, 'island-preload.cjs');
     this.window = new BrowserWindow({
       width: WIN_W,
       height: WIN_H,
@@ -206,6 +106,7 @@ export class NotchIsland {
       resizable: false,
       movable: false,
       focusable: false,
+      fullscreenable: false,
       skipTaskbar: true,
       alwaysOnTop: true,
       enableLargerThanScreen: true,
@@ -213,67 +114,31 @@ export class NotchIsland {
       transparent: true,
       hasShadow: false,
       backgroundColor: '#00000000',
-      webPreferences: { preload: preloadPath, nodeIntegration: false, contextIsolation: true, sandbox: true }
+      webPreferences: { preload: join(__dirname, 'island-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
     });
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'screen-saver', 2);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // Must follow setAlwaysOnTop: Chromium adds the Managed behavior back whenever the level is set.
+    this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
     this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     this.window.webContents.on('will-navigate', event => event.preventDefault());
 
-    this.notesWindow = new BrowserWindow({
-      width: NOTES_W,
-      height: NOTES_H,
-      frame: false,
-      show: false,
-      resizable: false,
-      movable: false,
-      focusable: true,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      acceptFirstMouse: true,
-      transparent: true,
-      hasShadow: false,
-      backgroundColor: '#00000000',
-      webPreferences: { preload: preloadPath, nodeIntegration: false, contextIsolation: true, sandbox: true }
-    });
-    this.notesWindow.setIgnoreMouseEvents(true, { forward: true });
-    this.notesWindow.setAlwaysOnTop(true, 'floating');
-    this.notesWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.notesWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    this.notesWindow.webContents.on('will-navigate', event => event.preventDefault());
-
-    this.finderWindow = new BrowserWindow({
-      width: FINDER_W,
-      height: FINDER_H,
-      frame: false,
-      show: false,
-      resizable: false,
-      movable: false,
-      focusable: true,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      acceptFirstMouse: true,
-      transparent: true,
-      hasShadow: false,
-      backgroundColor: '#00000000',
-      webPreferences: { preload: preloadPath, nodeIntegration: false, contextIsolation: true, sandbox: true }
-    });
-    this.finderWindow.setAlwaysOnTop(true, 'pop-up-menu');
-    this.finderWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.finderWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    this.finderWindow.webContents.on('will-navigate', event => event.preventDefault());
-    this.finderWindow.on('blur', () => {
-      if (!this.finderWindow.isDestroyed()) this.finderWindow.hide();
+    const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
+      const valid = [this.window.webContents, this.notes.window.webContents, this.finder.window.webContents];
+      if (!valid.includes(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('套件表面来源不匹配');
+    };
+    const toast = (text: string, badge?: string) => this.toast(text, badge);
+    this.notes = new EdgeNotes(this.fonts, { check, toast, onPinImage: callbacks.onPinImage });
+    this.finder = new FinderPanel(this.fonts, {
+      check,
+      toast,
+      frontmostAppName: () => this.ax.frontmostApp?.().name ?? 'Finder',
+      onSendTextToLasso: callbacks.onSendTextToLasso
     });
 
     this.placeWindows();
     screen.on('display-metrics-changed', this.onDisplayMetricsChanged);
-
-    const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
-      const valid = [this.window.webContents, this.notesWindow.webContents, this.finderWindow.webContents];
-      if (!valid.includes(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('套件表面来源不匹配');
-    };
 
     ipcMain.handle('island:state', event => {
       check(event);
@@ -282,6 +147,7 @@ export class NotchIsland {
     });
     ipcMain.on('island:mode', (event, mode: IslandMode) => {
       check(event);
+      if (!MODES.includes(mode)) return;
       this.mode = mode;
       this.publish();
     });
@@ -291,6 +157,7 @@ export class NotchIsland {
     });
     ipcMain.handle('island:pomo-start', (event, task?: { id: string | null; title: string }, minutes = 25, kind: 'focus' | 'slacking' = 'focus') => {
       check(event);
+      if (kind !== 'focus' && kind !== 'slacking') throw new Error('番茄钟类型无效');
       this.startPomodoro(task, minutes, kind);
     });
     ipcMain.handle('island:pomo-pause', event => {
@@ -305,10 +172,12 @@ export class NotchIsland {
     });
     ipcMain.handle('island:complete-task', (event, taskId: string) => {
       check(event);
+      if (typeof taskId !== 'string' || !taskId) throw new Error('任务 ID 无效');
       this.completeTask(taskId);
     });
     ipcMain.handle('island:snooze-alert', (event, alertId: string, minutes = 10) => {
       check(event);
+      if (typeof alertId !== 'string' || !alertId || !Number.isFinite(minutes) || minutes <= 0) throw new Error('提醒或延后时间无效');
       this.snoozeAlert(alertId, minutes);
     });
     ipcMain.handle('island:dismiss-alert', (event, alertId: string) => {
@@ -317,20 +186,22 @@ export class NotchIsland {
     });
     ipcMain.handle('island:restart-service', (event, label: string) => {
       check(event);
+      if (!this.alerts.some(a => a.kind === 'launchd' && a.target === label)) throw new Error('只能重启告警中的服务');
       this.restartService(label);
     });
-    ipcMain.handle('island:quick', (event, action: 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel') => {
+    ipcMain.handle('island:quick', (event, action: typeof QUICK_ACTIONS[number]) => {
       check(event);
+      if (!QUICK_ACTIONS.includes(action)) throw new Error('不支持的快捷操作');
       if (this.mode === 'board') {
         this.mode = this.resolveBaseMode();
         this.publish();
       }
       if (action === 'toggle-notes') {
-        this.toggleNotesDrawer(!this.notesOpen);
+        this.notes.toggleDrawer();
         return;
       }
       if (action === 'open-finder-panel') {
-        this.summonFinderPanel();
+        this.finder.summon();
         return;
       }
       this.callbacks.onQuickAction(action);
@@ -341,101 +212,18 @@ export class NotchIsland {
     });
     ipcMain.handle('island:snap-window', (event, slot: SnapSlot) => {
       check(event);
+      if (!SNAP_SLOTS.includes(slot)) throw new Error('不支持的分屏位置');
       this.snapWindow(slot);
-    });
-
-    // EdgeNotes IPC
-    ipcMain.handle('notes:state', event => {
-      check(event);
-      return this.notesSnapshot();
-    });
-    ipcMain.on('notes:open', (event, open: boolean) => {
-      check(event);
-      this.toggleNotesDrawer(Boolean(open));
-    });
-    ipcMain.on('notes:hit', (event, inside: boolean) => {
-      check(event);
-      this.notesWindow.setIgnoreMouseEvents(!inside, { forward: true });
-      if (inside && this.notesOpen) this.notesWindow.focus();
-    });
-    ipcMain.handle('notes:select', (event, id: string) => {
-      check(event);
-      if (this.notesList.some(n => n.id === id)) {
-        this.activeNoteId = id;
-        this.publishNotes();
-      }
-    });
-    ipcMain.handle('notes:save', (event, id: string, content: string) => {
-      check(event);
-      const note = this.notesList.find(n => n.id === id);
-      if (!note) return;
-      const full = join(this.notesFolder, note.fileName);
-      writeFileSync(full, content, 'utf8');
-      const firstHeading = content.split('\n').find(line => line.trim().startsWith('#'))?.replace(/^#+\s*/, '').trim();
-      const now = new Date();
-      note.content = content;
-      note.title = firstHeading || note.id;
-      note.updatedAt = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-      this.publishNotes();
-    });
-    ipcMain.handle('notes:create', (event, title?: string) => {
-      check(event);
-      const stamp = new Date().toISOString().slice(5, 16).replace(/[:T]/g, '-');
-      const id = title?.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '-') || `Note-${stamp}`;
-      const fileName = `${id}.md`;
-      const full = join(this.notesFolder, fileName);
-      writeFileSync(full, `# ${title || id}\n\n`, 'utf8');
-      this.notesList = loadNotesFromDisk(this.notesFolder);
-      this.activeNoteId = id;
-      this.publishNotes();
-    });
-    ipcMain.handle('notes:pin', async (event, id: string) => {
-      check(event);
-      const note = this.notesList.find(n => n.id === id);
-      if (!note) return;
-      const image = await this.notesWindow.webContents.capturePage({ x: 8, y: 14, width: NOTES_W - 18, height: NOTES_H - 28 });
-      if (!image.isEmpty()) {
-        await this.callbacks.onPinImage(image);
-        this.toast(`已将「${note.title}」钉为桌面贴图`, 'Pin');
-      }
-    });
-
-    // Finder Super Action Panel IPC
-    ipcMain.handle('finder:state', event => {
-      check(event);
-      return this.finderState;
-    });
-    ipcMain.on('finder:close', event => {
-      check(event);
-      if (!this.finderWindow.isDestroyed()) this.finderWindow.hide();
-    });
-    ipcMain.handle('finder:create-file', (event, ext: 'md' | 'txt' | 'py' | 'json' | 'sh') => {
-      check(event);
-      this.createFinderFile(ext);
-    });
-    ipcMain.handle('finder:run-action', async (event, action: 'copy-path' | 'open-terminal' | 'open-cursor' | 'open-vscode' | 'send-to-lasso') => {
-      check(event);
-      await this.runFinderAction(action);
     });
 
     this.ax.startBridge?.(({ name, payload }) => this.handleBridgeNotification(name, payload));
 
     this.window.once('ready-to-show', () => {
+      if (!process.env.LASSO_DATA_ROOT) this.window.showInactive();
       this.placeWindows();
-      if (!process.env.LASSO_DATA_ROOT) {
-        this.window.showInactive();
-        this.placeWindows();
-      }
       this.publish();
     });
-    this.notesWindow.once('ready-to-show', () => {
-      this.placeWindows();
-      if (!process.env.LASSO_DATA_ROOT) this.notesWindow.showInactive();
-      this.publishNotes();
-    });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'island' } });
-    void this.notesWindow.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'edge-notes' } });
-    void this.finderWindow.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'finder-panel' } });
     this.registerSuiteShortcuts();
   }
 
@@ -447,8 +235,8 @@ export class NotchIsland {
       ['Control+Option+Up', () => this.snapWindow('maximize')],
       ['Control+Option+Down', () => this.snapWindow('center')],
       ['Control+Option+Return', () => this.snapWindow('coding-ai')],
-      ['Control+Option+N', () => this.toggleNotesDrawer(!this.notesOpen)],
-      ['Control+Option+F', () => this.summonFinderPanel()]
+      ['Control+Option+N', () => this.notes.toggleDrawer()],
+      ['Control+Option+F', () => this.finder.summon()]
     ];
     for (const [acc, fn] of binds) {
       try {
@@ -465,18 +253,8 @@ export class NotchIsland {
       const x = Math.round(primary.bounds.x + (primary.bounds.width - WIN_W) / 2);
       const y = primary.bounds.y;
       this.window.setBounds({ x, y, width: WIN_W, height: WIN_H });
-      try {
-        this.ax.pinWindowToNotch?.(this.window.getNativeWindowHandle(), WIN_W, WIN_H);
-      } catch {
-        // ignore if window handle is not yet attached
-      }
     }
-    if (!this.notesWindow.isDestroyed()) {
-      const area = primary.workArea;
-      const x = area.x + area.width - NOTES_W;
-      const y = Math.round(area.y + (area.height - NOTES_H) / 2);
-      this.notesWindow.setBounds({ x, y, width: NOTES_W, height: NOTES_H });
-    }
+    this.notes.place();
   }
 
   private resolveBaseMode(): IslandMode {
@@ -501,40 +279,17 @@ export class NotchIsland {
     };
   }
 
-  private notesSnapshot(): EdgeNotesState {
-    return {
-      open: this.notesOpen,
-      folder: this.notesFolder,
-      activeId: this.activeNoteId,
-      notes: this.notesList,
-      fonts: this.fonts
-    };
-  }
-
   private publish() {
     if (!this.window.isDestroyed()) {
       this.window.webContents.send('island:changed', this.snapshot());
     }
   }
 
-  private publishNotes() {
-    if (!this.notesWindow.isDestroyed()) {
-      this.notesWindow.webContents.send('notes:changed', this.notesSnapshot());
-    }
-  }
-
-  private publishFinder() {
-    if (!this.finderWindow.isDestroyed()) {
-      this.finderWindow.webContents.send('finder:changed', this.finderState);
-    }
-  }
-
   updateSettings(settings: Settings) {
     this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
-    this.finderState = { ...this.finderState, fonts: this.fonts };
     this.publish();
-    this.publishNotes();
-    this.publishFinder();
+    this.notes.updateFonts(this.fonts);
+    this.finder.updateFonts(this.fonts);
   }
 
   openBoard() {
@@ -542,85 +297,6 @@ export class NotchIsland {
     this.mode = 'board';
     this.window.setIgnoreMouseEvents(false);
     this.publish();
-  }
-
-  toggleNotesDrawer(open: boolean) {
-    this.notesOpen = open;
-    if (open) {
-      this.notesList = loadNotesFromDisk(this.notesFolder);
-      this.notesWindow.setIgnoreMouseEvents(false);
-    } else {
-      this.notesWindow.setIgnoreMouseEvents(true, { forward: true });
-    }
-    this.publishNotes();
-  }
-
-  summonFinderPanel() {
-    const front = this.ax.frontmostApp?.() || { bundleId: 'com.apple.finder', name: 'Finder', pid: 0 };
-    const ctx = queryFinderContext(front.name);
-    this.finderState = { ...ctx, fonts: this.fonts };
-    const cursor = screen.getCursorScreenPoint();
-    const area = screen.getDisplayNearestPoint(cursor).workArea;
-    const x = Math.min(Math.max(area.x + 12, cursor.x - Math.round(FINDER_W / 2)), area.x + area.width - FINDER_W - 12);
-    const y = Math.min(Math.max(area.y + 12, cursor.y - 24), area.y + area.height - FINDER_H - 12);
-    this.finderWindow.setBounds({ x, y, width: FINDER_W, height: FINDER_H });
-    this.publishFinder();
-    this.finderWindow.show();
-    this.finderWindow.focus();
-  }
-
-  private createFinderFile(ext: 'md' | 'txt' | 'py' | 'json' | 'sh') {
-    const folder = this.finderState.folder;
-    const defaults: Record<typeof ext, string> = {
-      md: '# 新建笔记\n\n',
-      txt: '',
-      py: '#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n\n',
-      json: '{\n  \n}\n',
-      sh: '#!/usr/bin/env zsh\nset -euo pipefail\n\n'
-    };
-    let index = 1;
-    let filePath = join(folder, `Untitled.${ext}`);
-    while (existsSync(filePath)) {
-      index += 1;
-      filePath = join(folder, `Untitled-${index}.${ext}`);
-    }
-    try {
-      writeFileSync(filePath, defaults[ext], { encoding: 'utf8', mode: ext === 'sh' || ext === 'py' ? 0o755 : 0o644 });
-      this.finderWindow.hide();
-      this.toast(`已创建 ${basename(filePath)}`, `.${ext}`);
-    } catch (error) {
-      this.toast(`新建失败：${(error as Error).message}`, 'Error');
-    }
-  }
-
-  private async runFinderAction(action: 'copy-path' | 'open-terminal' | 'open-cursor' | 'open-vscode' | 'send-to-lasso') {
-    const targets = this.finderState.selection.length ? this.finderState.selection : [this.finderState.folder];
-    const primaryTarget = targets[0];
-    this.finderWindow.hide();
-    if (action === 'copy-path') {
-      await Promise.resolve(clipboard.writeText(targets.join('\n')));
-      this.toast(`已复制路径：${basename(primaryTarget)}`, '⌘C');
-      return;
-    }
-    if (action === 'open-terminal') {
-      execFile('open', ['-a', 'Terminal', this.finderState.folder]);
-      this.toast(`已在终端打开 ${basename(this.finderState.folder)}`, 'Term');
-      return;
-    }
-    if (action === 'open-cursor') {
-      execFile('open', ['-a', 'Cursor', primaryTarget]);
-      this.toast(`已用 Cursor 打开 ${basename(primaryTarget)}`, 'Cursor');
-      return;
-    }
-    if (action === 'open-vscode') {
-      execFile('open', ['-a', 'Visual Studio Code', primaryTarget]);
-      this.toast(`已用 VS Code 打开 ${basename(primaryTarget)}`, 'Code');
-      return;
-    }
-    if (action === 'send-to-lasso') {
-      await this.callbacks.onSendTextToLasso(`请分析以下路径或文件：\n${targets.join('\n')}`);
-      this.toast('已发送到 Lasso 主窗口', 'AI');
-    }
   }
 
   snapWindow(slot: SnapSlot) {
@@ -853,8 +529,8 @@ export class NotchIsland {
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.ax.setGlow?.(false);
-    for (const w of [this.window, this.notesWindow, this.finderWindow]) {
-      if (!w.isDestroyed()) w.destroy();
-    }
+    if (!this.window.isDestroyed()) this.window.destroy();
+    this.notes.destroy();
+    this.finder.destroy();
   }
 }

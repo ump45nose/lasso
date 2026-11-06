@@ -2,7 +2,6 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <QuartzCore/QuartzCore.h>
-#import <objc/runtime.h>
 #include <vector>
 #include <string>
 
@@ -341,66 +340,26 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
   return obj;
 }
 
-static const void* kUnconstrainedNotchWindowKey = &kUnconstrainedNotchWindowKey;
-static IMP g_origConstrainFrameRect = nullptr;
-
-static NSRect lasso_constrainFrameRect(id self, SEL _cmd, NSRect frameRect, NSScreen* screen) {
-  NSNumber* flag = objc_getAssociatedObject(self, kUnconstrainedNotchWindowKey);
-  if (flag && [flag boolValue]) {
-    return frameRect;
-  }
-  if (g_origConstrainFrameRect) {
-    using Fn = NSRect(*)(id, SEL, NSRect, NSScreen*);
-    return ((Fn)g_origConstrainFrameRect)(self, _cmd, frameRect, screen);
-  }
-  return frameRect;
-}
-
-static napi_value pinWindowToNotch(napi_env e, napi_callback_info info) {
-  size_t n = 3;
-  napi_value args[3];
+/** Keeps the window in place during Mission Control and out of Cmd-` cycling; Electron exposes neither behavior. */
+static napi_value setStationaryWindow(napi_env e, napi_callback_info info) {
+  size_t n = 1;
+  napi_value args[1];
   napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
-  bool ok = false;
-  if (n >= 3) {
-    void* bufData = nullptr;
-    size_t bufLen = 0;
-    double winW = 540.0, winH = 440.0;
-    napi_get_buffer_info(e, args[0], &bufData, &bufLen);
-    napi_get_value_double(e, args[1], &winW);
-    napi_get_value_double(e, args[2], &winH);
-    if (bufData && bufLen >= sizeof(void*)) {
-      void* rawPtr = *reinterpret_cast<void* const*>(bufData);
-      if (rawPtr) {
-        @autoreleasepool {
-          NSView* view = (__bridge NSView*)rawPtr;
-          NSWindow* win = [view window];
-          NSScreen* screen = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
-          if (win && screen) {
-            Class cls = [win class];
-            SEL sel = @selector(constrainFrameRect:toScreen:);
-            Method m = class_getInstanceMethod(cls, sel);
-            if (m && !g_origConstrainFrameRect) {
-              g_origConstrainFrameRect = method_setImplementation(m, (IMP)lasso_constrainFrameRect);
-            }
-            objc_setAssociatedObject(win, kUnconstrainedNotchWindowKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            NSRect sf = screen.frame;
-            CGFloat x = std::round(sf.origin.x + (sf.size.width - winW) / 2.0);
-            CGFloat y = NSMaxY(sf) - winH;
-            [win setLevel:NSScreenSaverWindowLevel + 1];
-            [win setCollectionBehavior:(NSWindowCollectionBehaviorCanJoinAllSpaces |
-                                        NSWindowCollectionBehaviorFullScreenAuxiliary |
-                                        NSWindowCollectionBehaviorStationary |
-                                        NSWindowCollectionBehaviorIgnoresCycle)];
-            [win setFrame:NSMakeRect(x, y, winW, winH) display:YES];
-            ok = true;
-          }
-        }
-      }
+  void* bytes = nullptr;
+  size_t length = 0;
+  if (n >= 1 && napi_get_buffer_info(e, args[0], &bytes, &length) == napi_ok && length >= sizeof(void*)) {
+    @autoreleasepool {
+      NSWindow* win = ((__bridge NSView*)(*(void**)bytes)).window;
+      // AppKit allows one behavior per group, and Chromium marks every top-level window Managed.
+      NSWindowCollectionBehavior behavior = win.collectionBehavior & ~(NSWindowCollectionBehaviorManaged |
+                                                                       NSWindowCollectionBehaviorTransient |
+                                                                       NSWindowCollectionBehaviorParticipatesInCycle);
+      win.collectionBehavior = behavior | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
     }
   }
-  napi_value res;
-  napi_get_boolean(e, ok, &res);
-  return res;
+  napi_value undefined;
+  napi_get_undefined(e, &undefined);
+  return undefined;
 }
 
 static napi_value init(napi_env e,napi_value exports){
@@ -416,7 +375,7 @@ static napi_value init(napi_env e,napi_value exports){
     {"tileTwoWindows",nullptr,tileTwoWindows,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"frontmostApp",nullptr,frontmostApp,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"notchGeometry",nullptr,notchGeometry,nullptr,nullptr,nullptr,napi_default,nullptr},
-    {"pinWindowToNotch",nullptr,pinWindowToNotch,nullptr,nullptr,nullptr,napi_default,nullptr}
+    {"setStationaryWindow",nullptr,setStationaryWindow,nullptr,nullptr,nullptr,napi_default,nullptr}
   };
   napi_define_properties(e,exports,sizeof(d)/sizeof(d[0]),d);
   return exports;
