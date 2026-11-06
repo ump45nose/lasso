@@ -11,6 +11,7 @@ import { validatePresets } from './presets';
 import { migrateSettings, validateGeneralSettings } from './settings';
 import { validateFonts } from './fonts';
 import { writeFileAtomic } from './files';
+import { result } from './ipc';
 
 interface ConfigAccess { readSettings(): Settings; writeSettings(settings: Settings): void; readPresets(): Preset[]; writePresets(presets: Preset[]): void }
 const configDefaults = (): WebDavConfig => ({ enabled: false, url: '', remotePath: 'Lasso/config.json', username: '', autoSync: false });
@@ -163,15 +164,14 @@ export class WebDavSyncService {
       return { path: choice.filePath, error: null };
     } catch (error) { return { path: null, error: (error as Error).message }; }
   }
-  async importConfig(): Promise<{ error: string | null }> {
-    try {
+  importConfig(): Promise<{ error: string | null }> {
+    return result(async () => {
       const choice = await dialog.showOpenDialog({ title: '导入 Lasso 配置', properties: ['openFile'], filters: [{ name: 'JSON 配置', extensions: ['json'] }] });
       if (!choice.canceled && choice.filePaths[0]) {
         const data = readFileSync(choice.filePaths[0]); if (data.length > MAX_CONFIG_BYTES) throw Error('配置包不能超过 8 MB');
         this.applyBundle(JSON.parse(data.toString('utf8'))); this.scheduleAutoSync();
       }
-      return { error: null };
-    } catch (error) { return { error: (error as Error).message }; }
+    });
   }
   scheduleAutoSync() {
     if (this.timer) clearTimeout(this.timer);

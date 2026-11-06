@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import type { RecordingAction, RecordingFormat, RecordingSessionState } from '../shared/recording';
 import type { RecordingManager } from './capture/recording';
 import type { CaptureManager } from './capture';
+import { fromMainFrame, sealLocal } from './ipc';
 import { fitToWorkArea } from './position';
 
 export interface RecordingPanelDeps {
@@ -25,9 +26,7 @@ export class RecordingPanel {
     ipcMain.handle('shell:recording-action',(event,action:RecordingAction)=>{assertRecording(event);return this.act(action);});
   }
   get window() { return this.panel; }
-  owns(event: IpcMainInvokeEvent) {
-    return !!this.panel && !this.panel.isDestroyed() && event.sender === this.panel.webContents && event.senderFrame === this.panel.webContents.mainFrame;
-  }
+  owns(event: IpcMainInvokeEvent) { return fromMainFrame(event, this.panel); }
   private layout(session: RecordingSessionState | null) {
     if (!this.panel || this.panel.isDestroyed()) return;
     const live = session && ['countdown', 'recording', 'paused'].includes(session.status);
@@ -41,8 +40,7 @@ export class RecordingPanel {
       const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
       const panel = new BrowserWindow({ ...fitToWorkArea({ x: area.x + area.width - 540, y: area.y + 28, width: 520, height: 350 }, area), frame: false, show: false, resizable: false, fullscreenable: false, alwaysOnTop: true, backgroundColor: '#FAF9F5', title: 'Lasso 屏幕录制', webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true, backgroundThrottling: false } });
       this.panel = panel;
-      panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      panel.webContents.on('will-navigate', event => event.preventDefault());
+      sealLocal(panel.webContents);
       panel.on('close', event => { if (!this.deps.quitting()) { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });
       panel.on('closed', () => { if (this.panel === panel) { this.panel = null; this.ready = null; } });
       panel.webContents.on('before-input-event', (event, input) => { if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') { event.preventDefault(); panel.webContents.send('shell:recording-close-request'); } });

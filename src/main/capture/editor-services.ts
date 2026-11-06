@@ -3,6 +3,7 @@ import type { CaptureFrame, CaptureRect, OCRRequest, OCRResult, ScreenshotAPI } 
 import type { Settings } from '../../shared/contracts';
 import type { ScreenshotSettings } from '../../shared/screenshot-settings';
 import { webURL } from '../../shared/intelligence';
+import { result } from '../ipc';
 import { exportTableXlsx, renderFormula, type IntelligenceService } from './intelligence';
 import type { OCRService } from './ocr';
 
@@ -54,25 +55,22 @@ export function handleEditorServices(channels: EditorChannels, session: (event: 
     const s = session(e);
     try { s.check(r?.id, r?.revision); return { svg: renderFormula(r.latex), error: null }; } catch (error) { return { svg: null, error: message(error) }; }
   });
-  ipcMain.handle(channels.openURL, async (e, r: { id: string; revision: number; url: string }) => {
+  ipcMain.handle(channels.openURL, (e, r: { id: string; revision: number; url: string }) => {
     const s = session(e);
-    try { s.check(r?.id, r?.revision); const url = typeof r.url === 'string' && webURL(r.url); if (!url) throw Error('只能打开 HTTP 或 HTTPS 链接'); await shell.openExternal(url); return { error: null }; }
-    catch (error) { return { error: message(error) }; }
+    return result(async () => { s.check(r?.id, r?.revision); const url = typeof r.url === 'string' && webURL(r.url); if (!url) throw Error('只能打开 HTTP 或 HTTPS 链接'); await shell.openExternal(url); });
   });
   ipcMain.handle(channels.exportTable, (e, rows: string[][]) => { session(e).edit(); return exportTableXlsx(rows, host.settings().directory); });
-  ipcMain.handle(channels.pinFormula, async (e, latex: string) => {
+  ipcMain.handle(channels.pinFormula, (e, latex: string) => {
     const s = session(e);
-    try { const { id, revision } = s.edit(); await host.intelligence().pinFormula(latex, () => s.current(id, revision)); return { error: null }; }
-    catch (error) { return { error: message(error) }; }
+    return result(async () => { const { id, revision } = s.edit(); await host.intelligence().pinFormula(latex, () => s.current(id, revision)); });
   });
   ipcMain.handle(channels.copyText, (e, r: { id: string; revision: number; text: string }) => {
     const s = session(e), text = editorText(r?.text, '没有可复制的文字');
     s.accept(r.id, r.revision); host.suppress(); clipboard.writeText(text);
   });
-  ipcMain.handle(channels.sendText, async (e, r: { id: string; revision: number; text: string }) => {
+  ipcMain.handle(channels.sendText, (e, r: { id: string; revision: number; text: string }) => {
     const s = session(e);
-    try { const text = editorText(r?.text, '请先选择图中文字'); s.accept(r.id, r.revision); await host.text(text); s.textSent(r.id); return { error: null }; }
-    catch (error) { return { error: message(error) }; }
+    return result(async () => { const text = editorText(r?.text, '请先选择图中文字'); s.accept(r.id, r.revision); await host.text(text); s.textSent(r.id); });
   });
   ipcMain.on(channels.invalidateOCR, (e, r: { id: string; revision: number }) => {
     let s: EditorSession;

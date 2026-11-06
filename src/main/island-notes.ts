@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { EdgeNoteItem, EdgeNotesState, IslandState } from '../shared/contracts';
+import { sealLocal } from './ipc';
 
 const NOTES_W = 376, NOTES_H = 548;
 
@@ -92,8 +93,7 @@ export class EdgeNotes {
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'floating');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    this.window.webContents.on('will-navigate', event => event.preventDefault());
+    sealLocal(this.window.webContents);
 
     const { check } = deps;
     ipcMain.handle('notes:state', event => {

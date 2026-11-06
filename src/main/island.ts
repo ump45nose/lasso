@@ -12,6 +12,7 @@ import type {
   Settings,
   SnapSlot
 } from '../shared/contracts';
+import { fromMainFrame, sealLocal } from './ipc';
 import { FinderPanel } from './island-finder';
 import { EdgeNotes } from './island-notes';
 
@@ -121,12 +122,10 @@ export class NotchIsland {
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     // Must follow setAlwaysOnTop: Chromium adds the Managed behavior back whenever the level is set.
     this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
-    this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    this.window.webContents.on('will-navigate', event => event.preventDefault());
+    sealLocal(this.window.webContents);
 
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
-      const valid = [this.window.webContents, this.notes.window.webContents, this.finder.window.webContents];
-      if (!valid.includes(event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('套件表面来源不匹配');
+      if (![this.window, this.notes.window, this.finder.window].some(win => fromMainFrame(event, win))) throw new Error('套件表面来源不匹配');
     };
     const toast = (text: string, badge?: string) => this.toast(text, badge);
     this.notes = new EdgeNotes(this.fonts, { check, toast, onPinImage: callbacks.onPinImage });

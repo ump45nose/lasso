@@ -38,7 +38,7 @@ import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOpti
 import { RecordingPanel } from './recording-panel';
 import { ActionShortcuts } from './action-shortcuts';
 import { installCaptureLibraryIPC } from './capture-library';
-import { result } from './ipc';
+import { fromMainFrame, result, sealLocal } from './ipc';
 
 app.setName('Lasso');
 // Development and later packaged builds use the same application-owned profile.
@@ -313,7 +313,7 @@ async function startScreenshot(mode: EfficiencyCaptureMode,delay:CaptureDelay=0,
   }
 }
 function assertLocal(event: IpcMainInvokeEvent) {
-  if (event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) {
+  if (!fromMainFrame(event, win)) {
     throw new Error('只有本地窗口可以调用应用操作');
   }
 }
@@ -539,24 +539,21 @@ function installIPC() {
   ipcMain.handle('shell:ocr-languages', event => { assertLocal(event); return screenshots.supportedLanguages(); });
   ipcMain.handle('shell:memory',(event,options:MemorySettings)=>{
     assertLocal(event);
-    try{
+    return result(()=>{
       if(!validMemorySettings(options))throw Error('休眠时间请输入 1–1440 的整数分钟');
       const next={...state.settings,memory:{enabled:options.enabled,idleMinutes:options.idleMinutes}};
       persistSettings(next);
-      screenshots.memoryChanged();tasks.memoryChanged();publish();return {error:null};
-    }catch(error){return {error:(error as Error).message};}
+      screenshots.memoryChanged();tasks.memoryChanged();publish();
+    });
   });
-  ipcMain.handle('shell:screenshot-settings', async (event, options: ScreenshotSettings) => {
+  ipcMain.handle('shell:screenshot-settings', (event, options: ScreenshotSettings) => {
     assertLocal(event);
-    try { validateScreenshotSettings(options, screenshots.supportedLanguages()); const next = { ...state.settings, screenshot: options }; persistSettings(next); await screenshots.preferencesChanged(); publish(); return { error: null }; }
-    catch (error) { return { error: (error as Error).message }; }
+    return result(async () => { validateScreenshotSettings(options, screenshots.supportedLanguages()); const next = { ...state.settings, screenshot: options }; persistSettings(next); await screenshots.preferencesChanged(); publish(); });
   });
   ipcMain.handle('shell:capture', (event, options: Pick<Settings, 'selectionEnabled' | 'clipboardFallback'>) => { assertLocal(event); return saveCaptureSettings(options); });
   ipcMain.handle('shell:presets-save', (event, presets: Preset[]) => {
     assertLocal(event);
-    try { persistPresets(presets); }
-    catch (error) { return { error: (error as Error).message }; }
-    return { error: null };
+    return result(() => persistPresets(presets));
   });
   ipcMain.handle('shell:preset-run', (event, id: string, options?: LaunchOptions) => { assertLocal(event); return runPreset(id, options?.imageId ? null : lastSelection, options); });
   ipcMain.handle('shell:state', event => { if(!recordingPanel.owns(event))assertLocal(event); return snapshot(); });
@@ -598,7 +595,7 @@ function installIPC() {
   ipcMain.handle('shell:regions',event=>{assertLocal(event);return screenshots.regionConfiguration();});
   ipcMain.handle('shell:region-save',(event,p:RegionPreset)=>{assertLocal(event);screenshots.saveRegionPreset(p);});
   ipcMain.handle('shell:region-delete',(event,id:string)=>{assertLocal(event);screenshots.deleteRegionPreset(id);});
-  ipcMain.handle('shell:custom-screenshot',async(event,r:CustomCaptureRequest)=>{assertLocal(event);try{const result=await screenshots.customCapture(r);if(result.status==='failed'||result.status==='reselect-required')return {error:result.error};state.customCaptureOpen=false;layout();publish();return {error:null};}catch(error){return {error:(error as Error).message};}});
+  ipcMain.handle('shell:custom-screenshot',(event,r:CustomCaptureRequest)=>{assertLocal(event);return result(async()=>{const outcome=await screenshots.customCapture(r);if(outcome.status==='failed'||outcome.status==='reselect-required')throw Error(outcome.error);state.customCaptureOpen=false;layout();publish();});});
   ipcMain.handle('shell:screenshot', async (event, mode: EfficiencyCaptureMode,delay:CaptureDelay=0) => { assertLocal(event); if ((mode==='repeat'||captureModes.includes(mode))&&[0,3,5,10].includes(delay)) await startScreenshot(mode,delay); });
   ipcMain.handle('shell:screenshot-cancel',event=>{assertLocal(event);screenshots.efficiency.cancel();});
   ipcMain.handle('shell:editor-shortcuts', (event, shortcuts: EditorShortcutMap) => {
@@ -653,8 +650,7 @@ async function boot() {
   setWindowPresence(win, true);
   motion = new WindowMotion(win);
   tasks = new TaskManager(win, secureRemote, () => { layout(); publish(); }, () => state.settings, images, event => win.webContents.send('agent:changed', event));
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', event => event.preventDefault());
+  sealLocal(win.webContents);
   win.on('resize', layout);
   win.on('hide', () => closePalette());
   win.on('close', event => {

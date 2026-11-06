@@ -7,6 +7,7 @@ import { AgentSession } from './agents/session';
 import { CodexRuntime } from './agents/codex';
 import { revealPage } from './motion';
 import { Images, type ImageInput } from './images';
+import { result } from './ipc';
 import type { PageSnapshot } from './adapters/chatgpt';
 import { isIdleCandidate } from './task-policy';
 import { idleMilliseconds } from '../shared/memory';
@@ -458,8 +459,7 @@ export class TaskManager {
       if (task.image) { task.agent.setImage(task.image); task.image = null; }
       task.pendingText = '';
       task.agent.configure(task.preset);
-      try { await task.agent.applyProfile(task.preset); if (preset.mode === 'send') await task.agent.send(); return { error: null }; }
-      catch (error) { return { error: (error as Error).message }; }
+      return result(async () => { await task.agent!.applyProfile(task.preset!); if (preset.mode === 'send') await task.agent!.send(); });
     }
     return this.deliverWeb(task, true);
   }

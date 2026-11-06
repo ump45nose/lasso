@@ -28,6 +28,7 @@ import type { CaptureDisplayBinding, SuccessfulCaptureArea } from '../../shared/
 import { setWindowPresence } from '../window-presence';
 import { applicationBundleIds, frontmostApplicationId, ignoresApplication } from '../selection';
 import { IdleSleep } from '../idle-sleep';
+import { fromMainFrame, result, sealLocal } from '../ipc';
 import { memoryDefaults, type MemorySettings } from '../../shared/memory';
 import type { IntelligenceService } from './intelligence';
 type WindowRect = CaptureRect & { pid: number; id: number };
@@ -138,7 +139,7 @@ export class CaptureManager {
     this.configureNativeAppearance();
     this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
     this.pins=new PinManager({image:receive,media:image=>this.receiveMedia?.(image)??Promise.reject(Error('图片生成尚未接入')),text:receiveText,suppress:()=>this.after(),changed,preferences:()=>this.settings(),generalSettings:()=>this.appearance?.(),saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligenceService(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences?.({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
-    const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>Boolean(this.cachedWindow&&e.sender===this.cachedWindow.webContents&&e.senderFrame===this.cachedWindow.webContents.mainFrame);
+    const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>fromMainFrame(e,this.cachedWindow);
     const assert=(e:IpcMainEvent|IpcMainInvokeEvent)=>{if(!owns(e))throw new Error('截图操作只允许截图窗口调用');};
     ipcMain.handle('screenshot:checkpoint',(e,editId:string,checkpoint:EditorCheckpoint|null)=>{assert(e);if(this.state?.editId===editId)this.checkpointReply?.(checkpoint);});
     ipcMain.handle('screenshot:state',e=>{assert(e);return this.editorState();});
@@ -146,7 +147,7 @@ export class CaptureManager {
     ipcMain.handle('screenshot:region',(e,r:{id:string;revision:number;crop:CaptureRect})=>{assert(e);this.acceptVersion(r.id,r.revision);const context=this.state!.editableRegion;if(!context||!validPixelRegion(r.crop,context.sourceSize))throw Error('无效的截图区域');this.assertCaptureDisplay();if(['x','y','width','height'].every(k=>context.currentCrop[k as keyof CaptureRect]===r.crop[k as keyof CaptureRect]))return;context.currentCrop={...r.crop};this.efficiency.rememberSuccessfulArea({display:context.display,rect:regionPoints(r.crop,context.display.bounds,context.sourceSize),kind:this.state!.captureKind==='rect'?'rect':'area'});});
     ipcMain.handle('screenshot:last-region',e=>{assert(e);const area=this.efficiency.rememberedArea,context=this.state?.editableRegion;return area&&context&&sameCaptureDisplay(area.display,context.display)?regionPixels(area.rect,context.display.bounds,context.sourceSize):null;});
     ipcMain.handle('screenshot:clear-region',e=>{assert(e);this.clearRegion();});
-    ipcMain.handle('screenshot:start-scroll',async(e,crop:CaptureRect)=>{assert(e);try{const c=this.state?.editableRegion;if(!c||!validPixelRegion(crop,c.sourceSize))throw Error('无效的滚动选区');await this.startScroll(regionPoints(crop,c.display.bounds,c.sourceSize));return {error:null};}catch(error){return {error:(error as Error).message};}});
+    ipcMain.handle('screenshot:start-scroll',(e,crop:CaptureRect)=>{assert(e);return result(async()=>{const c=this.state?.editableRegion;if(!c||!validPixelRegion(crop,c.sourceSize))throw Error('无效的滚动选区');await this.startScroll(regionPoints(crop,c.display.bounds,c.sourceSize));});});
     ipcMain.handle('screenshot:regions',e=>{assert(e);return this.regionConfiguration();});
     ipcMain.handle('screenshot:save-region-preset',(e,p:RegionPreset)=>{assert(e);this.saveRegionPreset(p);const c=this.state?.editableRegion;if(c)this.regionsStore.place(p.id,{display:c.display,rect:regionPoints(c.currentCrop,c.display.bounds,c.sourceSize),kind:'rect'});});
 
@@ -163,10 +164,10 @@ export class CaptureManager {
       if(this.state!==state||state.id!==request.sessionId)throw Error('截图会话已结束');
       this.timing.pixelsReady=performance.now()-this.startedAt;return pixels;
     });
-    ipcMain.handle('screenshot:action',async(e,a:string)=>{assert(e);try{await this.action(a);return {error:null};}catch(error){return {error:(error as Error).message};}});
-    ipcMain.handle('screenshot:scroll-action',async(e,a:ScrollCaptureAction)=>{assert(e);try{await this.scrollAction(a);return {error:null};}catch(error){return {error:(error as Error).message};}});
+    ipcMain.handle('screenshot:action',(e,a:string)=>{assert(e);return result(()=>this.action(a));});
+    ipcMain.handle('screenshot:scroll-action',(e,a:ScrollCaptureAction)=>{assert(e);return result(()=>this.scrollAction(a));});
     ipcMain.on('screenshot:load-error',(e,id:string)=>{if(!owns(e)||this.state?.editId!==id)return;if(this.native.snapshot().visible)this.native.update({session:this.state.id,message:'编辑器未能准备好，请重试或取消'});else{this.win?.show();app.focus({steal:true});this.win?.focus();}});
-    ipcMain.handle('screenshot:export',async(e,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode)=>{assert(e);try{await this.exportFrame(frame,action,format,contentMode);return {error:null};}catch(error){return {error:(error as Error).message};}});
+    ipcMain.handle('screenshot:export',(e,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode)=>{assert(e);return result(()=>this.exportFrame(frame,action,format,contentMode));});
     const session=(e:IpcMainEvent|IpcMainInvokeEvent):EditorSession=>{assert(e);return {
       edit:()=>{const s=this.state;if(s?.phase!=='result'||!s.selection)throw Error('截图编辑会话已结束');return {id:s.editId,revision:this.editRevision};},
       check:(id,revision)=>this.assertVersion(id,revision),
@@ -192,7 +193,7 @@ export class CaptureManager {
     const win=new BrowserWindow({width:760,height:500,frame:false,show:false,backgroundColor:'#242320',resizable:false,movable:false,fullscreenable:false,hasShadow:false,enableLargerThanScreen:true,webPreferences:{preload:join(__dirname,'capture-preload.cjs'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
     this.cachedWindow=win;
     win.on('show',this.appVisibility);win.on('hide',this.appVisibility);win.on('minimize',this.appVisibility);win.on('restore',this.appVisibility);win.on('blur',this.appVisibility);
-    win.webContents.setWindowOpenHandler(()=>({action:'deny'}));win.webContents.on('will-navigate',e=>e.preventDefault());
+    sealLocal(win.webContents);
     // The application menu binds Cmd+W to the launcher. Close this session instead,
     // including when an annotation text field has keyboard focus.
     win.webContents.on('before-input-event',(event,input)=>{
@@ -213,7 +214,7 @@ export class CaptureManager {
     return true;
   }
   get active(){return this.recordingPreparing||Boolean(this.recordingSource)||this.busy||Boolean(this.state)||Boolean(this.win)||this.efficiency.state.phase!=='idle';}
-  ownsRecording(event:IpcMainInvokeEvent){return !!this.cachedWindow&&!this.cachedWindow.isDestroyed()&&event.sender===this.cachedWindow.webContents&&event.senderFrame===this.cachedWindow.webContents.mainFrame;}
+  ownsRecording(event:IpcMainInvokeEvent){return fromMainFrame(event,this.cachedWindow);}
   publishRecording(state:RecordingSessionState|null){if(this.cachedWindow&&!this.cachedWindow.isDestroyed())this.cachedWindow.webContents.send('shell:recording-changed',state);this.pins.publishRecording(state);}
   cancelRecordingSelection(){if(this.recordingPreparing)this.releaseRecording();}
   releaseRecording(restore=false){if(this.recordingReleased)return;this.recordingReleased=true;this.recordingEpoch++;const select=this.recordingSelect;this.recordingSelect=null;select?.({session:'',type:'cancel'});this.recordingSource=null;this.after(restore);}

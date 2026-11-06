@@ -1,6 +1,7 @@
 import { BrowserWindow, clipboard, ipcMain, screen } from 'electron';
 import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
 import { join } from 'node:path';
+import { fromMainFrame, sealLocal } from './ipc';
 import { WindowMotion } from './motion';
 import { fitToWorkArea } from './position';
 import { composePrompt } from './presets';
@@ -48,10 +49,9 @@ export class ActionBar {
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'pop-up-menu');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    this.window.webContents.on('will-navigate', event => event.preventDefault());
+    sealLocal(this.window.webContents);
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
-      if (event.sender !== this.window.webContents || event.senderFrame !== this.window.webContents.mainFrame) throw new Error('动作条来源不匹配');
+      if (!fromMainFrame(event, this.window)) throw new Error('动作条来源不匹配');
     };
     ipcMain.handle('bar:state', event => { check(event); return this.snapshot(); });
     ipcMain.handle('bar:run', async (event, id: string) => {

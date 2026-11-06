@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { writeFile } from 'node:fs/promises';
 import { MediaService } from './media-service';
 import type { MediaFontSettings, MediaGenerateRequest, MediaOutputAction, MediaState, MediaDraft } from '../shared/media';
+import { fromMainFrame, sealLocal } from './ipc';
 import { fitToWorkArea } from './position';
 import { setWindowPresence } from './window-presence';
 
@@ -52,7 +53,7 @@ export class MediaWindow {
     handle('media:output', (id: string, action: MediaOutputAction, imageId?: string) => this.output(id, action, imageId));
   }
   private assertLocal(event: IpcMainInvokeEvent) {
-    if (!this.win || event.sender !== this.win.webContents || event.senderFrame !== this.win.webContents.mainFrame) throw Error('生图操作只允许生图窗口调用');
+    if (!fromMainFrame(event, this.win)) throw Error('生图操作只允许生图窗口调用');
   }
   private snapshot(state = this.service.snapshot()): MediaState {
     const { fonts, importedFonts } = this.fontSettings();
@@ -69,8 +70,7 @@ export class MediaWindow {
         frame: false, show: false, backgroundColor: '#FAF9F5', title: 'Lasso 图片生成', fullscreenable: false,
         webPreferences: { preload: join(__dirname, 'media-preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
       this.win = win;
-      win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      win.webContents.on('will-navigate', event => event.preventDefault());
+      sealLocal(win.webContents);
       win.on('close', event => { if(this.outputting&&!this.quitting){event.preventDefault();this.closeAfterOutput=true;win.hide();} });
       win.on('closed',()=>{if(this.win===win){this.win=null;this.ready=null;}});
       this.ready=win.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'quick-image' } });

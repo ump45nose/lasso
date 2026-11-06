@@ -4,6 +4,7 @@ import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { FinderPanelState, IslandState } from '../shared/contracts';
+import { sealLocal } from './ipc';
 
 const FINDER_W = 384, FINDER_H = 430;
 
@@ -93,8 +94,7 @@ export class FinderPanel {
     });
     this.window.setAlwaysOnTop(true, 'pop-up-menu');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    this.window.webContents.on('will-navigate', event => event.preventDefault());
+    sealLocal(this.window.webContents);
     this.window.on('blur', () => {
       if (!this.window.isDestroyed()) this.window.hide();
     });
