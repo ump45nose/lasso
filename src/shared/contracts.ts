@@ -221,10 +221,11 @@ export interface FastApiCardState {
   isTranslation: boolean;
   targetLang: 'auto' | 'zh' | 'en';
 }
-/** `presets` fill the capsule; `more` are the remaining enabled presets, listed in the ··· menu. */
+/** `presets` fill the capsule; `more` are the remaining enabled presets and `scripts` the enabled script actions, both listed in the ··· menu. */
 export interface ActionBarState {
   presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[];
   more: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[];
+  scripts: Pick<ScriptAction, 'id' | 'name'>[];
   busy: boolean;
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
   fastCard?: FastApiCardState | null;
@@ -235,10 +236,12 @@ export type ActionBarTip = 'above' | 'below';
 export interface ActionBarLayout { tip: ActionBarTip; menu: ActionBarTip }
 /** ··· menu metrics, shared by main (window growth) and the renderer (row sizes). */
 export const BAR_MENU = { width: 232, row: 32, pad: 5, sep: 9, gap: 6 };
-export const barMenuHeight = (more: number) => BAR_MENU.pad * 2 + (more + 1) * BAR_MENU.row + (more ? BAR_MENU.sep : 0);
+/** The overflow presets and the scripts each end with a separator when present; the settings row comes last. */
+export const barMenuHeight = ({ more, scripts }: Pick<ActionBarState, 'more' | 'scripts'>) => BAR_MENU.pad * 2 + (more.length + scripts.length + 1) * BAR_MENU.row + [more, scripts].filter(rows => rows.length).length * BAR_MENU.sep;
 export interface ActionBarAPI {
   getState(): Promise<ActionBarState>;
   runPreset(id: string): Promise<void>;
+  runScript(id: string): Promise<void>;
   /** Grows the window on the menu side while the ··· menu is open. */
   menu(open: boolean): void;
   settings(): void;

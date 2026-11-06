@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useAnimationControls } from 'motion/react';
-import { Copy, CornerDownLeft, Ellipsis, Pin, RotateCcw, Settings2, X, Zap } from 'lucide-react';
+import { Braces, Copy, CornerDownLeft, Ellipsis, Pin, RotateCcw, Settings2, X, Zap } from 'lucide-react';
 import { BAR_MENU, presetTargetLabels as targetLabels, type ActionBarAPI, type ActionBarLayout, type ActionBarState, type FastApiCardState } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
 import { useFonts } from './fonts';
@@ -138,13 +138,18 @@ export function ActionBar() {
     // The bar hides as the run starts; clear the label once it has faded so the next selection starts fresh.
     void window.actionBar.runPreset(preset.id).finally(() => setTimeout(() => setSending(null), 400));
   }
+  function runScript(id: string) {
+    setPressed(id);
+    setTimeout(() => { setPressed(null); setMenu(false); }, 120);
+    void window.actionBar.runScript(id);
+  }
   function toggleMenu(open: boolean) {
     setMenu(open); clearTimeout(tipTimer.current); setTip(null);
     if (!open) setSpot(null);
     window.actionBar.menu(open);
   }
   useLayoutEffect(() => { if (tipBox.current) setTipWidth(tipBox.current.offsetWidth); }, [tip?.id]);
-  const presets = state?.presets || [], more = state?.more || [], fastCard = state?.fastCard || null;
+  const presets = state?.presets || [], more = state?.more || [], scripts = state?.scripts || [], fastCard = state?.fastCard || null;
   const tipPreset = tip && presets.find(p => p.id === tip.id);
   const slide = Boolean(lastSpot.current);
   // Centre the tip on its button but keep it 4px inside the window (the stage has 16px side padding).
@@ -166,15 +171,15 @@ export function ActionBar() {
               initial={false} animate={{ x: spot.x, width: spot.width }} transition={slide ? spring : { duration: 0 }} />}
             {presets.map(preset => <button key={preset.id} disabled={state!.busy || Boolean(pressed)} aria-label={`${preset.name} · ${targetLabels[preset.target]} · ${preset.mode === 'edit' ? '先编辑' : '直接发送'}`}
               onPointerEnter={event => enter(preset.id, event)} onClick={event => run(preset, event.currentTarget)}>{preset.name}</button>)}
-            <span className="ab-sep" />
-            <button aria-label="更多预设与设置" aria-haspopup="menu" aria-expanded={menu} onPointerEnter={event => enter('more', event)} onClick={() => toggleMenu(!menu)}><Ellipsis size={16} /></button>
+            {presets.length > 0 && <span className="ab-sep" />}
+            <button aria-label="更多动作与设置" aria-haspopup="menu" aria-expanded={menu} onPointerEnter={event => enter('more', event)} onClick={() => toggleMenu(!menu)}><Ellipsis size={16} /></button>
           </motion.span>}
       </AnimatePresence>
       {sending && <motion.span className="ab-progress" initial={{ scaleX: 0 }} animate={{ scaleX: 1 }} transition={{ duration: 0.42, ease: 'easeOut' }} />}
     </motion.div>
     <AnimatePresence>
       {fastCard && !sending && <FastApiCard key="fast-card" card={fastCard} side={layout.menu} />}
-      {menu && !fastCard && !sending && <motion.div key="menu" className={'ab-menu ' + layout.menu} role="menu" aria-label="更多预设"
+      {menu && !fastCard && !sending && <motion.div key="menu" className={'ab-menu ' + layout.menu} role="menu" aria-label="更多动作"
         style={{ width: BAR_MENU.width, padding: BAR_MENU.pad, left: 16 + Math.max(0, (capsule.current?.offsetWidth || 0) - BAR_MENU.width), [layout.menu === 'above' ? 'bottom' : 'top']: 36 + 40 + BAR_MENU.gap }}
         initial={{ opacity: 0, y: layout.menu === 'above' ? 6 : -6, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.1 } }} transition={spring} onPointerLeave={() => setRow(null)}>
@@ -183,13 +188,18 @@ export function ActionBar() {
           {row === preset.id && <Glide id="ab-menu-row" className={'ab-menu-on' + (pressed === preset.id ? ' pressed' : '')} />}
           <Badge target={preset.target} /><span className="ab-menu-name">{preset.name}</span><span className="ab-menu-dim">{preset.mode === 'edit' ? '先编辑' : '直接发送'}</span></button>)}
         {more.length > 0 && <span className="ab-menu-sep" style={{ height: BAR_MENU.sep }} />}
+        {scripts.map(script => <button key={script.id} role="menuitem" style={{ height: BAR_MENU.row }} disabled={state!.busy || Boolean(pressed)}
+          onPointerEnter={() => setRow(script.id)} onClick={() => runScript(script.id)}>
+          {row === script.id && <Glide id="ab-menu-row" className={'ab-menu-on' + (pressed === script.id ? ' pressed' : '')} />}
+          <Braces size={15} className="ab-menu-icon" /><span className="ab-menu-name">{script.name}</span><span className="ab-menu-dim">复制结果</span></button>)}
+        {scripts.length > 0 && <span className="ab-menu-sep" style={{ height: BAR_MENU.sep }} />}
         <button role="menuitem" style={{ height: BAR_MENU.row }} onPointerEnter={() => setRow('settings')} onClick={() => window.actionBar.settings()}>
           {row === 'settings' && <Glide id="ab-menu-row" className="ab-menu-on" />}<Settings2 size={15} className="ab-menu-icon" /><span className="ab-menu-name">预设设置…</span></button>
       </motion.div>}
       {tip && !menu && !fastCard && !sending && <motion.div key="tip" ref={tipBox} className={'ab-tip ' + tipSide} role="tooltip"
         initial={{ opacity: 0, y: tipSide === 'above' ? 3 : -3, x: tipX }} animate={{ opacity: 1, y: 0, x: tipX }}
         exit={{ opacity: 0, transition: { duration: 0.1 } }} transition={spring}>
-        {tipPreset ? <><Badge target={tipPreset.target} />{targetLabels[tipPreset.target]}<span className="ab-tip-dim">· {tipPreset.mode === 'edit' ? '先编辑' : '直接发送'}</span></> : <>更多预设与设置</>}
+        {tipPreset ? <><Badge target={tipPreset.target} />{targetLabels[tipPreset.target]}<span className="ab-tip-dim">· {tipPreset.mode === 'edit' ? '先编辑' : '直接发送'}</span></> : <>更多动作与设置</>}
       </motion.div>}
     </AnimatePresence>
   </div>;

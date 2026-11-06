@@ -24,6 +24,7 @@ export class ActionBar {
   private motion: WindowMotion;
   private selection: SelectionContext | null = null;
   private presets: Preset[] = [];
+  private scripts: ActionBarState['scripts'] = [];
   private fonts: ActionBarState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
   private busy = false;
   private width = 340;
@@ -36,6 +37,7 @@ export class ActionBar {
 
   constructor(
     private run: (id: string, selection: SelectionContext) => Promise<void>,
+    private runScript: (id: string, text: string) => Promise<void>,
     private settings: () => void,
     private fast: ActionBarFastCallbacks
   ) {
@@ -63,6 +65,14 @@ export class ActionBar {
         return;
       }
       await this.run(id, this.selection);
+    });
+    ipcMain.handle('bar:script', async (event, id: string) => {
+      check(event);
+      if (!this.selection || this.busy) return;
+      const { text } = this.selection;
+      this.hide();
+      try { await this.runScript(id, text); }
+      catch (error) { this.fast.toast(`脚本失败：${(error as Error).message}`, 'Error'); }
     });
     ipcMain.on('bar:menu', (event, open: boolean) => { check(event); this.menuOpen = open === true; if (this.menuOpen) this.closeFast(); this.place(); });
     ipcMain.on('bar:settings', event => { check(event); this.hide(); this.settings(); });
@@ -132,8 +142,10 @@ export class ActionBar {
 
   private snapshot(): ActionBarState {
     const enabled = this.presets.filter(p => p.enabled).map(({ id, name, target, mode }) => ({ id, name, target, mode }));
-    return { presets: enabled.slice(0, VISIBLE), more: enabled.slice(VISIBLE), busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
+    return { presets: enabled.slice(0, VISIBLE), more: enabled.slice(VISIBLE), scripts: this.scripts, busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
   }
+
+  private hasActions() { return this.presets.some(p => p.enabled) || this.scripts.length > 0; }
 
   private publish() {
     if (!this.window.isDestroyed()) this.window.webContents.send('bar:changed', this.snapshot());
@@ -141,8 +153,9 @@ export class ActionBar {
 
   update(presets: Preset[], busy: boolean, settings: Settings) {
     this.presets = presets; this.busy = busy; this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.scripts = settings.scriptActions.filter(action => action.enabled).map(({ id, name }) => ({ id, name }));
     this.publish();
-    if (!presets.some(p => p.enabled)) this.hide();
+    if (!this.hasActions()) this.hide();
   }
 
   private closeFast() {
@@ -216,7 +229,7 @@ export class ActionBar {
     const bounds = fitToWorkArea({ x: a.x - SIDE, y: barY - TIP, width: targetWidth + SIDE * 2, height: HEIGHT }, { ...area, y: area.y - TIP, height: area.height + TIP * 2 });
     const top = bounds.y + TIP, room = (side: 'above' | 'below', need: number) => side === 'above' ? top - need >= area.y : top + BAR + need <= area.y + area.height;
     const away = above ? 'above' : 'below', toward = above ? 'below' : 'above';
-    const menuNeed = BAR_MENU.gap + Math.max(barMenuHeight(this.snapshot().more.length), this.fastCardHeight);
+    const menuNeed = BAR_MENU.gap + Math.max(barMenuHeight(this.snapshot()), this.fastCardHeight);
     this.bar = { x: bounds.x, top };
     this.layout = { tip: room(away, TIP) ? away : toward, menu: room(away, menuNeed) || !room(toward, menuNeed) ? away : toward };
     this.place();
@@ -228,7 +241,7 @@ export class ActionBar {
     const activeExtraHeight = cardH > 0
       ? BAR_MENU.gap + cardH + MENU_EDGE
       : this.menuOpen
-        ? BAR_MENU.gap + barMenuHeight(this.snapshot().more.length) + MENU_EDGE
+        ? BAR_MENU.gap + barMenuHeight(this.snapshot()) + MENU_EDGE
         : 0;
     const extra = Math.max(0, activeExtraHeight - TIP);
     const width = Math.max(this.width, cardH > 0 ? FAST_WIDTH : this.menuOpen ? BAR_MENU.width : 0) + SIDE * 2;
@@ -238,7 +251,7 @@ export class ActionBar {
   show(selection: SelectionContext) {
     this.closeFast();
     this.selection = selection;
-    if (!this.presets.some(p => p.enabled) || this.busy) return;
+    if (!this.hasActions() || this.busy) return;
     this.menuOpen = false;
     this.position(selection);
     this.window.setIgnoreMouseEvents(true, { forward: true });

@@ -4,6 +4,7 @@ import { on } from './bridge';
 const api: ActionBarAPI = {
   getState: () => ipcRenderer.invoke('bar:state'),
   runPreset: id => ipcRenderer.invoke('bar:run', id),
+  runScript: id => ipcRenderer.invoke('bar:script', id),
   menu: open => ipcRenderer.send('bar:menu', open),
   settings: () => ipcRenderer.send('bar:settings'),
   resize: width => ipcRenderer.send('bar:resize', width),

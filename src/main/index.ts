@@ -372,6 +372,17 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   layout(); showWindow(); publish();
   return result;
 }
+async function runScriptAction(id: string, text?: string) {
+  const action = state.settings.scriptActions.find(action => action.id === id && action.enabled);
+  if (!action) throw Error('脚本不存在或未启用');
+  const input = text ?? lastSelection?.text ?? await clipboard.readText();
+  if (typeof input !== 'string' || input.length > 1000000) throw Error('脚本输入文字过长');
+  const image = state.inputImage;
+  const output = await runControlledScript(action.code, { text: input, width: image?.width ?? 0, height: image?.height ?? 0, app: lastSelection?.sourceApp ?? '' });
+  await clipboard.writeText(output);
+  island.toast(`已复制「${action.name}」的结果`, 'JS');
+  return output;
+}
 
 async function choosePath(kind: 'directory' | 'executable' | 'application') {
   nativeDialogs++;
@@ -471,15 +482,8 @@ function installIPC() {
   });});
   ipcMain.handle('shell:script-run',async(event,id:string,input?:{text?:string})=>{
     assertLocal(event);
-    try {
-      const action=state.settings.scriptActions.find(action=>action.id===id&&action.enabled);
-      if(!action)throw Error('脚本不存在或未启用');
-      const text=input?.text??await clipboard.readText();
-      if(typeof text!=='string'||text.length>1000000)throw Error('脚本输入文字过长');
-      const image=state.inputImage;
-      const output=await runControlledScript(action.code,{text,width:image?.width??0,height:image?.height??0,app:lastSelection?.sourceApp??''});
-      await clipboard.writeText(output);return {output,error:null};
-    }catch(error){return {output:'',error:(error as Error).message};}
+    try{return {output:await runScriptAction(id,input?.text),error:null};}
+    catch(error){return {output:'',error:(error as Error).message};}
   });
   const saveSettings = (next: Settings) => { persistSettings(next); publish(); };
   ipcMain.handle('shell:fonts', (event, fonts: Settings['fonts']) => {
@@ -729,6 +733,7 @@ async function boot() {
   island.updateSettings(state.settings);
   actionBar = new ActionBar(
     async (id, selection) => { await runPreset(id, selection); },
+    async (id, text) => { await runScriptAction(id, text); },
     openSettings,
     {
       stream: (input, onDelta) => media.service.streamChat(input, onDelta),
