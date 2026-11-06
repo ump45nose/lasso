@@ -240,14 +240,13 @@ export class PinManager {
     return this.create({kind:'text',text});
   }
   async reopenClosedPin(){await this.ready;const saved=this.closed.at(-1);if(!saved)throw Error('没有最近关闭的贴图');const id=await this.open(deserializePinnedDocument(saved.document),saved);this.closed.pop();this.changed();this.persist();return id;}
-  async actPin(id:string,action:'focus'|'toggle-visible'|'toggle-lock'|'toggle-thumbnail'|'close',groupId?:string){
-    if(!['focus','toggle-visible','toggle-lock','toggle-thumbnail','close'].includes(action))throw Error('不支持的贴图操作');
+  async actPin(id:string,action:'focus'|'toggle-visible'|'toggle-lock'|'close',groupId?:string){
+    if(!['focus','toggle-visible','toggle-lock','close'].includes(action))throw Error('不支持的贴图操作');
     const pin=this.pins.get(id);if(!pin)throw Error('贴图已关闭');
     if(groupId!==undefined)this.setGroup(pin,groupId);
     if(action==='focus')this.focus(id);
     else if(action==='toggle-visible'){pin.visible=!pin.visible;this.applyVisibility(pin);this.changed(pin);}
     else if(action==='toggle-lock')this.setLocked(pin,!pin.state.locked);
-    else if(action==='toggle-thumbnail')this.setThumbnail(pin,!pin.state.thumbnail);
     else if(action==='close')await this.closePin(pin);else throw Error('不支持的贴图操作');
   }
   private closePin(pin:Pin){return new Promise<void>(resolve=>{pin.win.once('closed',resolve);pin.win.close();});}

@@ -17,15 +17,7 @@ function resolveNotesFolder(): string {
   if (!existsSync(scratchPath)) {
     writeFileSync(
       scratchPath,
-      '# Scratchpad 随手记\n\n- 划词选择任意英文后点「翻译」即可走 New API 流式直出，按 `↵` 直接回填替换\n- 右侧贴边悬停即可拉出本抽屉，点击右下角「撕下为贴图」可将当前笔记钉在桌面\n- 常用命令：`launchctl kickstart -k gui/$UID/com.personalhub.app`\n',
-      'utf8'
-    );
-  }
-  const secondPath = join(folder, 'Workspace-Notes.md');
-  if (!existsSync(secondPath)) {
-    writeFileSync(
-      secondPath,
-      '# 研发分屏与巡检备忘\n\n1. `⌃⌥←` / `⌃⌥→` 左右半屏吸附\n2. `⌃⌥↵` 一键 2/3 编辑器 + 1/3 AI 双栏工作区\n3. `⌃⌥F` 唤起 Finder 超级动作面板\n',
+      '# Scratchpad 随手记\n\n- 划词选择任意英文后点「翻译」即可走 New API 流式直出，按 `↵` 直接回填替换\n- 右侧贴边悬停即可拉出本抽屉，点击右下角「撕下为贴图」可将当前笔记钉在桌面\n- `⌃⌥N` 展开 / 收起本抽屉，`⌃⌥F` 唤起 Finder 超级动作面板\n- `⌃⌥←` / `⌃⌥→` 左右半屏吸附，`⌃⌥↵` 一键 2/3 编辑器 + 1/3 AI 双栏工作区\n',
       'utf8'
     );
   }

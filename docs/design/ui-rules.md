@@ -46,7 +46,7 @@
 
 ## 动效
 
-- 用 `motion/react` 和 `src/renderer/motion.tsx` 里的预设：`spring`（520/38）、`soft`、`rise`、`pop`、`collapse`。根节点已包了 `MotionConfig reducedMotion="user"`。
+- 用 `motion/react` 和 `src/renderer/motion.tsx` 里的预设：`spring`（520/38）、`rise`、`pop`、`collapse`。根节点已包了 `MotionConfig reducedMotion="user"`。
 - motion 只负责出现/消失、布局变化和滑动高亮。悬停、按下和颜色过渡交给 CSS，时长用 `--t-fast` / `--t-base` / `--t-slow`，缓动用 `--ease-out`。
 - 同一元素不要同时挂 CSS keyframes 和 motion 动画。出现时位移不超过 6px，缩放不小于 0.94。
 

@@ -4,7 +4,7 @@ import { LayoutGroup, motion, type Transition } from 'motion/react';
 /** Shared motion presets. CSS still owns hover, press and color; these cover presence, layout and sliding highlights. */
 export const ease = [0.22, 0.68, 0, 1] as const;
 export const spring: Transition = { type: 'spring', stiffness: 520, damping: 38, mass: 0.8 };
-export const soft: Transition = { duration: 0.18, ease };
+const soft: Transition = { duration: 0.18, ease };
 export const rise = {
   initial: { opacity: 0, y: 6 },
   animate: { opacity: 1, y: 0, transition: { duration: 0.28, ease } },

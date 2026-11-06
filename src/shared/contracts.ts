@@ -152,7 +152,7 @@ export interface DesktopAPI {
   pinClipboard(): Promise<{ error: string | null }>;
   reopenClosedPin(): Promise<{ error: string | null }>;
   arrangePins(mode: PinArrangeMode, groupId?: string): Promise<{ error: string | null }>;
-  actPin(id: string, action: 'focus' | 'toggle-visible' | 'toggle-lock' | 'toggle-thumbnail' | 'close', groupId?: string): Promise<{ error: string | null }>;
+  actPin(id: string, action: 'focus' | 'toggle-visible' | 'toggle-lock' | 'close', groupId?: string): Promise<{ error: string | null }>;
   exportConfig(): Promise<{ path: string | null; error: string | null }>;
   importConfig(): Promise<{ error: string | null }>;
   webdavConfig(): Promise<WebDavConfig>;
