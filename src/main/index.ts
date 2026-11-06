@@ -373,13 +373,14 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   layout(); showWindow(); publish();
   return result;
 }
-async function runScriptAction(id: string, text?: string) {
+async function runScriptAction(id: string, source?: { text: string; sourceApp?: string }) {
   const action = state.settings.scriptActions.find(action => action.id === id && action.enabled);
   if (!action) throw Error('脚本不存在或未启用');
-  const input = text ?? lastSelection?.text ?? await clipboard.readText();
-  if (typeof input !== 'string' || input.length > 1000000) throw Error('脚本输入文字过长');
+  const selection = source ?? lastSelection;
+  const text = selection ? selection.text : await clipboard.readText();
+  if (text.length > 1000000) throw Error('脚本输入文字过长');
   const image = state.inputImage;
-  const output = await runControlledScript(action.code, { text: input, width: image?.width ?? 0, height: image?.height ?? 0, app: lastSelection?.sourceApp ?? '' });
+  const output = await runControlledScript(action.code, { text, width: image?.width ?? 0, height: image?.height ?? 0, app: selection?.sourceApp ?? '' });
   await clipboard.writeText(output);
   island.toast(`已复制「${action.name}」的结果`, 'JS');
   return output;
@@ -483,7 +484,7 @@ function installIPC() {
   });});
   ipcMain.handle('shell:script-run',async(event,id:string,input?:{text?:string})=>{
     assertLocal(event);
-    try{return {output:await runScriptAction(id,input?.text),error:null};}
+    try{return {output:await runScriptAction(id,typeof input?.text==='string'?{text:input.text}:undefined),error:null};}
     catch(error){return {output:'',error:(error as Error).message};}
   });
   const saveSettings = (next: Settings) => { persistSettings(next); publish(); };
@@ -734,7 +735,7 @@ async function boot() {
   island.updateSettings(state.settings);
   actionBar = new ActionBar(
     async (id, selection) => { await runPreset(id, selection); },
-    async (id, text) => { await runScriptAction(id, text); },
+    async (id, selection) => { await runScriptAction(id, selection); },
     openSettings,
     {
       stream: (input, onDelta) => media.service.streamChat(input, onDelta),

@@ -37,7 +37,7 @@ export class ActionBar {
 
   constructor(
     private run: (id: string, selection: SelectionContext) => Promise<void>,
-    private runScript: (id: string, text: string) => Promise<void>,
+    private runScript: (id: string, selection: SelectionContext) => Promise<void>,
     private settings: () => void,
     private fast: ActionBarFastCallbacks
   ) {
@@ -68,10 +68,10 @@ export class ActionBar {
     });
     ipcMain.handle('bar:script', async (event, id: string) => {
       check(event);
-      if (!this.selection || this.busy) return;
-      const { text } = this.selection;
+      const selection = this.selection;
+      if (!selection || this.busy) return;
       this.hide();
-      try { await this.runScript(id, text); }
+      try { await this.runScript(id, selection); }
       catch (error) { this.fast.toast(`脚本失败：${(error as Error).message}`, 'Error'); }
     });
     ipcMain.on('bar:menu', (event, open: boolean) => { check(event); this.menuOpen = open === true; if (this.menuOpen) this.closeFast(); this.place(); });
