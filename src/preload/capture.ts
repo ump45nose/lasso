@@ -1,8 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { ScreenshotAPI, ScreenshotState } from '../shared/capture';
-import { on, recording } from './bridge';
+import { on } from './bridge';
 const api: ScreenshotAPI = {
-  ...recording,
   onSuspend: callback => {
     const listener = (_event: Electron.IpcRendererEvent, editId: string) => {
       void ipcRenderer.invoke('screenshot:checkpoint', editId, callback()).catch(()=>{});
@@ -14,7 +13,6 @@ const api: ScreenshotAPI = {
   lastRegion:()=>ipcRenderer.invoke('screenshot:last-region'),
   clearRegion:()=>ipcRenderer.invoke('screenshot:clear-region'),
   startScroll:crop=>ipcRenderer.invoke('screenshot:start-scroll',crop),
-  regions:()=>ipcRenderer.invoke('screenshot:regions'),
   saveRegionPreset:p=>ipcRenderer.invoke('screenshot:save-region-preset',p),
   ready:(id,editId)=>ipcRenderer.send('screenshot:ready',id,editId),
   state:()=>ipcRenderer.invoke('screenshot:state'),

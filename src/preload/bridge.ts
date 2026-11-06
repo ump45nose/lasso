@@ -1,18 +1,11 @@
 import { ipcRenderer } from 'electron';
-import type { PinWorkspaceCalls, ScreenshotAPI } from '../shared/capture';
-import type { RecordingSessionState } from '../shared/recording';
+import type { PinWorkspaceCalls } from '../shared/capture';
 
 export function on<T>(channel: string, callback: (value: T) => void) {
   const listener = (_event: Electron.IpcRendererEvent, value: T) => callback(value);
   ipcRenderer.on(channel, listener);
   return () => { ipcRenderer.removeListener(channel, listener); };
 }
-
-export const recording: Pick<ScreenshotAPI, 'recordingState' | 'recordingAction' | 'onRecording'> = {
-  recordingState: () => ipcRenderer.invoke('shell:recording-state'),
-  recordingAction: action => ipcRenderer.invoke('shell:recording-action', action),
-  onRecording: callback => on<RecordingSessionState | null>('shell:recording-changed', callback)
-};
 
 export const pinWorkspaceCalls: PinWorkspaceCalls = {
   pinWorkspace: () => ipcRenderer.invoke('shell:pin-workspace'),

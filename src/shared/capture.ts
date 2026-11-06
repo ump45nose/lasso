@@ -1,8 +1,7 @@
 import type { DesktopAPI, Settings } from './contracts';
 import type { ScreenshotSettings } from './screenshot-settings';
-import type { RecordingAction, RecordingSessionState } from './recording';
 import type { CaptureDisplayBinding } from './capture-efficiency';
-import type { RegionPreset, RegionConfiguration } from './capture-regions';
+import type { RegionPreset } from './capture-regions';
 import type { PinContentPayload, PinGroup, PinKind, PinWheelAction, PinWorkspaceState } from './history-sync';
 import type { AnnotationStyleMemory, ScreenshotExportContentMode, ScreenshotKind, ScreenshotOutputFormat } from './screenshot-settings';
 import type { IntelligenceKind, IntelligenceResult } from './intelligence';
@@ -75,15 +74,11 @@ export function pixelRect(r: CaptureRect, width: number, height: number, pixelWi
   return {x,y,width:Math.max(1,Math.min(pixelWidth-x,Math.round(r.width*pixelWidth/width))),height:Math.max(1,Math.min(pixelHeight-y,Math.round(r.height*pixelHeight/height)))};
 }
 export interface ScreenshotAPI {
-  recordingState(): Promise<RecordingSessionState | null>;
-  recordingAction(action: RecordingAction): Promise<{ state: RecordingSessionState | null; path?: string | null; error: string | null }>;
-  onRecording(callback: (state: RecordingSessionState | null) => void): () => void;
   onSuspend(callback: () => EditorCheckpoint | null): () => void;
   updateRegion(request:{id:string;revision:number;crop:CaptureRect}):Promise<void>;
   lastRegion():Promise<CaptureRect|null>;
   clearRegion():Promise<void>;
   startScroll(crop:CaptureRect):Promise<{error:string|null}>;
-  regions():Promise<RegionConfiguration>;
   saveRegionPreset(preset:RegionPreset):Promise<void>;
 
   ready(id: string, editId: string): void;

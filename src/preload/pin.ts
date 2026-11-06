@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import type { PinAPI, PinState, PinWorkspaceAPI, ScreenshotAPI } from '../shared/capture';
 import type { PinWorkspaceState } from '../shared/history-sync';
-import { on, pinWorkspaceCalls, recording } from './bridge';
+import { on, pinWorkspaceCalls } from './bridge';
 const api: PinAPI = {
   state:()=>ipcRenderer.invoke('pin:state'),
   onState:callback=>on<PinState>('pin:changed',callback),
@@ -17,13 +17,11 @@ const api: PinAPI = {
   endDrag:()=>ipcRenderer.send('pin:drag-end')
 };
 const screenshot: ScreenshotAPI = {
-  ...recording,
   onSuspend:()=>()=>{},
   updateRegion:async()=>{},
   lastRegion:async()=>null,
   clearRegion:async()=>{},
   startScroll:async()=>({error:'贴图编辑不支持长截图'}),
-  regions:async()=>({presets:[],displays:[]}),
   saveRegionPreset:async()=>{},
   ready:()=>{},
   state:async()=>null,

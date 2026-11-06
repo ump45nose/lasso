@@ -1,4 +1,3 @@
-import type { RecordingSessionState } from '../../shared/recording';
 import { encodeRecordingGif, type RecordingOutput } from './recording';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, screen, type IpcMainEvent, type IpcMainInvokeEvent, type NativeImage, type Rectangle } from 'electron';
 import { randomUUID } from 'node:crypto';
@@ -304,7 +303,6 @@ export class PinManager {
     if(pin.state.thumbnail)pin.normalBounds=bounds;
     pin.win.setMinimumSize(1,1);pin.win.setBounds(pin.state.thumbnail?thumbnailBounds(pin.win.getBounds(),area):bounds);
   }
-  publishRecording(state:RecordingSessionState|null){for(const pin of this.pins.values())if(!pin.win.isDestroyed())pin.win.webContents.send('shell:recording-changed',state);this.floating.publishRecording(state);}
   async putAnimated(output:Pick<RecordingOutput,'frames'|'frameDelayMs'|'loop'>){
     await this.ready;
     const image=nativeImage.createFromDataURL(output.frames[0]??'');

@@ -20,7 +20,7 @@ export class RecordingPanel {
   private ready: Promise<void> | null = null;
   constructor(private deps: RecordingPanelDeps) {
     const { assertLocal } = deps;
-    const assertRecording=(event:IpcMainInvokeEvent)=>{if(!this.owns(event)&&!deps.screenshots()?.ownsRecording(event)&&!deps.screenshots()?.pins.owns(event))assertLocal(event);};
+    const assertRecording=(event:IpcMainInvokeEvent)=>{if(!this.owns(event))assertLocal(event);};
     ipcMain.handle('shell:recording-panel',async (event,open:boolean)=>{if(!this.owns(event))assertLocal(event);if(typeof open!=='boolean')throw Error('录制窗口操作无效');if(open)await this.show();else await this.close();});
     ipcMain.handle('shell:recording-state',async event=>{assertRecording(event);await deps.recording()?.initialized();return deps.recording()?.state()??null;});
     ipcMain.handle('shell:recording-action',(event,action:RecordingAction)=>{assertRecording(event);return this.act(action);});

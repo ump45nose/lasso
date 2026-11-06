@@ -1,12 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { DesktopAPI, ShellState, AgentEvent, PaletteEvent } from '../shared/contracts';
-import { on, pinWorkspaceCalls, recording } from './bridge';
+import type { RecordingSessionState } from '../shared/recording';
+import { on, pinWorkspaceCalls } from './bridge';
 const api: DesktopAPI = {
   saveGeneral: options => ipcRenderer.invoke('shell:general-settings', options),
   runScriptAction: (id,input) => ipcRenderer.invoke('shell:script-run',id,input),
   recordingPanel:open=>ipcRenderer.invoke('shell:recording-panel',open),
   onRecordingClose: callback => on('shell:recording-close-request', () => callback()),
-  ...recording,
+  recordingState: () => ipcRenderer.invoke('shell:recording-state'),
+  recordingAction: action => ipcRenderer.invoke('shell:recording-action', action),
+  onRecording: callback => on<RecordingSessionState | null>('shell:recording-changed', callback),
   captureHistory: query => ipcRenderer.invoke('shell:capture-history',query),
   actCaptureHistory: (id,action) => ipcRenderer.invoke('shell:capture-history-act',id,action),
   clearCaptureHistory: () => ipcRenderer.invoke('shell:capture-history-clear'),

@@ -101,8 +101,6 @@ function snapshot(): ShellState { return { ...state, ...tasks.snapshot() }; }
 
 function publish() {
   if (win && !win.isDestroyed()) win.webContents.send('shell:changed', snapshot());
-  const recordingWindow = recordingPanel?.window;
-  if (recordingWindow && !recordingWindow.isDestroyed()) recordingWindow.webContents.send('shell:changed', snapshot());
   actionBar?.update(state.presets, false, state.settings);
   island?.updateSettings(state.settings);
 }
@@ -767,8 +765,6 @@ async function boot() {
       nativeDialogs++;try{return await saveRecordingOutput(output,action,state.settings.screenshot,recordingPanel.window??win);}finally{nativeDialogs--;}
     },
     onChange:session=>{
-      if(win&&!win.isDestroyed())win.webContents.send('shell:recording-changed',session);
-      screenshots.publishRecording(session);
       recordingPanel.changed(session);
       const trayState=session?`${session.status}:${session.frameCount>0}`:'idle';
       if(trayState!==recordingTrayState){recordingTrayState=trayState;if(tray&&!quitting)updateTray();}
