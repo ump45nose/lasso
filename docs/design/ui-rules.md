@@ -25,7 +25,7 @@
 
 ## 组件与图标
 
-- **先复用**：`Segmented`（滑块分段控件）、`Glide`（共享 layoutId 的滑动高亮）、`.l-switch`、`.l-btn`、`.l-ghost`、`.l-banner`、`Badge`、`BrandMark`。新写组件之前先在 `src/renderer` 里搜一遍有没有现成的。
+- **先复用**：`Segmented`（滑块分段控件）、`Glide`（共享 layoutId 的滑动高亮）、`Switch`（`.l-switch` 开关，`src/renderer/Switch.tsx`）、`.l-btn`、`.l-ghost`、`.l-banner`、`Badge`、`BrandMark`。新写组件之前先在 `src/renderer` 里搜一遍有没有现成的。
 - 图标只用 `lucide-react`，按钮里统一 14–16px、描边 1.5–1.6。不要写内联 `<svg>`；品牌标记用 `BrandMark`。
 - **渠道图标只用官方素材**，每个渠道一个文件：`src/renderer/assets/targets/<target>.png|svg`。
   - 来源优先级：本机官方 App 的资源（`.icns` / `Resources/*.png`）高于官方网站或官方仓库。
