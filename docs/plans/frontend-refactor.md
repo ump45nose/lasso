@@ -1,5 +1,7 @@
 # 前端重构实施
 
+状态（2026-11-06 核对）：已实施（`d77245c`—`0844a57`，合并 `68fe148`）；文末「Editor、Pinned 仍是原有样式」已在 [motion-and-capture](motion-and-capture.md) 重做（`944ae7b`、`9656b21`）。「未实测」各项仍未在打包版验收。以下为当时记录。
+
 2026-10-25 启动。设计依据见 [ui-redesign](ui-redesign.md) 与 `docs/design/v2/`。恢复任务先读本文件的进度表。
 
 ## 范围
