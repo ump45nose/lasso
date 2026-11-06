@@ -1,10 +1,10 @@
-import { app, BrowserWindow, clipboard, ipcMain, screen } from 'electron';
-import type { IpcMainEvent, IpcMainInvokeEvent } from 'electron';
+import { app, clipboard, ipcMain, screen } from 'electron';
+import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { execFile, execFileSync } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { FinderPanelState, IslandState } from '../shared/contracts';
-import { sealLocal } from './ipc';
+import { createIslandWindow } from './island-window';
 
 const FINDER_W = 384, FINDER_H = 430;
 
@@ -76,25 +76,9 @@ export class FinderPanel {
       fonts
     };
 
-    this.window = new BrowserWindow({
-      width: FINDER_W,
-      height: FINDER_H,
-      frame: false,
-      show: false,
-      resizable: false,
-      movable: false,
-      focusable: true,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      acceptFirstMouse: true,
-      transparent: true,
-      hasShadow: false,
-      backgroundColor: '#00000000',
-      webPreferences: { preload: join(__dirname, 'island-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
-    });
+    this.window = createIslandWindow(FINDER_W, FINDER_H, { focusable: true });
     this.window.setAlwaysOnTop(true, 'pop-up-menu');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    sealLocal(this.window.webContents);
     this.window.on('blur', () => {
       if (!this.window.isDestroyed()) this.window.hide();
     });

@@ -1,5 +1,5 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, screen } from 'electron';
-import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
+import { app, globalShortcut, ipcMain, screen } from 'electron';
+import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -12,9 +12,10 @@ import type {
   Settings,
   SnapSlot
 } from '../shared/contracts';
-import { fromMainFrame, sealLocal } from './ipc';
+import { fromMainFrame } from './ipc';
 import { FinderPanel } from './island-finder';
 import { EdgeNotes } from './island-notes';
+import { createIslandWindow } from './island-window';
 
 interface NativeAxBridge {
   paste?: () => void;
@@ -99,30 +100,12 @@ export class NotchIsland {
     this.ax = loadNativeAx();
     this.nookTasks = readNookTasks();
 
-    this.window = new BrowserWindow({
-      width: WIN_W,
-      height: WIN_H,
-      frame: false,
-      show: false,
-      resizable: false,
-      movable: false,
-      focusable: false,
-      fullscreenable: false,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      enableLargerThanScreen: true,
-      acceptFirstMouse: true,
-      transparent: true,
-      hasShadow: false,
-      backgroundColor: '#00000000',
-      webPreferences: { preload: join(__dirname, 'island-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
-    });
+    this.window = createIslandWindow(WIN_W, WIN_H, { focusable: false, fullscreenable: false, enableLargerThanScreen: true });
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'screen-saver', 2);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     // Must follow setAlwaysOnTop: Chromium adds the Managed behavior back whenever the level is set.
     this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
-    sealLocal(this.window.webContents);
 
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
       if (![this.window, this.notes.window, this.finder.window].some(win => fromMainFrame(event, win))) throw new Error('套件表面来源不匹配');

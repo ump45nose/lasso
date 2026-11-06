@@ -1,10 +1,10 @@
-import { app, BrowserWindow, ipcMain, screen } from 'electron';
-import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
+import { app, ipcMain, screen } from 'electron';
+import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { EdgeNoteItem, EdgeNotesState, IslandState } from '../shared/contracts';
-import { sealLocal } from './ipc';
+import { createIslandWindow } from './island-window';
 
 const NOTES_W = 376, NOTES_H = 548;
 
@@ -66,26 +66,10 @@ export class EdgeNotes {
     this.notes = loadNotesFromDisk(this.folder);
     if (this.notes[0]) this.activeId = this.notes[0].id;
 
-    this.window = new BrowserWindow({
-      width: NOTES_W,
-      height: NOTES_H,
-      frame: false,
-      show: false,
-      resizable: false,
-      movable: false,
-      focusable: true,
-      skipTaskbar: true,
-      alwaysOnTop: true,
-      acceptFirstMouse: true,
-      transparent: true,
-      hasShadow: false,
-      backgroundColor: '#00000000',
-      webPreferences: { preload: join(__dirname, 'island-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
-    });
+    this.window = createIslandWindow(NOTES_W, NOTES_H, { focusable: true });
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'floating');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    sealLocal(this.window.webContents);
 
     const { check } = deps;
     ipcMain.handle('notes:state', event => {
