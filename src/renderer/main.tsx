@@ -15,6 +15,8 @@ const loaders = {
   island: () => import('./island/NotchIsland').then(m => ({ default: m.NotchIsland })),
   'edge-notes': () => import('./island/EdgeNotes').then(m => ({ default: m.EdgeNotes })),
   'finder-panel': () => import('./island/FinderPanel').then(m => ({ default: m.FinderPanel })),
+  translate: () => import('./island/TranslatorWindow').then(m => ({ default: m.TranslatorWindow })),
+  clipboard: () => import('./island/ClipboardWindow').then(m => ({ default: m.ClipboardWindow })),
   pin: () => import('./capture/Pinned').then(m => ({ default: m.Pinned })),
   'pin-toolbar': () => import('./capture/Pinned').then(m => ({ default: m.PinToolbar })),
   main: () => import('./App')
