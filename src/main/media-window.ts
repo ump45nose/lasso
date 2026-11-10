@@ -90,7 +90,7 @@ export class MediaWindow {
     setImmediate(()=>{if(!win.isDestroyed())win.close();});
   }
   async prepare(preset: Preset, prompt: string, reference?: NativeImage) {
-    if (preset.kind !== 'image' || preset.target !== 'api' || !preset.image) throw Error('请选择 New API 生图预设');
+    if (preset.kind !== 'image' || preset.target !== 'api' || !preset.image) throw Error('请选择 API 生图预设');
     if (this.preparing || this.service.snapshot().jobs.some(job => job.status === 'running')) throw Error('已有图片正在生成，请等待完成');
     this.preparing = true;
     try {

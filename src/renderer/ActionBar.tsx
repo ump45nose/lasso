@@ -58,7 +58,7 @@ function FastApiCard({ card, side }: { card: FastApiCardState; side: 'above' | '
     <div className="ab-fast-body">
       {card.status === 'error'
         ? <div className="ab-fast-error" role="alert"><span>{card.error || '请求失败'}</span><button type="button" className="ab-fast-btn" onClick={() => void window.actionBar.retryFastCard(card.targetLang)}><RotateCcw size={12} />重试</button></div>
-        : <p className="ab-fast-text">{card.text || '正在连接 New API 流式输出…'}{card.status === 'streaming' && <span className="l-caret" />}</p>}
+        : <p className="ab-fast-text">{card.text || '正在连接 API 流式输出…'}{card.status === 'streaming' && <span className="l-caret" />}</p>}
     </div>
     <div className="ab-fast-foot">
       <button type="button" className="ab-fast-btn primary" disabled={!card.text.trim()} onClick={() => void window.actionBar.replaceSelection(card.text)}>

@@ -35,7 +35,7 @@ export class MediaService {
     if (existsSync(configPath)) {
       const value = JSON.parse(readFileSync(configPath, 'utf8')) as SavedConfig;
       this.validateConfig({ ...this.config, ...value });
-      if (value.credential !== undefined && typeof value.credential !== 'string') throw Error('图片服务凭据存储无效');
+      if (value.credential !== undefined && typeof value.credential !== 'string') throw Error('API 密钥存储无效');
       this.config = { ...this.config, ...value };
     }
     const storePath = join(directory, 'results.json');
@@ -72,13 +72,13 @@ export class MediaService {
   configure(input: MediaConfigInput): MediaConfig {
     if (this.active) throw Error('生成期间不能更改图片服务配置');
     this.validateConfig(input);
-    if (input.credential !== undefined && (typeof input.credential !== 'string' || input.credential.length > 16000)) throw Error('凭据格式无效');
+    if (input.credential !== undefined && (typeof input.credential !== 'string' || input.credential.length > 16000)) throw Error('API 密钥格式无效');
     const config: SavedConfig = { schemaVersion: 2, baseURL: input.baseURL.trim().replace(/\/+$/, ''), credential: this.config.credential };
     if (input.credential !== undefined) {
       if (input.credential.trim()) {
-        if (!this.adapters.secrets.available()) throw Error('系统安全存储不可用，未保存凭据');
+        if (!this.adapters.secrets.available()) throw Error('系统安全存储不可用，未保存 API 密钥');
         try { config.credential = this.adapters.secrets.encrypt(input.credential.trim()).toString('base64'); }
-        catch { throw Error('系统安全存储未能加密凭据，未保存配置'); }
+        catch { throw Error('系统安全存储未能加密 API 密钥，未保存配置'); }
       } else delete config.credential;
     }
     writeFileAtomic(join(this.directory, 'config.json'), JSON.stringify(config, null, 2) + '\n'); this.config = config;
@@ -101,7 +101,7 @@ export class MediaService {
     onDelta: (text: string, firstTokenMs: number) => void
   ): Promise<{ text: string; model: string; firstTokenMs: number }> {
     const config = this.config;
-    if (!config.baseURL) throw Error('请先在「设置 → 预设 → New API」填写并保存服务地址与凭据');
+    if (!config.baseURL) throw Error('请先在「设置 → 预设」中编辑 API 预设，填写并保存 API 地址与密钥');
     const model = input.model?.trim() || 'gpt-4.1-mini';
     const headers: Record<string, string> = { ...this.headers(config), 'Content-Type': 'application/json', Accept: 'text/event-stream' };
     const started = performance.now();
@@ -228,7 +228,7 @@ export class MediaService {
   private async run(job: MediaJob, config: SavedConfig): Promise<void> {
     try {
       const model = job.referenceId ? job.editModel : job.generationModel;
-      if (!config.baseURL || !model) throw Error('请在设置 → 预设中配置 New API 地址和对应的生成／改图模型');
+      if (!config.baseURL || !model) throw Error('请在设置 → 预设中配置 API 地址和对应的生成／改图模型');
       const headers = this.headers(config);
       const prompt = job.renderedPrompt || job.prompt;
       const size = imageRequestSize(job);
@@ -309,9 +309,9 @@ export class MediaService {
   }
   private decryptCredential(config: SavedConfig): string | undefined {
     if (!config.credential) return undefined;
-    if (!this.adapters.secrets.available()) throw Error('系统安全存储不可用，无法读取图片服务凭据');
+    if (!this.adapters.secrets.available()) throw Error('系统安全存储不可用，无法读取 API 密钥');
     try { return this.adapters.secrets.decrypt(Buffer.from(config.credential, 'base64')); }
-    catch { throw Error('无法解密图片服务凭据，请在设置中重新保存'); }
+    catch { throw Error('无法解密 API 密钥，请在设置中重新保存'); }
   }
   private validateConfig(input: MediaConfigInput) {
     if (!input || typeof input.baseURL !== 'string') throw Error('图片服务配置无效');

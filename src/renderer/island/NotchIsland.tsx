@@ -190,7 +190,7 @@ export function NotchIsland() {
               <div className="isl-focus-main">
                 <Coffee size={15} className="isl-clay-icon" />
                 <div className="isl-focus-copy">
-                  <strong>{pomodoro?.taskTitle || '摸鱼提醒 · 起身活动喝水'}</strong>
+                  <strong>{pomodoro?.taskTitle || '休息提醒 · 起身活动喝水'}</strong>
                   <small>已连续专注一轮，放松眼睛与肩颈 5 分钟</small>
                 </div>
                 <span className="isl-clock-lg mono">{formatClock(pomodoro?.remainingSeconds ?? 300)}</span>
@@ -280,7 +280,7 @@ export function NotchIsland() {
                   <>
                     <div className="isl-focus-copy">
                       <strong>{pomodoro.taskTitle}</strong>
-                      <small>{pomodoro.kind === 'slacking' ? '摸鱼休息倒计时' : '专注番茄钟进行中'}</small>
+                      <small>{pomodoro.kind === 'slacking' ? '休息休息倒计时' : '专注番茄钟进行中'}</small>
                     </div>
                     <span className="isl-clock-lg mono">{formatClock(pomodoro.remainingSeconds)}</span>
                     <button type="button" className="isl-btn" onClick={() => void window.island.togglePausePomodoro()}>
@@ -293,7 +293,7 @@ export function NotchIsland() {
                 ) : (
                   <>
                     <div className="isl-focus-copy">
-                      <strong>番茄钟与摸鱼提醒</strong>
+                      <strong>番茄钟与休息提醒</strong>
                       <small>选择一个 Nook 待办开始 25m 专注，或直接启动</small>
                     </div>
                     <button type="button" className="isl-btn primary" onClick={startFocus}>
@@ -302,9 +302,9 @@ export function NotchIsland() {
                     <button
                       type="button"
                       className="isl-btn"
-                      onClick={() => void window.island.startPomodoro({ id: null, title: '摸鱼提醒 · 起身活动喝水' }, 5, 'slacking')}
+                      onClick={() => void window.island.startPomodoro({ id: null, title: '休息提醒 · 起身活动喝水' }, 5, 'slacking')}
                     >
-                      <Coffee size={12} />5m 摸鱼
+                      <Coffee size={12} />5m 休息
                     </button>
                   </>
                 )}
@@ -377,7 +377,7 @@ export function NotchIsland() {
                   <Maximize2 size={12} />最大化
                 </button>
                 <button type="button" className="isl-btn primary" onClick={() => void window.island.snapWindow('coding-ai')}>
-                  <Columns2 size={12} />2/3 研发双栏
+                  <Columns2 size={12} />2:1 双栏布局
                 </button>
                 <button type="button" className="isl-btn" onClick={() => void window.island.snapWindow('prev-display')}>
                   <ArrowLeftToLine size={12} />移至左屏 <kbd className="isl-kbd mono">⌃⌥⌘←</kbd>

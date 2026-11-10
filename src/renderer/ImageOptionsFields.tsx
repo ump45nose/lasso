@@ -51,18 +51,18 @@ function ImageConnection({ onModels }: { onModels(models: string[]): void }) {
   useEffect(() => { let active = true; void window.desktop.mediaConfig().then(value => { if (active) { setConfig(value); setBaseURL(value.baseURL); } }, reason => { if (active) setError(String(reason)); }); return () => { active = false; }; }, []);
   async function save() {
     setBusy(true); setError(''); setMessage('');
-    try { const next = await window.desktop.saveMediaConfig({ baseURL, ...(clear ? { credential: '' } : credential ? { credential } : {}) }); setConfig(next); setBaseURL(next.baseURL); setCredential(''); setClear(false); setMessage('连接已保存，供所有 API 生图预设使用。'); }
+    try { const next = await window.desktop.saveMediaConfig({ baseURL, ...(clear ? { credential: '' } : credential ? { credential } : {}) }); setConfig(next); setBaseURL(next.baseURL); setCredential(''); setClear(false); setMessage('连接已保存，供所有 API 预设使用。'); }
     catch (reason) { setError(String(reason)); }
     finally { setBusy(false); }
   }
   return <>
-    <div className="l-field"><label htmlFor="image-api-base">New API 地址 · 所有生图预设共用</label><input id="image-api-base" className="l-input mono" value={baseURL} onChange={event => setBaseURL(event.target.value)} placeholder="https://…/v1" /></div>
-    <div className="l-field"><label htmlFor="image-api-key">凭据</label><input id="image-api-key" type="password" autoComplete="off" className="l-input mono" value={credential} placeholder={config?.hasCredential ? '已安全保存，留空保留' : '输入 New API 凭据'} onChange={event => { setCredential(event.target.value); setClear(false); }} />
-      {config?.hasCredential && <button className="l-text-btn" aria-pressed={clear} onClick={() => setClear(!clear)}>{clear ? '保存时清除凭据 · 撤销' : '清除已存凭据'}</button>}
+    <div className="l-field"><label htmlFor="image-api-base">API 地址 · 所有 API 预设共用</label><input id="image-api-base" className="l-input mono" value={baseURL} onChange={event => setBaseURL(event.target.value)} placeholder="https://…/v1" /></div>
+    <div className="l-field"><label htmlFor="image-api-key">API 密钥</label><input id="image-api-key" type="password" autoComplete="off" className="l-input mono" value={credential} placeholder={config?.hasCredential ? '已安全保存，留空保留' : '输入 API 密钥'} onChange={event => { setCredential(event.target.value); setClear(false); }} />
+      {config?.hasCredential && <button className="l-text-btn" aria-pressed={clear} onClick={() => setClear(!clear)}>{clear ? '保存时清除密钥 · 撤销' : '清除已存密钥'}</button>}
     </div>
     <div className="l-field-row">
       <button className="l-btn small" disabled={!config || busy} onClick={() => void save()}>保存连接</button>
-      <button className="l-btn small" disabled={!config?.baseURL || busy || baseURL !== config.baseURL || !!credential || clear} onClick={async () => { setBusy(true); setError(''); setMessage(''); try { onModels(await window.desktop.mediaModels()); setMessage('已读取模型；生图能力以实际请求为准。'); } catch (reason) { setError(String(reason)); } finally { setBusy(false); } }}>读取模型</button>
+      <button className="l-btn small" disabled={!config?.baseURL || busy || baseURL !== config.baseURL || !!credential || clear} onClick={async () => { setBusy(true); setError(''); setMessage(''); try { onModels(await window.desktop.mediaModels()); setMessage('已读取模型；支持的功能以实际请求为准。'); } catch (reason) { setError(String(reason)); } finally { setBusy(false); } }}>读取模型</button>
     </div>
     {error && <p className="l-field-help error" role="alert">{error}</p>}{message && <p className="l-field-help" role="status">{message}</p>}
   </>;

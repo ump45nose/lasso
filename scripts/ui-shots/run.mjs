@@ -61,7 +61,7 @@ try {
   // The Island reads open tasks from the Nook cache under userData when LASSO_DATA_ROOT is set.
   mkdirSync(join(runtimePaths.userData, 'nook-cache'));
   writeFileSync(join(runtimePaths.userData, 'nook-cache/google.json'), JSON.stringify({ taskLists: [
-    { title: 'Lasso · 今日重点', items: [{ id: 'nook-1', title: '核对 New API 翻译流式延迟与回填', status: 'open' }] },
+    { title: 'Lasso · 今日重点', items: [{ id: 'nook-1', title: '核对 API 翻译流式延迟与回填', status: 'open' }] },
     { title: 'Nook · 运维巡检', items: [{ id: 'nook-2', title: '检查 launchd 守护服务状态与错误日志', status: 'open' }] },
     { title: 'Lasso · 工程验收', items: [{ id: 'nook-3', title: '整理本周设计规范与截图回归', status: 'open' }] }
   ] }));
@@ -290,11 +290,35 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   });
 
   // Main window: current view, command palette, settings.
-  saved.push(...await main(async () => {
-    const { find, page, wait, save, settingsTab, scrollTo, reveal } = global.uiShots, m = find(), names = [];
+  saved.push(...await main(async ({nativeTheme}) => {
+    const { find, page, wait, ready, save, settingsTab, scrollTo, reveal, focusedCases } = global.uiShots, m = find(), names = [];
     // Keep this isolated fixture visible while the user's foreground app changes.
     await page(m, 'window.desktop.getState().then(s => s.pinned ? undefined : window.desktop.act("pin"))');
     m.show(); m.focus(); await wait(1500);
+    if (focusedCases.includes('product-labels')) {
+      const bounds = m.getBounds(), minimum = m.getMinimumSize();
+      await settingsTab(m, '通用');
+      await scrollTo(m, '#resident-suite'); names.push(await save(m, 'settings-resident-labels'));
+      m.setMinimumSize(375, 400); m.setSize(375, 740); await wait(250);
+      await scrollTo(m, '#resident-suite'); names.push(await save(m, 'settings-resident-labels-narrow'));
+      const shell = await page(m, 'window.desktop.getState()');
+      nativeTheme.themeSource = 'dark';
+      m.webContents.send('shell:changed', {...shell, settings: {...shell.settings, themeMode: 'system'}});
+      await ready(m, `matchMedia('(prefers-color-scheme: dark)').matches`);
+      names.push(await save(m, 'settings-resident-labels-dark'));
+      nativeTheme.themeSource = 'light'; m.webContents.send('shell:changed', shell);
+      m.setSize(bounds.width, bounds.height); m.setMinimumSize(...minimum); await wait(250);
+      await settingsTab(m, '预设');
+      await page(m, `document.querySelector('.l-preset').click()`); await wait(350);
+      await page(m, `[...document.querySelectorAll('[aria-label="目标"] button')].find(b => b.textContent === 'API').click()`);
+      await scrollTo(m, 'label[for="image-api-base"]'); names.push(await save(m, 'preset-api-text-labels'));
+      await page(m, `[...document.querySelectorAll('[aria-label="预设功能"] button')].find(b => b.textContent === '图片生成').click()`);
+      await scrollTo(m, 'label[for="image-api-base"]'); names.push(await save(m, 'preset-api-image-labels'));
+      await settingsTab(m, '截图');
+      await scrollTo(m, '#screenshot-vision .l-set-row-head'); names.push(await save(m, 'settings-vision-labels'));
+      await page(m, `window.desktop.act('close-settings')`);
+      return names;
+    }
     if(global.uiShots.surfacesOnly)return names;
     let shell;
     if(!global.uiShots.captureOnly){
@@ -392,7 +416,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await page(m, `Array.from(document.querySelectorAll('[aria-label="目标"] button')).find(button => button.textContent === 'Codex').click()`); await wait(150);
     if (await page(m, `Boolean(document.querySelector('[aria-label="网页会话"]'))`)) throw Error('Web conversation controls leaked into a local CLI preset');
     await page(m, `Array.from(document.querySelectorAll('[aria-label="预设功能"] button')).find(button => button.textContent === '图片生成').click()`); await wait(200);
-    await page(m, `Array.from(document.querySelectorAll('[aria-label="目标"] button')).find(button => button.textContent === 'New API').click()`); await wait(300);
+    await page(m, `Array.from(document.querySelectorAll('[aria-label="目标"] button')).find(button => button.textContent === 'API').click()`); await wait(300);
     if (await page(m, `Boolean(document.querySelector('[aria-label="网页会话"]') || document.getElementById('preset-model'))`)) throw Error('Web-only settings leaked into API preset');
     await page(m, `document.querySelector('.l-image-options').scrollIntoView({block:'start'})`); await wait(200);
     if (!await page(m, `document.querySelectorAll('[aria-label="图片比例"] button').length === 12`)) throw Error('Full image aspect choices did not appear');
@@ -491,7 +515,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     try {
       await page(m,`window.desktop.saveMediaConfig({baseURL:'https://images.example.invalid/v1',credential:'synthetic-media-key'})`);
       await settingsTab(m,'截图');await ready(m,`Boolean(document.querySelector('#screenshot-vision input'))`);await shot('settings-vision-reuse');
-      await click('[aria-label="复用生图 API 凭据"]');await fill('vision-base-url','file:///invalid');await fill('vision-model','vision-fixture');await fill('vision-api-key','synthetic-vision-key');
+      await click('[aria-label="复用 API 密钥"]');await fill('vision-base-url','file:///invalid');await fill('vision-model','vision-fixture');await fill('vision-api-key','synthetic-vision-key');
       await page(m,`[...document.querySelectorAll('[aria-label="默认翻译语言"] button')].find(b=>b.textContent==='日文').click()`);await shot('settings-vision-independent');
       await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务').click()`);await ready(m,`Boolean(document.querySelector('#screenshot-vision [role="alert"]'))`);await shot('settings-vision-validation');expect(receipts.length===0,'Invalid vision configuration reached IPC');
       await fill('vision-base-url','https://vision.example.invalid/v1/');await commit();await shot('settings-vision-saved');
@@ -501,8 +525,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await settingsTab(m,'通用');await settingsTab(m,'截图');await ready(m,`document.getElementById('vision-model')?.value==='vision-fixture-edited'`);expect(await page(m,`document.querySelector('[aria-label="默认翻译语言"] [aria-checked="true"]').textContent==='日文'`),'Vision language did not restore');
       const disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')),secretDisk=fs.readFileSync(path.join(app.getPath('userData'),'vision-service/config.json'),'utf8');
       const {hasCredential,...persisted}=await page(m,'window.desktop.visionConfig()');expect(JSON.stringify(disk.vision)===JSON.stringify(persisted)&&!secretDisk.includes('synthetic-vision-key'),'Vision settings persistence or secret isolation failed');
-      await reveal(m,'#screenshot-vision');await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='清除已存独立凭据').click()`);await wait(100);await commit();expect(!(await page(m,'window.desktop.visionConfig()')).hasCredential&&receipts.at(-1).credentialAction==='clear','Independent key did not clear');await shot('settings-vision-cleared');
-      await click('[aria-label="复用生图 API 凭据"]');await commit();expect((await page(m,'window.desktop.visionConfig()')).hasCredential,'Media credential was not reused');
+      await reveal(m,'#screenshot-vision');await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='清除已存独立密钥').click()`);await wait(100);await commit();expect(!(await page(m,'window.desktop.visionConfig()')).hasCredential&&receipts.at(-1).credentialAction==='clear','Independent key did not clear');await shot('settings-vision-cleared');
+      await click('[aria-label="复用 API 密钥"]');await commit();expect((await page(m,'window.desktop.visionConfig()')).hasCredential,'Media credential was not reused');
       fs.writeFileSync(path.join(out,'stage-6-settings.json'),JSON.stringify({status:'passed',receipts,persisted,checks:['复用凭据、独立凭据保存/留空保留/清除','URL校验、默认语言、切页恢复','真实IPC与磁盘一致、返回值/输入/文件脱敏'],secrets:'synthetic safeStorage; no system keychain'},null,2));
     } finally {ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',handler);await page(m,`(async()=>{await window.desktop.saveVisionConfig({...${JSON.stringify(original)},credential:''});await window.desktop.saveMediaConfig({baseURL:${JSON.stringify(media.baseURL)},credential:''});await window.desktop.act('close-settings');})()`);}
     return names;
@@ -550,7 +574,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   // Dedicated image-generation surface: fixtures exercise layout without sending paid requests.
   saved.push(...await main(async () => {
     const { find, wait, page, save, path, fixtures, ipcMain, BrowserWindow, app, fs, out } = global.uiShots, names = [];
-    if(global.uiShots.captureOnly)return names;
+    if(global.uiShots.captureOnly&&!global.uiShots.focusedCases.includes('product-labels'))return names;
     const appearance = await page(find(), 'window.desktop.getState().then(s => ({fonts:s.settings.fonts, importedFonts:s.settings.importedFonts}))');
     // Use a bundled test font through the existing isolated lasso-font protocol; no user font is read or copied.
     const assets = path.join(process.cwd(), 'dist/renderer/assets'), fontDirectory = path.join(app.getPath('userData'), 'fonts');
@@ -647,7 +671,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   // Selection action bar: hover on the first preset, then the ··· menu with its first row hovered, plus inline Fast API card and system suite surfaces.
   saved.push(...await main(async () => {
     const { find, page, wait, ready, move, center, save } = global.uiShots, w = find('action-bar'), names = [];
-    if(global.uiShots.focusedCases.length&&!global.uiShots.focusedCases.some(name=>['action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-board','island-cli','finder-panel'].includes(name)))return names;
+    if(global.uiShots.focusedCases.length&&!global.uiShots.focusedCases.some(name=>['product-labels','action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-board','island-cli','finder-panel'].includes(name)))return names;
     w.setOpacity(1); w.showInactive(); w.webContents.send('bar:enter', { tip: 'above', menu: 'above' }); await wait(500);
     if (!await page(w, `Boolean(document.querySelector('button[aria-label="入便签"]'))`)) throw Error('Action bar missing append-note button');
     const first = await center(w, '.ab-buttons button'); if (first) await move(w, ...first);
@@ -665,7 +689,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         presetName: '翻译',
         model: 'gpt-4.1-mini',
         status: 'done',
-        text: '划词后直接通过 New API 流式输出译文，按回车即可原地替换选中文本，或一键钉为桌面贴图。',
+        text: '划词后直接通过 API 流式输出译文，按回车即可原地替换选中文本，或一键钉为桌面贴图。',
         error: null,
         firstTokenMs: 186,
         isTranslation: true,
@@ -675,7 +699,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     await wait(450);
     if (!await page(w, `[...document.querySelectorAll('.ab-fast-foot button')].some(button=>button.textContent.includes('转入主窗口')) && document.querySelector('.ab-fast-foot').scrollWidth<=document.querySelector('.ab-fast-foot').clientWidth`)) throw Error('Fast card main-window handoff button is missing or clipped');
     names.push(await save(w, 'action-bar-fast-card'));
-    w.webContents.send('bar:changed', { ...barState, fastCard: { presetId:'__builtin_ocr_fast__',presetName:'快速翻译/速解',model:'未配置',status:'error',text:'',error:'尚未配置 New API，可转入主窗口继续。',firstTokenMs:null,isTranslation:false,targetLang:'auto' } });
+    w.webContents.send('bar:changed', { ...barState, fastCard: { presetId:'__builtin_ocr_fast__',presetName:'翻译/解释',model:'未配置',status:'error',text:'',error:'尚未配置 API，可转入主窗口继续。',firstTokenMs:null,isTranslation:false,targetLang:'auto' } });
     await wait(450);
     if (!await page(w, `Boolean(document.querySelector('.ab-fast-foot .open-window:not(:disabled)'))`)) throw Error('Built-in fast-card handoff is unavailable after API failure');
     names.push(await save(w, 'action-bar-fast-card-error'));
@@ -697,7 +721,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
           paused: false,
           kind: 'focus',
           taskId: 'nook-1',
-          taskTitle: '核对 New API 翻译流式延迟与回填',
+          taskTitle: '核对 API 翻译流式延迟与回填',
           remainingSeconds: 1125,
           totalSeconds: 1500
         }
@@ -716,6 +740,13 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       });
       await wait(450);
       names.push(await save(isl, 'island-alert'));
+
+      isl.webContents.send('island:changed', { ...baseIsl, mode: 'slacking', pomodoro: { active: true, paused: false, kind: 'slacking', taskId: null, taskTitle: '休息提醒 · 起身活动喝水', remainingSeconds: 300, totalSeconds: 300 } });
+      await wait(450); names.push(await save(isl, 'island-rest'));
+      for (const [name, text] of [['complete', '已完成 2:1 双栏布局'], ['partial', '仅移动了一个窗口，未完成双栏布局'], ['failed', '未能排布窗口，请检查辅助功能权限及可用窗口']]) {
+        isl.webContents.send('island:changed', { ...baseIsl, mode: 'toast', toast: { id: name, text, badge: '2:1' } });
+        await wait(450); names.push(await save(isl, 'island-snap-' + name));
+      }
 
       const cliTasks = [
         { id: 'cli-1', target: 'codex', title: '重构浮动便签与 Finder 面板', activity: 'running' },
@@ -1222,7 +1253,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     for(let y=0;y<inlineHeight;y++)for(let x=0;x<inlineWidth;x++){const i=(y*inlineWidth+x)*4;inlinePixels[i]=40+(x+2*y)%180;inlinePixels[i+1]=40+y%180;inlinePixels[i+2]=40+x%180;inlinePixels[i+3]=255;}
     const inlineImage=nativeImage.createFromBitmap(inlinePixels,{width:inlineWidth,height:inlineHeight}).toDataURL();
     states['editor-advanced-inline-rotation']={...states['editor-advanced-transform'],stage9:'inline-rotation',image:inlineImage,backdrop:inlineImage,width:inlineWidth,height:inlineHeight,pixelWidth:inlineWidth,pixelHeight:inlineHeight,selection:inlineCrop,placement:inlineCrop,presentation:'inline',origin:'screen',viewSize:{width:inlineWidth,height:inlineHeight},editableRegion:{display:{id:1,bounds:{x:0,y:0,width:inlineWidth,height:inlineHeight},scaleFactor:1,rotation:0},sourceSize:{width:inlineWidth,height:inlineHeight},initialCrop:inlineCrop,currentCrop:inlineCrop,ratio:null}};
-    const otherCases=['settings-loupe-grid-off','settings-loupe-grid-on','settings-advanced-capture','settings-advanced-narrow-capture','action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-board','island-cli','finder-panel'];
+    const otherCases=['product-labels','settings-loupe-grid-off','settings-loupe-grid-on','settings-advanced-capture','settings-advanced-narrow-capture','action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-board','island-cli','finder-panel'];
     if(focusedCases.some(name=>!Object.hasOwn(states,name)&&!otherCases.includes(name)))throw Error('Unknown UI case: '+focusedCases.filter(name=>!Object.hasOwn(states,name)&&!otherCases.includes(name)).join(', '));
     let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [], intelligenceReceipts=[],scrollReceipts=[],clipboardAudits=[],advancedChecks=[],screenshotActions=[];
     const verify=(ok,message)=>{if(!ok)throw Error(message);};
@@ -1270,7 +1301,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     const nearRGB=(actual,expected)=>actual[3]===255&&expected.every((value,i)=>Math.abs(actual[i]-value)<=2);
     const inside=(inner,outer)=>inner.width>0&&inner.height>0&&inner.x>=outer.x-.01&&inner.y>=outer.y-.01&&inner.x+inner.width<=outer.x+outer.width+.01&&inner.y+inner.height<=outer.y+outer.height+.01;
     for (const [name, value] of Object.entries(states)) {
-      if(focusedCases.length&&!focusedCases.includes(name))continue;
+      if(focusedCases.length&&!focusedCases.includes(name)&&!(focusedCases.includes('product-labels')&&name==='editor-window'))continue;
       state = value; exports = [];regionUpdates=[];
       if(name.startsWith('overlay-')){
         const source=nativeImage.createFromDataURL(value.backdrop),size=source.getSize(),frame=native.createFrame({...size,data:source.toBitmap(),logicalWidth:value.width,logicalHeight:value.height});
@@ -1649,7 +1680,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
           document.dispatchEvent(new Event('selectionchange'));
         })()`);
         await wait(350);
-        if (!await page(w, `Boolean(document.querySelector('.ed-text-actions')) && [...document.querySelectorAll('.ed-text-actions button')].some(b => b.textContent.includes('快速翻译/速解')) && [...document.querySelectorAll('.ed-text-actions button')].some(b => b.textContent.includes('入便签'))`)) {
+        if (!await page(w, `Boolean(document.querySelector('.ed-text-actions')) && [...document.querySelectorAll('.ed-text-actions button')].some(b => b.textContent.includes('翻译/解释')) && [...document.querySelectorAll('.ed-text-actions button')].some(b => b.textContent.includes('入便签'))`)) {
           throw Error('Editor OCR text actions missing fastText or noteText button');
         }
         names.push(await save(w, 'editor-ocr-actions'));
@@ -1679,7 +1710,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     fs.writeFileSync(path.join(out,'stage-9-editor.json'),JSON.stringify({status:'passed',focusedCases,checks:advancedChecks,screenshotActions,output:'production Editor gestures, PNG export, decodeFrameImage and encodeScreenshot pixels; fixture OCR and output destination'},null,2));
     if(!focusedCases.length)fs.writeFileSync(path.join(out,'stage-6-surfaces.json'),JSON.stringify({status:'passed',scroll:scrollReceipts,intelligence:intelligenceReceipts,clipboardAudits,copies:global.uiShots.stage4.state.receipts.filter(r=>r.method==='editorText'),checks:['方向切换/反裁状态、中段删除、四档接缝修正与横向预览','QR/Code128内容复制与URL回执','四种目标语言、原文译文对照、图上覆盖与全文复制','改单元格/增删行列/Markdown/TSV/XLSX回执','初始公式/编辑后SVG排版/复制/转贴图回执'],electronSessionNetworkAtCapture:global.uiShotsNetwork.audit,linkOpens:'ui-shots:open-url fixture receipts only'},null,2));
     ipcMain.removeHandler('ui-shots:state');
-    if(focusedCases.length)return names;
+    if(focusedCases.length&&!focusedCases.includes('product-labels'))return names;
     // Pin at rest is just the image; hover shows the toolbar, ··· the options row.
     let pin = { id: 'ui-shots-pin', revision: 0, image: frame.resize({ width: 360, height: 225 }).toDataURL(), width: 360, height: 225, lines: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin', confidence: 0.98, glyphs: [{ x: 24, y: 24, width: 120, height: 18, text: 'Lasso Pin' }] }], status: '拖动贴图 · 点选字图标选择文字', topmost: true, opacity: 1, passthrough: false, kind:'image',title:'设计评审截图',groupId:'default',groups:global.uiShots.stage4.groups,zoomPercent:100,wheelAction:'zoom',locked:false,thumbnail:false };
     const basePin=structuredClone(pin),pinActions = [],pinUpdates=[],pinDrags=[];
@@ -1710,10 +1741,16 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       document.dispatchEvent(new Event('selectionchange'));
     })()`);
     await wait(250);
-    if (!await page(p, `Boolean(document.querySelector('button[aria-label="快速翻译/速解"]') && document.querySelector('button[aria-label="入便签"]'))`)) {
+    if (!await page(p, `Boolean(document.querySelector('button[aria-label="翻译/解释"]') && document.querySelector('button[aria-label="入便签"]'))`)) {
       throw Error('Pin text-select toolbar missing fastText or noteText button');
     }
     names.push(await save(p, 'pin-text-select'));
+    if (focusedCases.includes('product-labels')) {
+      p.destroy();
+      for (const channel of ['ui-shots:pin', 'ui-shots:pin-action', 'ui-shots:pin-update']) ipcMain.removeHandler(channel);
+      ipcMain.removeListener('ui-shots:pin-drag', pinDrag); ipcMain.removeListener('ui-shots:toolbar-height', toolbarHeight);
+      return names;
+    }
     await page(p, `document.querySelector('button[aria-label="选择文字"]')?.click()`); await wait(200);
     await page(p, `document.querySelector('button[aria-label="贴图选项"]')?.click()`); await wait(400);
     names.push(await save(p, 'pin-options'));

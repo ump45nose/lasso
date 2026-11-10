@@ -268,12 +268,12 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
         <div id="resident-suite" className="l-set-row-head l-gap"><h3>常驻桌面套件</h3><span>状态栏与全局热键</span></div>
         <ul className="l-group">
           <li>
-            <div className="l-row-label"><span>刘海岛与专注看板</span><span>顶部常驻胶囊、番茄钟 / 摸鱼提醒与 Nook 待办联动，紧迫提醒触发四边呼吸光晕。</span></div>
+            <div className="l-row-label"><span>刘海岛与专注看板</span><span>顶部常驻胶囊、番茄钟 / 休息提醒与 Nook 待办联动，紧迫提醒触发四边呼吸光晕。</span></div>
             <button className="l-btn small" onClick={() => void window.desktop.act('open-island-board')}>展开看板</button>
           </li>
           <li>
-            <div className="l-row-label"><span>EdgeNotes 边缘便签</span><span>屏幕右侧 6px 悬停抽屉，双向同步 ~/Documents/LassoNotes/*.md，可一键钉为贴图。</span></div>
-            <span className="l-kbd">⌃⌥N</span>
+            <div className="l-row-label"><span>浮动便签</span><span>在当前屏幕打开便签，自动保存到 ~/Documents/LassoNotes/*.md，支持 Markdown 预览与钉为贴图。</span></div>
+            <span className="l-kbd">⌥N</span>
             <button className="l-btn small" onClick={() => void window.desktop.act('toggle-edge-notes')}>打开便签</button>
           </li>
           <li>
@@ -282,10 +282,10 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
             <button className="l-btn small" onClick={() => void window.desktop.act('open-finder-panel')}>唤起面板</button>
           </li>
           <li className="col">
-            <div className="l-row-label"><span>窗口分屏与双栏工作区</span><span>⌃⌥ ← / → 左/右半屏 · ⌃⌥ ↑ 最大化 · ⌃⌥ ↓ 居中阅读窗 · ⌃⌥ ↵ 一键 2/3 研发 + 1/3 AI 双栏。</span></div>
+            <div className="l-row-label"><span>窗口分屏与双栏工作区</span><span>⌃⌥ ← / → 左/右半屏 · ⌃⌥ ↑ 最大化 · ⌃⌥ ↓ 居中 · ⌃⌥ ↵ 2:1 双栏布局。</span></div>
             <div className="l-workspace-actions">
-              <button className="l-btn small" onClick={() => void window.desktop.act('snap-coding-ai')}>2/3 研发双栏</button>
-              <button className="l-btn small" onClick={() => void window.desktop.act('snap-equal-split')}>50/50 对半分屏</button>
+              <button className="l-btn small" onClick={() => void window.desktop.act('snap-coding-ai')}>2:1 双栏布局</button>
+              <button className="l-btn small" onClick={() => void window.desktop.act('snap-equal-split')}>1:1 双栏布局</button>
             </div>
           </li>
         </ul>

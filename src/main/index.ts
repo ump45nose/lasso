@@ -265,12 +265,12 @@ function updateTray() {
       { label: '左半屏', accelerator: 'Control+Option+Left', click: () => island?.snapWindow('left-half') },
       { label: '右半屏', accelerator: 'Control+Option+Right', click: () => island?.snapWindow('right-half') },
       { label: '最大化', accelerator: 'Control+Option+Up', click: () => island?.snapWindow('maximize') },
-      { label: '居中阅读窗', accelerator: 'Control+Option+Down', click: () => island?.snapWindow('center') },
+      { label: '窗口居中', accelerator: 'Control+Option+Down', click: () => island?.snapWindow('center') },
       { label: '移至左屏', accelerator: 'Control+Option+Command+Left', click: () => island?.snapWindow('prev-display') },
       { label: '移至右屏', accelerator: 'Control+Option+Command+Right', click: () => island?.snapWindow('next-display') },
       { type: 'separator' },
-      { label: '一键 2/3 研发 + 1/3 AI 双栏', accelerator: 'Control+Option+Return', click: () => island?.snapWindow('coding-ai') },
-      { label: '50/50 对半分屏', click: () => island?.snapWindow('equal-split') }
+      { label: '2:1 双栏布局', accelerator: 'Control+Option+Return', click: () => island?.snapWindow('coding-ai') },
+      { label: '1:1 双栏布局', click: () => island?.snapWindow('equal-split') }
     ] },
     { label: '暂停划词', type: 'checkbox', checked: !state.settings.selectionEnabled, click: () => { const result = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback }); if (result.error) dialog.showErrorBox('未能保存划词设置', result.error); } },
     { label: '置顶', type: 'checkbox', checked: state.pinned, click: setPin },
@@ -342,7 +342,7 @@ async function triggerFastText(text: string, anchorRect?: CaptureRect) {
   if (anchorRect && (![anchorRect.x, anchorRect.y, anchorRect.width, anchorRect.height].every(Number.isFinite) || anchorRect.width <= 0 || anchorRect.height <= 0)) throw Error('无效的文字位置');
   const anchor = anchorRect ?? { ...screen.getCursorScreenPoint(), width: 12, height: 18 };
   const preset = state.presets.find(preset => preset.enabled && preset.target === 'api' && preset.kind !== 'image') ?? {
-    id: '__builtin_ocr_fast__', name: '快速翻译/速解', target: 'api', kind: 'chat', mode: 'send', enabled: true, needsSelection: true,
+    id: '__builtin_ocr_fast__', name: '翻译/解释', target: 'api', kind: 'chat', mode: 'send', enabled: true, needsSelection: true,
     template: '请直接给出以下内容的中英互译或核心要点速解：\n\n{text}'
   } satisfies Preset;
   capture.suppress();
@@ -366,7 +366,7 @@ async function executePreset(preset: Preset, selection: SelectionContext | null,
   if(options.textId&&options.textId!==state.inputText?.id)return {error:'文字已被替换，请重新选择。'};
   if(options.imageId&&options.textId)return {error:'请选择图片或文字中的一种输入。'};
   if (options.imagePrompt !== undefined && (preset.kind !== 'image' || typeof options.imagePrompt !== 'string' || options.imagePrompt.length > 24000)) return { error: '生图描述无效' };
-  if (preset.kind === 'image' && options.target && !['chatgpt', 'gemini'].includes(options.target)) return { error: '生图预设请选择 ChatGPT、Gemini 或沿用 New API' };
+  if (preset.kind === 'image' && options.target && !['chatgpt', 'gemini'].includes(options.target)) return { error: '生图预设请选择 ChatGPT、Gemini 或沿用 API' };
   if(options.textId)selection={text:state.inputText!.text,sourceApp:'',anchor:{x:0,y:0,width:0,height:0}};
   if (options.imageId) selection = null;
   if (preset.kind === 'image' && options.imagePrompt !== undefined) selection = { text: options.imagePrompt, sourceApp: '', anchor: { x: 0, y: 0, width: 0, height: 0 } };

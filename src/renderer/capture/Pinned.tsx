@@ -120,7 +120,7 @@ export function Pinned(){
         <span className="pin-grip" aria-label={state.locked?'贴图已锁定':'拖动贴图'} {...dragHandlers}>{state.locked?<Lock/>:<GripVertical/>}</span>
         {playbackControl}
         {kind==='image'&&<Tool label="选择文字" active={pickText} onClick={togglePickText}><TextSelect/></Tool>}
-        {pickText&&text&&<><Tool label="快速翻译/速解" disabled={textEditing} onClick={()=>void run(window.pin.fastText(text,state.revision))}><Sparkles/></Tool><Tool label="入便签" disabled={textEditing} onClick={()=>void run(window.pin.noteText(text,state.revision))}><StickyNote/></Tool></>}
+        {pickText&&text&&<><Tool label="翻译/解释" disabled={textEditing} onClick={()=>void run(window.pin.fastText(text,state.revision))}><Sparkles/></Tool><Tool label="入便签" disabled={textEditing} onClick={()=>void run(window.pin.noteText(text,state.revision))}><StickyNote/></Tool></>}
         {(kind==='image'||kind==='text')&&<Tool label={kind==='text'?'编辑文字':animation?'动态贴图请在录制预览中裁剪':'编辑贴图'} disabled={kind==='image'&&(state.locked||!!animation)} onClick={()=>{if(kind==='text'){setTextEditing(on=>!on);setDraft(payload?.text||'');}else void action('edit');}}><PenLine/></Tool>}
         {(kind==='image'||kind==='text')&&<Tool label={kind==='text'||text?'文字预设':'图片预设'} active={!!text} disabled={textEditing} onClick={()=>{if(kind==='text')void outputText(true,payload?.text);else if(text)void outputText(true);else void action('image');}}><Send/></Tool>}
         <Tool label="快速保存" disabled={textEditing} onClick={()=>void action('quick-save')}><Save/></Tool>

@@ -16,6 +16,6 @@ export const shortcutLabel = (value: string) => value.replace(/CommandOrControl|
 export const folderName = (path: string) => path.split('/').filter(Boolean).at(-1) || path;
 
 export function Badge({ target }: { target: PresetTarget }) {
-  if (target === 'api') return <Image size={16} className="l-badge" aria-label="New API" />;
+  if (target === 'api') return <Image size={16} className="l-badge" aria-label="API" />;
   return <img className="l-badge" src={targetIcons[target]} alt={targetLabels[target]} draggable={false} />;
 }

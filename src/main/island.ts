@@ -318,8 +318,9 @@ export class NotchIsland {
     const cursor = screen.getCursorScreenPoint();
     const area = screen.getDisplayNearestPoint(cursor).workArea;
     const gap = 8;
-    if (slot === 'coding-ai') {
-      const leftW = Math.round((area.width - gap * 3) * 0.66);
+    if (slot === 'coding-ai' || slot === 'equal-split') {
+      const label = slot === 'coding-ai' ? '2:1' : '1:1';
+      const leftW = Math.round((area.width - gap * 3) * (slot === 'coding-ai' ? 0.66 : 0.5));
       const rightW = area.width - gap * 3 - leftW;
       const moved = this.ax.tileTwoWindows?.(
         area.x + gap,
@@ -331,22 +332,7 @@ export class NotchIsland {
         rightW,
         area.height - gap * 2
       );
-      this.toast(moved ? '已排布 2/3 研发 + 1/3 AI 双栏工作区' : '已就绪 2/3 研发双栏排布', '2/3');
-      return;
-    }
-    if (slot === 'equal-split') {
-      const halfW = Math.round((area.width - gap * 3) / 2);
-      this.ax.tileTwoWindows?.(
-        area.x + gap,
-        area.y + gap,
-        halfW,
-        area.height - gap * 2,
-        area.x + gap * 2 + halfW,
-        area.y + gap,
-        halfW,
-        area.height - gap * 2
-      );
-      this.toast('已排布 50/50 双窗对半分屏', '1:1');
+      this.toast(moved === 2 ? `已完成 ${label} 双栏布局` : moved === 1 ? '仅移动了一个窗口，未完成双栏布局' : '未能排布窗口，请检查辅助功能权限及可用窗口', label);
       return;
     }
 
@@ -373,12 +359,12 @@ export class NotchIsland {
         Math.round(area.y + area.height * 0.1),
         Math.round(area.width * 0.76),
         Math.round(area.height * 0.8),
-        '居中阅读窗'
+        '窗口居中'
       ]
     };
     const [x, y, w, h, label] = rects[slot];
-    this.ax.snapWindow?.(x, y, w, h);
-    this.toast(`窗口已吸附：${label}`, 'Snap');
+    const moved = this.ax.snapWindow?.(x, y, w, h);
+    this.toast(moved ? `已调整窗口：${label}` : '未能调整窗口，请检查辅助功能权限及前台窗口', '分屏');
   }
 
   pasteSelection(): void {
@@ -431,7 +417,7 @@ export class NotchIsland {
       const next = this.pomodoro.remainingSeconds - 1;
       if (next <= 0) {
         if (this.pomodoro.kind === 'focus') {
-          this.startPomodoro({ id: this.pomodoro.taskId, title: '摸鱼提醒 · 起身活动喝水' }, 5, 'slacking');
+          this.startPomodoro({ id: this.pomodoro.taskId, title: '休息提醒 · 起身活动喝水' }, 5, 'slacking');
         } else {
           this.stopPomodoro();
           this.toast('休息结束，随时开始下一轮番茄钟', '25:00');
@@ -571,7 +557,7 @@ export class NotchIsland {
           items?: IslandAlertItem[];
         };
         if (data.kind === 'slacking') {
-          this.startPomodoro({ id: null, title: data.title || '摸鱼提醒 · 站起来喝口水' }, 5, 'slacking');
+          this.startPomodoro({ id: null, title: data.title || '休息提醒 · 站起来喝口水' }, 5, 'slacking');
           return;
         }
 

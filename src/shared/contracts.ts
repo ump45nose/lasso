@@ -59,7 +59,7 @@ export interface Settings {
   importedFonts: ImportedFont[];
 }
 export type PresetTarget = Target | 'api';
-export const presetTargetLabels = { ...targetLabels, api: 'New API' };
+export const presetTargetLabels = { ...targetLabels, api: 'API' };
 export interface Preset extends ExecutionProfile {
   kind?: 'chat' | 'image';
   image?: ImageOptions;
