@@ -1,14 +1,19 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
-import { sign } from '@electron/osx-sign';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { requireSigningIdentity, signApp } from './sign-app.mjs';
+import { sourceInfo } from './source-info.mjs';
 import { packager } from '@electron/packager';
-import './icons.mjs';
+const unsigned = process.argv.includes('--unsigned');
 const releaseBuild = process.argv.includes('--release');
 const identity = releaseBuild ? '-' : 'Lasso Local Development';
-// Fail closed: never silently replace the stable identity with ad-hoc signing.
-try { if (!releaseBuild) execFileSync('/usr/bin/security', ['find-certificate', '-c', identity], { stdio: 'ignore' }); }
-catch { throw new Error('请先运行 npm run signing:setup 创建本机固定开发签名。'); }
+if (unsigned && releaseBuild) throw new Error('--unsigned 与 --release 不能同时使用。');
+if (!unsigned) requireSigningIdentity(identity);
+const built = JSON.parse(readFileSync('dist/build-source.json', 'utf8'));
+if (built.inputDigest !== sourceInfo().inputDigest || built.arch !== process.arch) {
+  throw new Error('构建产物与当前源码不一致，请先运行 npm run build。');
+}
+await import('./icons.mjs');
 const paths = await packager({
   icon: 'assets/lasso.icns',
   dir: '.', out: process.env.LASSO_PACKAGE_OUT || 'release', name: 'Lasso', executableName: 'MacAIPrompt',
@@ -28,15 +33,7 @@ for (const path of paths) {
   // Packager ties the display name to executableName; keep the stable executable
   // while exposing the chosen name to Finder, Dock and system permissions.
   execFileSync('/usr/libexec/PlistBuddy', ['-c', 'Set :CFBundleDisplayName Lasso', path + '/Lasso.app/Contents/Info.plist']);
-  mkdirSync('outputs/.packaging', {recursive:true});
-  const scratch = mkdtempSync(join(resolve('outputs/.packaging'), 'lasso-sign-'));
-  const entitlements = join(scratch, 'entitlements.plist');
-  writeFileSync(entitlements, '<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict/></plist>');
-  try { await sign({
-    app: path + '/Lasso.app', identity, identityValidation: false,
-    platform: 'darwin', type: 'development',
-    preAutoEntitlements: false, preEmbedProvisioningProfile: false,
-    optionsForFile: () => ({ hardenedRuntime: false, entitlements, timestamp: 'none' })
-  }); } finally { rmSync(scratch, { recursive: true, force: true }); }
+  writeFileSync(path + '/Lasso.app/Contents/Resources/lasso-build.json', JSON.stringify(built, null, 2) + '\n');
+  if (!unsigned) await signApp(path + '/Lasso.app', identity, resolve('outputs/.packaging'));
   console.log(path);
 }
