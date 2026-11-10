@@ -501,34 +501,70 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     }
     return names;
   }));
-  // Vision settings use the real service/configuration IPC with synthetic safeStorage.
+  // Vision, Translation, and Multi-API named connection pool use the real service/configuration IPC with synthetic safeStorage.
   saved.push(...await main(async () => {
     const {find,page,wait,ready,showPane,reveal,scrollTo,settingsTab,save,ipcMain,fs,path,app,out}=global.uiShots,names=[],receipts=[],m=find();
     if(global.uiShots.surfacesOnly)return names;
-    const original=await page(m,'window.desktop.visionConfig()'),media=await page(m,'window.desktop.mediaConfig()'),handler=ipcMain._invokeHandlers.get('shell:vision-config-save');
+    const original=await page(m,'window.desktop.visionConfig()'),media=await page(m,'window.desktop.mediaConfig()'),originalSettings=await page(m,'window.desktop.getState().then(s=>({translation:s.settings.translation,windowDragSnap:s.settings.windowDragSnap}))');
+    const handler=ipcMain._invokeHandlers.get('shell:vision-config-save'),saveConnHandler=ipcMain._invokeHandlers.get('shell:api-connection-save'),modelsHandler=ipcMain._invokeHandlers.get('shell:api-connection-models'),connsHandler=ipcMain._invokeHandlers.get('shell:api-connections');
     const expect=(ok,message)=>{if(!ok)throw Error(message);};
     ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',async(event,input)=>{const {credential,...config}=input;receipts.push({...config,credentialAction:credential===undefined?'keep':credential?'replace':'clear'});const result=await handler(event,input);expect(!('credential'in result),'Vision response leaked credential');return result;});
+    ipcMain.removeHandler('shell:api-connection-models');ipcMain.handle('shell:api-connection-models',async(event,id)=>{const conns=await connsHandler(event),target=conns.find(c=>c.id===id);if(!target||!target.baseURL)return {models:[],error:'请先填写 API 地址'};const models=['gpt-4.1-mini','deepseek-chat','gpt-image-1'];await saveConnHandler(event,{id:target.id,name:target.name,baseURL:target.baseURL,models});return {models,error:null};});
     const click=async selector=>{await page(m,`(async()=>{const e=document.querySelector(${JSON.stringify(selector)});await (${showPane})(e);e.click();})()`);await wait(200);};
     const fill=async(id,value)=>{await page(m,`(async()=>{const e=document.getElementById(${JSON.stringify(id)});await (${showPane})(e);Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('input',{bubbles:true}));})()`);await wait(120);};
-    const shot=async name=>{await scrollTo(m,'#screenshot-vision .l-set-row-head');names.push(await save(m,name));};
-    const commit=async()=>{await page(m,`(async()=>{const b=[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务');await (${showPane})(b);b.click();})()`);await ready(m,`document.querySelector('#screenshot-vision [role="status"]')?.textContent.includes('已保存')`);};
+    const selectValue=async(id,value)=>{await page(m,`(async()=>{const e=document.getElementById(${JSON.stringify(id)});await (${showPane})(e);Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set.call(e,${JSON.stringify(value)});e.dispatchEvent(new Event('change',{bubbles:true}));})()`);await wait(160);};
+    const shot=async(name,selector='#screenshot-vision .l-set-row-head')=>{await scrollTo(m,selector);names.push(await save(m,name));};
+    const commit=async()=>{await page(m,`(async()=>{const b=[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务');await (${showPane})(b);b.click();})()`);await ready(m,`[...document.querySelectorAll('#screenshot-vision [role="status"]')].some(el=>el.textContent.includes('智能识别与翻译设置已保存'))`);};
+    const savePoolConn=async()=>{await page(m,`(async()=>{const b=[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='创建并保存连接'||b.textContent==='保存连接');await (${showPane})(b);b.click();})()`);};
     try {
       await page(m,`window.desktop.saveMediaConfig({baseURL:'https://images.example.invalid/v1',credential:'synthetic-media-key'})`);
       await settingsTab(m,'截图');await ready(m,`Boolean(document.querySelector('#screenshot-vision input'))`);await shot('settings-vision-reuse');
-      await click('[aria-label="复用 API 密钥"]');await fill('vision-base-url','file:///invalid');await fill('vision-model','vision-fixture');await fill('vision-api-key','synthetic-vision-key');
+      await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent.includes('新建连接')).click()`);await wait(150);
+      await fill('vision-api-name','New API 视觉网关');await fill('vision-api-base','file:///invalid');await fill('vision-api-key','synthetic-vision-key');
+      await savePoolConn();await ready(m,`Boolean(document.querySelector('#screenshot-vision [role="alert"]'))`);await shot('settings-vision-validation','#vision-api-name');
+      await fill('vision-api-base','https://vision.example.invalid/v1/');await savePoolConn();
+      await ready(m,`[...document.querySelectorAll('#screenshot-vision [role="status"]')].some(el=>el.textContent.includes('API 连接已保存'))`);
+      expect(await page(m,`document.getElementById('vision-api-key').value===''&&document.getElementById('vision-api-key').type==='password'`),'Pool secret remained in input');
+      await page(m,`[...document.querySelectorAll('#screenshot-vision .l-workspace-actions button')].find(b=>b.textContent.includes('读取模型')).click()`);
+      await ready(m,`[...document.querySelectorAll('#screenshot-vision [role="status"]')].some(el=>el.textContent.includes('已读取并缓存 3 个模型'))`);
+      await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent.includes('新建连接')).click()`);await wait(150);
+      await fill('vision-api-name','DeepSeek 极速翻译');await fill('vision-api-base','https://translate.example.invalid/v1');await fill('vision-api-key','synthetic-translate-key');
+      await savePoolConn();await ready(m,`[...document.querySelectorAll('#screenshot-vision [role="status"]')].some(el=>el.textContent.includes('API 连接已保存'))`);
+      await page(m,`[...document.querySelectorAll('#screenshot-vision .l-workspace-actions button')].find(b=>b.textContent.includes('读取模型')).click()`);
+      await ready(m,`[...document.querySelectorAll('#screenshot-vision [role="status"]')].some(el=>el.textContent.includes('已读取并缓存 3 个模型'))`);
+      await shot('settings-api-pool','#screenshot-vision .l-vision-actions');
+      const pool=await page(m,'window.desktop.apiConnections()'),visionConn=pool.find(c=>c.name==='New API 视觉网关'),transConn=pool.find(c=>c.name==='DeepSeek 极速翻译');
+      expect(visionConn&&transConn&&visionConn.hasCredential&&transConn.hasCredential&&visionConn.models.length===3,'Named connections did not persist in pool');
+      await selectValue('vision-model-connection',visionConn.id);await fill('vision-model','vision-fixture');
       await page(m,`[...document.querySelectorAll('[aria-label="默认翻译语言"] button')].find(b=>b.textContent==='日文').click()`);await shot('settings-vision-independent');
-      await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='保存智能服务').click()`);await ready(m,`Boolean(document.querySelector('#screenshot-vision [role="alert"]'))`);await shot('settings-vision-validation');expect(receipts.length===0,'Invalid vision configuration reached IPC');
-      await fill('vision-base-url','https://vision.example.invalid/v1/');await commit();await shot('settings-vision-saved');
-      let config=await page(m,'window.desktop.visionConfig()');expect(config.hasCredential&&!config.useMediaCredential&&config.targetLanguage==='日本語'&&config.baseURL==='https://vision.example.invalid/v1','Vision configuration did not persist');
-      expect(await page(m,`document.getElementById('vision-api-key').value===''&&document.getElementById('vision-api-key').type==='password'`),'Vision secret remained in input');
-      await fill('vision-model','vision-fixture-edited');await commit();expect(receipts.at(-1).credentialAction==='keep'&&(await page(m,'window.desktop.visionConfig()')).hasCredential,'Blank key did not preserve saved secret');
-      await settingsTab(m,'通用');await settingsTab(m,'截图');await ready(m,`document.getElementById('vision-model')?.value==='vision-fixture-edited'`);expect(await page(m,`document.querySelector('[aria-label="默认翻译语言"] [aria-checked="true"]').textContent==='日文'`),'Vision language did not restore');
-      const disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')),secretDisk=fs.readFileSync(path.join(app.getPath('userData'),'vision-service/config.json'),'utf8');
-      const {hasCredential,...persisted}=await page(m,'window.desktop.visionConfig()');expect(JSON.stringify(disk.vision)===JSON.stringify(persisted)&&!secretDisk.includes('synthetic-vision-key'),'Vision settings persistence or secret isolation failed');
-      await reveal(m,'#screenshot-vision');await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='清除已存独立密钥').click()`);await wait(100);await commit();expect(!(await page(m,'window.desktop.visionConfig()')).hasCredential&&receipts.at(-1).credentialAction==='clear','Independent key did not clear');await shot('settings-vision-cleared');
-      await click('[aria-label="复用 API 密钥"]');await commit();expect((await page(m,'window.desktop.visionConfig()')).hasCredential,'Media credential was not reused');
-      fs.writeFileSync(path.join(out,'stage-6-settings.json'),JSON.stringify({status:'passed',receipts,persisted,checks:['复用凭据、独立凭据保存/留空保留/清除','URL校验、默认语言、切页恢复','真实IPC与磁盘一致、返回值/输入/文件脱敏'],secrets:'synthetic safeStorage; no system keychain'},null,2));
-    } finally {ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',handler);await page(m,`(async()=>{await window.desktop.saveVisionConfig({...${JSON.stringify(original)},credential:''});await window.desktop.saveMediaConfig({baseURL:${JSON.stringify(media.baseURL)},credential:''});await window.desktop.act('close-settings');})()`);}
+      await commit();await shot('settings-vision-saved');
+      const config=await page(m,'window.desktop.visionConfig()');expect(config.hasCredential&&config.connectionId===visionConn.id&&config.targetLanguage==='日本語'&&config.baseURL==='https://vision.example.invalid/v1'&&config.model==='vision-fixture','Vision configuration did not persist');
+      await fill('vision-model','vision-fixture-edited');await commit();expect((await page(m,'window.desktop.visionConfig()')).hasCredential,'Saving binding lost saved pool secret');
+      await settingsTab(m,'通用');await ready(m,`Boolean(document.querySelector('#translation-settings select'))`);
+      await selectValue('translation-model-connection',transConn.id);
+      await page(m,`[...document.querySelectorAll('#translation-settings button')].find(b=>b.textContent.includes('从服务模型列表选择')).click()`);await wait(120);
+      await page(m,`[...document.querySelectorAll('#translation-settings .l-image-model-list .l-field-row')].find(r=>r.textContent.includes('deepseek-chat')).querySelector('button').click()`);await wait(120);
+      await page(m,`[...document.querySelectorAll('#translation-settings button')].find(b=>b.textContent==='保存翻译设置').click()`);
+      await ready(m,`[...document.querySelectorAll('#translation-settings [role="status"]')].some(el=>el.textContent.includes('已保存'))`);
+      await click('[aria-label="复制即译"]');await page(m,`[...document.querySelectorAll('[aria-label="复制即译触发方式"] button')].find(b=>b.textContent==='单次复制').click()`);await wait(150);
+      await click('[aria-label="鼠标拖拽分屏"]');await wait(150);
+      await shot('settings-translation','#translation-settings .l-set-row-head');
+      const transSaved=await page(m,'window.desktop.getState().then(s=>s.settings.translation)');
+      expect(transSaved.connectionId===transConn.id&&transSaved.model==='deepseek-chat'&&transSaved.copyTranslateEnabled&&transSaved.copyTranslateTrigger==='every-copy','Translation binding did not persist');
+      await settingsTab(m,'截图');await ready(m,`document.getElementById('vision-model')?.value==='vision-fixture-edited'`);expect(await page(m,`document.querySelector('[aria-label="默认翻译语言"] [aria-checked="true"]').textContent==='日文'`),'Vision language did not restore');
+      const disk=JSON.parse(fs.readFileSync(path.join(app.getPath('userData'),'settings.json'),'utf8')),secretDisk=fs.readFileSync(path.join(app.getPath('userData'),'generated-media/config.json'),'utf8')+fs.readFileSync(path.join(app.getPath('userData'),'vision-service/config.json'),'utf8');
+      const {hasCredential,...persisted}=await page(m,'window.desktop.visionConfig()');expect(JSON.stringify(disk.vision)===JSON.stringify(persisted)&&!secretDisk.includes('synthetic-vision-key')&&!secretDisk.includes('synthetic-translate-key'),'Vision settings persistence or secret isolation failed');
+      const deleteProtected=await page(m,`window.desktop.deleteApiConnection(${JSON.stringify(visionConn.id)})`);expect(deleteProtected.error?.includes('视觉服务'),'Referenced connection allowed deletion');
+      await reveal(m,'#screenshot-vision');await page(m,`[...document.querySelectorAll('#screenshot-vision .l-preset')].find(b=>b.textContent.includes('New API 视觉网关')).click()`);await wait(150);
+      await page(m,`[...document.querySelectorAll('#screenshot-vision button')].find(b=>b.textContent==='清除已存密钥').click()`);await wait(100);await savePoolConn();
+      await ready(m,`[...document.querySelectorAll('#screenshot-vision [role="status"]')].some(el=>el.textContent.includes('API 连接已保存'))`);
+      expect(!(await page(m,'window.desktop.visionConfig()')).hasCredential,'Pool key did not clear');await shot('settings-vision-cleared');
+      fs.writeFileSync(path.join(out,'stage-6-settings.json'),JSON.stringify({status:'passed',receipts,persisted,poolCount:pool.length,checks:['多API命名连接池增改、模型读取缓存、密钥清除与引用保护','截图智能服务与通用翻译服务显式绑定','URL校验、默认语言、切页恢复','真实IPC与磁盘一致、返回值/输入/文件脱敏'],secrets:'synthetic safeStorage; no system keychain'},null,2));
+    } finally {
+      ipcMain.removeHandler('shell:vision-config-save');ipcMain.handle('shell:vision-config-save',handler);
+      ipcMain.removeHandler('shell:api-connection-models');ipcMain.handle('shell:api-connection-models',modelsHandler);
+      await page(m,`(async()=>{await window.desktop.saveTranslationSettings(${JSON.stringify(originalSettings.translation)});await window.desktop.saveWindowDragSnap(${JSON.stringify(originalSettings.windowDragSnap)});await window.desktop.saveVisionConfig({...${JSON.stringify(original)},credential:''});await window.desktop.saveMediaConfig({baseURL:${JSON.stringify(media.baseURL)},credential:''});const conns=await window.desktop.apiConnections();for(const c of conns){if(c.name==='New API 视觉网关'||c.name==='DeepSeek 极速翻译')await window.desktop.deleteApiConnection(c.id);}await window.desktop.act('close-settings');})()`);
+    }
     return names;
   }));
   // Stage 4 settings: actions are checked against the persisted fixture receipts.
@@ -671,7 +707,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   // Selection action bar: hover on the first preset, then the ··· menu with its first row hovered, plus inline Fast API card and system suite surfaces.
   saved.push(...await main(async () => {
     const { find, page, wait, ready, move, center, save } = global.uiShots, w = find('action-bar'), names = [];
-    if(global.uiShots.focusedCases.length&&!global.uiShots.focusedCases.some(name=>['product-labels','action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-board','island-cli','finder-panel'].includes(name)))return names;
+    if(global.uiShots.focusedCases.length&&!global.uiShots.focusedCases.some(name=>['product-labels','action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-idle','island-focus-capsule','island-focus','island-alert','island-board','island-cli','finder-panel','translator-window','translator-streaming','clipboard-window','clipboard-clear-confirm'].includes(name)))return names;
     w.setOpacity(1); w.showInactive(); w.webContents.send('bar:enter', { tip: 'above', menu: 'above' }); await wait(500);
     if (!await page(w, `Boolean(document.querySelector('button[aria-label="入便签"]'))`)) throw Error('Action bar missing append-note button');
     const first = await center(w, '.ab-buttons button'); if (first) await move(w, ...first);
@@ -712,72 +748,125 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await ready(isl, 'Boolean(window.island && document.querySelector(".isl-shell"))');
       isl.setOpacity(1); isl.showInactive();
       const baseIsl = await page(isl, 'window.island.getState()');
-      isl.webContents.send('island:changed', {
-        ...baseIsl,
-        mode: 'focus-hover',
-        glow: false,
-        pomodoro: {
-          active: true,
-          paused: false,
-          kind: 'focus',
-          taskId: 'nook-1',
-          taskTitle: '核对 API 翻译流式延迟与回填',
-          remainingSeconds: 1125,
-          totalSeconds: 1500
-        }
-      });
+      const islFixtures = await page(isl, 'window.island.getState().then(base => window.__uiShotsFixtures.islandStates(base))');
+      const menuBottom = (baseIsl.menuBarHeight || 28) + 3.5;
+
+      isl.webContents.send('island:changed', islFixtures.idle);
+      await wait(350);
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-notch-anchor')?.getBoundingClientRect(); return Boolean(r && r.top === 0 && r.bottom <= ${(baseIsl.menuBarHeight || 28) + 1} && !document.querySelector('.isl-drop-card')); })()`)) {
+        throw Error('Idle NotchIsland leaked a dropped card or exceeded menu bar height');
+      }
+      names.push(await save(isl, 'island-idle'));
+
+      isl.webContents.send('island:changed', islFixtures.focusCapsule);
       await wait(450);
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-drop-card.mode-focus.is-capsule')?.getBoundingClientRect(); return Boolean(r && r.top >= ${menuBottom} && r.width <= 320 && r.bottom <= innerHeight); })()`)) {
+        throw Error('Focus capsule did not drop below menu bar or exceeded capsule width');
+      }
+      names.push(await save(isl, 'island-focus-capsule'));
+
+      isl.webContents.send('island:changed', islFixtures.focusHover);
+      await wait(450);
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-drop-card.mode-focus-hover')?.getBoundingClientRect(); return Boolean(r && r.top >= ${menuBottom} && Math.round(r.width) === 360); })()`)) {
+        throw Error('Focus hover card did not drop below menu bar with 360px width');
+      }
       names.push(await save(isl, 'island-focus'));
 
-      isl.webContents.send('island:changed', {
-        ...baseIsl,
-        mode: 'nook-alert',
-        glow: true,
-        alerts: [
-          { id: 'alert-1', kind: 'task', title: '下午 16:00 复盘 Nook 提醒桥接', subtitle: 'Nook · 今日重点待办', target: 'nook-1' },
-          { id: 'alert-2', kind: 'launchd', title: 'com.personalhub.app 异常退出 (Exit 1)', subtitle: '~/Library/LaunchAgents · 点击一键重启', target: 'com.personalhub.app' }
-        ]
-      });
+      isl.webContents.send('island:changed', islFixtures.nookAlert);
       await wait(450);
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-drop-card.mode-nook-alert')?.getBoundingClientRect(); const chips = [...document.querySelectorAll('.isl-alert-btns .isl-btn')].map(b => b.textContent.trim()); return Boolean(r && r.top >= ${menuBottom} && Math.round(r.width) === 396 && ['10m', '30m', '2h'].every(label => chips.includes(label))); })()`)) {
+        throw Error('Nook alert card missing 10m/30m/2h snooze buttons or menu bar clearance');
+      }
       names.push(await save(isl, 'island-alert'));
 
-      isl.webContents.send('island:changed', { ...baseIsl, mode: 'slacking', pomodoro: { active: true, paused: false, kind: 'slacking', taskId: null, taskTitle: '休息提醒 · 起身活动喝水', remainingSeconds: 300, totalSeconds: 300 } });
+      isl.webContents.send('island:changed', islFixtures.slacking);
       await wait(450); names.push(await save(isl, 'island-rest'));
       for (const [name, text] of [['complete', '已完成 2:1 双栏布局'], ['partial', '仅移动了一个窗口，未完成双栏布局'], ['failed', '未能排布窗口，请检查辅助功能权限及可用窗口']]) {
         isl.webContents.send('island:changed', { ...baseIsl, mode: 'toast', toast: { id: name, text, badge: '2:1' } });
         await wait(450); names.push(await save(isl, 'island-snap-' + name));
       }
 
-      const cliTasks = [
-        { id: 'cli-1', target: 'codex', title: '重构浮动便签与 Finder 面板', activity: 'running' },
-        { id: 'cli-2', target: 'pi', title: '执行回归测试与构建验证', activity: 'waiting' }
-      ];
-      isl.webContents.send('island:changed', {
-        ...baseIsl,
-        mode: 'idle',
-        glow: true,
-        cliTasks
-      });
+      isl.webContents.send('island:changed', islFixtures.cliCapsule);
       await wait(450);
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-drop-card.mode-cli.is-capsule')?.getBoundingClientRect(); return Boolean(r && r.top >= ${menuBottom} && r.width <= 320 && document.querySelector('.isl-drop-card.mode-cli .ni-pill')); })()`)) {
+        throw Error('CLI capsule did not drop below menu bar or missing CLI pill');
+      }
       names.push(await save(isl, 'island-cli'));
 
-      isl.webContents.send('island:changed', {
-        ...baseIsl,
-        mode: 'board',
-        glow: true,
-        cliTasks
-      });
+      isl.webContents.send('island:changed', islFixtures.board);
       await wait(450);
       if (!await page(isl, `Boolean(document.querySelector('.isl-cli-row')) && [...document.querySelectorAll('.isl-snap-grid button')].some(b => b.textContent.includes('移至左屏'))`)) {
         throw Error('Island board missing CLI task rows or cross-display snap buttons');
       }
-      if (!await page(isl, `[...document.querySelectorAll('.isl-snap-grid button, .isl-quick-bar button')].every(button=>{const r=button.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;})`)) throw Error('Production IslandBoard clips window actions');
+      if (!await page(isl, `['提醒总开关','等待我回复','PR 新反馈','PR 阻塞'].every(t => [...document.querySelectorAll('[aria-label="Nook 提醒与 PR 跟进"] .isl-toggle-chip')].some(b => b.textContent.includes(t))) && ['复制即译','输入翻译','剪贴板历史'].every(t => [...document.querySelectorAll('.isl-quick-tools button')].some(b => b.textContent.includes(t)))`)) {
+        throw Error('Island board missing Nook/PR three-category toggles or suite tool entry buttons');
+      }
+      if (!await page(isl, `(() => { const card = document.querySelector('.isl-drop-card.mode-board')?.getBoundingClientRect(); return Boolean(card && card.top >= ${menuBottom} && Math.round(card.width) === 416) && [...document.querySelectorAll('.isl-snap-grid button, .isl-quick-tools button, .isl-quick-row button')].every(button=>{const r=button.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;}); })()`)) throw Error('Production IslandBoard clips window actions or violates dropped layout');
       names.push(await save(isl, 'island-board'));
-      isl.webContents.send('island:changed', { ...baseIsl, mode: 'board', cliTasks: Array.from({length:8},(_,i)=>({...cliTasks[i%2],id:`cli-many-${i}`})) });
+      const cliTasks = islFixtures.cliCapsule.cliTasks;
+      isl.webContents.send('island:changed', { ...islFixtures.board, cliTasks: Array.from({length:8},(_,i)=>({...cliTasks[i%2],id:`cli-many-${i}`})) });
       await wait(450);
-      if (!await page(isl, `document.querySelector('.isl-board-tasks').scrollHeight > document.querySelector('.isl-board-tasks').clientHeight && [...document.querySelectorAll('.isl-snap-grid button, .isl-quick-bar button')].every(button=>button.getBoundingClientRect().bottom<=innerHeight)`)) throw Error('IslandBoard task overflow obscured window actions');
+      if (!await page(isl, `document.querySelector('.isl-board-tasks').scrollHeight > document.querySelector('.isl-board-tasks').clientHeight && [...document.querySelectorAll('.isl-snap-grid button, .isl-quick-tools button, .isl-quick-row button')].every(button=>button.getBoundingClientRect().bottom<=innerHeight)`)) throw Error('IslandBoard task overflow obscured window actions');
       names.push(await save(isl, 'island-board-many-tasks'));
       isl.hide();
+    }
+
+    const transWin = find('translate');
+    if (!transWin) throw Error('Translator surface unavailable');
+    {
+      await ready(transWin, 'Boolean(window.island && document.querySelector(".sw-win"))');
+      const baseTrans = await page(transWin, 'window.island.getTranslatorState()');
+      await page(transWin, 'window.island.setTranslatorPinned(true)');
+      transWin.setOpacity(1); transWin.showInactive();
+      const donePayload = await page(transWin, 'window.island.getTranslatorState().then(base => window.__uiShotsFixtures.translatorState(base, "done"))');
+      transWin.webContents.send('translator:changed', donePayload);
+      await wait(450);
+      if (!await page(transWin, `Boolean(document.querySelector('.sw-win[aria-label="输入翻译"]')) && document.querySelector('.sw-trans-result')?.textContent.includes('菜单栏刘海岛下沉') && document.querySelector('.sw-trans-meta-text')?.textContent.includes('DeepSeek 极速翻译 · deepseek-chat · 首字 142ms') && ['入便签','钉为贴图','替换原选区','复制译文'].every(t => [...document.querySelectorAll('.sw-trans-actions button')].some(b => b.textContent.includes(t) && !b.disabled)) && document.documentElement.scrollWidth <= innerWidth && document.querySelector('.sw-win').getBoundingClientRect().bottom <= innerHeight`)) {
+        throw Error('TranslatorWindow layout or action bar verification failed');
+      }
+      names.push(await save(transWin, 'translator-window'));
+      const streamingPayload = await page(transWin, 'window.island.getTranslatorState().then(base => window.__uiShotsFixtures.translatorState(base, "streaming"))');
+      transWin.webContents.send('translator:changed', streamingPayload);
+      await wait(350);
+      if (!await page(transWin, `Boolean(document.querySelector('.sw-trans-result .l-caret') && document.querySelector('button[aria-label="停止翻译"]'))`)) throw Error('TranslatorWindow streaming indicator missing');
+      names.push(await save(transWin, 'translator-streaming'));
+      await page(transWin, `navigator.clipboard.writeText('双击 Command+C 即可在任意应用触发复制即译并回填原选区。')`);
+      await page(transWin, `document.querySelector('button[aria-label="粘贴原文"]').click()`);
+      await wait(200);
+      if (!await page(transWin, `document.querySelector('.sw-trans-source').value.includes('双击 Command+C')`)) throw Error('TranslatorWindow paste-source did not read from isolated clipboard');
+      await page(transWin, `window.island.setTranslatorPinned(${JSON.stringify(Boolean(baseTrans.pinnedOnTop))})`);
+      transWin.webContents.send('translator:changed', { ...baseTrans, open: false });
+      transWin.hide();
+    }
+
+    const clipWin = find('clipboard');
+    if (!clipWin) throw Error('Clipboard history surface unavailable');
+    {
+      await ready(clipWin, 'Boolean(window.island && document.querySelector(".sw-win"))');
+      const baseClip = await page(clipWin, 'window.island.getClipboardState()');
+      clipWin.setOpacity(1); clipWin.showInactive();
+      const mWin = find();
+      const safariIcon = await page(mWin, 'window.desktop.appIcon("com.apple.Safari")');
+      const finderIcon = await page(mWin, 'window.desktop.appIcon("com.apple.finder")');
+      const thumbnailDataUrl = global.uiShots.stage4?.thumbnailDataUrl || null;
+      const clipPayload = await page(clipWin, `window.island.getClipboardState().then(base => window.__uiShotsFixtures.clipboardState(base, ${JSON.stringify({ safariIcon, finderIcon, thumbnailDataUrl })}))`);
+      clipWin.webContents.send('clipboard-history:changed', clipPayload);
+      await wait(450);
+      if (!await page(clipWin, `document.querySelectorAll('.sw-clip-row').length === 4 && document.querySelectorAll('.sw-app-icon-img').length === 3 && Boolean(document.querySelector('.sw-app-icon-fallback')) && [...document.querySelectorAll('.sw-app-icon')].every(el => { const r = el.getBoundingClientRect(); return Math.round(r.width) === 28 && Math.round(r.height) === 28; }) && document.documentElement.scrollWidth <= innerWidth && document.querySelector('.sw-win').getBoundingClientRect().bottom <= innerHeight`)) {
+        throw Error('ClipboardWindow source app icons or row layout verification failed');
+      }
+      names.push(await save(clipWin, 'clipboard-window'));
+      await page(clipWin, `[...document.querySelectorAll('[aria-label="剪贴板分类筛选"] button')].find(b => b.textContent.includes('图片')).click()`);
+      await wait(250);
+      if (!await page(clipWin, `document.querySelectorAll('.sw-clip-row').length === 1 && Boolean(document.querySelector('.sw-clip-thumb'))`)) throw Error('ClipboardWindow image category filter failed');
+      await page(clipWin, `[...document.querySelectorAll('[aria-label="剪贴板分类筛选"] button')].find(b => b.textContent.includes('全部')).click()`);
+      await wait(250);
+      await page(clipWin, `document.querySelector('[aria-label="清空剪贴板历史"]').click()`);
+      await wait(200);
+      if (!await page(clipWin, `Boolean(document.querySelector('[aria-label="确认清空剪贴板历史"]'))`)) throw Error('ClipboardWindow inline clear confirmation did not appear');
+      names.push(await save(clipWin, 'clipboard-clear-confirm'));
+      clipWin.webContents.send('clipboard-history:changed', { ...baseClip, open: false });
+      clipWin.hide();
     }
 
     const notesWin = find('edge-notes');
