@@ -5,6 +5,7 @@ import type { ScreenshotSettings as Preferences, ScreenshotActions, ScreenshotKi
 import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings } from '../shared/screenshot-settings';
 import { captureModeLabels } from '../shared/capture';
 import { validateVisionConfig, type VisionServiceConfig } from '../shared/intelligence';
+import { ApiConnectionBindingFields, ApiConnectionPoolManager } from './ImageOptionsFields';
 import { Segmented, SubNav, SubPane, collapse, useSubNav } from './motion';
 import type { RecordingSettings } from '../shared/recording';
 import { CaptureHistory, PinWorkspace } from './CaptureWorkspaceSettings';
@@ -23,29 +24,28 @@ const names = new Intl.DisplayNames(['zh-CN'], { type: 'language' });
 const languageName = (code: string) => { try { return names.of(code) || code; } catch { return code; } };
 function VisionSettings() {
   const [saved, setSaved] = useState<VisionServiceConfig | null>(null), [draft, setDraft] = useState<VisionServiceConfig | null>(null);
-  const [credential, setCredential] = useState(''), [clear, setClear] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
+  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
   useEffect(() => { let active = true; void window.desktop.visionConfig().then(config => { if (active) { setSaved(config); setDraft(config); } }, reason => { if (active) setError(String(reason)); }); return () => { active = false; }; }, []);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved) || !!credential || clear;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
   const patch = (input: Partial<VisionServiceConfig>) => { setDraft(value => value && ({ ...value, ...input })); setError(''); setMessage(''); };
   async function save() {
     if (!draft) return;
+    if (!draft.connectionId) { setError('请选择智能视觉服务绑定的 API 连接'); return; }
+    if (!draft.model.trim()) { setError('请填写视觉模型名称'); return; }
     setBusy(true); setError(''); setMessage('');
     try {
-      const { hasCredential: _hasCredential, ...config } = draft;
-      const input = { ...config, ...(!config.useMediaCredential && (clear || credential) ? { credential: clear ? '' : credential } : {}) };
+      const input = { connectionId: draft.connectionId, baseURL: draft.baseURL, model: draft.model.trim(), targetLanguage: draft.targetLanguage };
       validateVisionConfig(input); const result = await window.desktop.saveVisionConfig(input);
-      setSaved(result); setDraft(result); setCredential(''); setClear(false); setMessage('智能识别与翻译设置已保存');
+      setSaved(result); setDraft(result); setMessage('智能识别与翻译设置已保存');
     } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
   }
   return <section id="screenshot-vision" className="l-set-section l-gap">
-    <div className="l-set-row-head"><h3>智能识别与翻译</h3></div>
+    <div className="l-set-row-head"><h3>智能识别与翻译</h3><span>必选绑定 API 连接与视觉模型</span></div>
     {draft && <><ul className="l-group">
-      <li><div className="l-row-label"><span>复用 API 密钥</span><span>地址留空时也使用预设的 API 地址，模型在此单独指定。</span></div><Switch label="复用 API 密钥" value={draft.useMediaCredential} change={() => patch({ useMediaCredential: !draft.useMediaCredential })} /></li>
-      <li className="col"><div className="l-field"><label htmlFor="vision-base-url">API 地址</label><input id="vision-base-url" className="l-input mono" value={draft.baseURL} placeholder={draft.useMediaCredential ? '留空复用预设的 API 地址' : 'https://…/v1'} onChange={event => patch({ baseURL: event.target.value })} /></div></li>
-      <li className="col"><div className="l-field"><label htmlFor="vision-model">模型名称</label><input id="vision-model" className="l-input mono" value={draft.model} placeholder="支持图像理解的模型" onChange={event => patch({ model: event.target.value })} /></div></li>
+      <li className="col"><ApiConnectionBindingFields connectionId={draft.connectionId} model={draft.model} modelId="vision-model" modelPlaceholder="支持图像理解的模型（如 gpt-4.1）" label="模型名称（必选）" help="用于截图与贴图内的表格提取、数学公式 LaTeX 识别和图像翻译。" onChange={({ connectionId, model }) => patch({ connectionId, model })} /></li>
       <li className="l-shot-option"><span>默认翻译语言</span><Segmented label="默认翻译语言" value={draft.targetLanguage} onChange={targetLanguage => patch({ targetLanguage })} options={[['简体中文', '中文'], ['English', '英文'], ['日本語', '日文'], ['한국어', '韩文'], ...(!['简体中文', 'English', '日本語', '한국어'].includes(draft.targetLanguage) ? [[draft.targetLanguage, draft.targetLanguage] as const] : [])]} /></li>
-      {!draft.useMediaCredential && <li className="col"><div className="l-field"><label htmlFor="vision-api-key">独立 API 密钥</label><input id="vision-api-key" type="password" autoComplete="off" className="l-input mono" value={credential} placeholder={!saved?.useMediaCredential && saved?.hasCredential ? '已安全保存，留空保留' : '输入独立 API 密钥'} onChange={event => { setCredential(event.target.value); setClear(false); setMessage(''); setError(''); }} />{!saved?.useMediaCredential && saved?.hasCredential && <button className="l-text-btn" aria-pressed={clear} onClick={() => { setClear(!clear); setCredential(''); setMessage(''); }}>{clear ? '保存时清除独立密钥 · 撤销' : '清除已存独立密钥'}</button>}</div></li>}
-    </ul><div className="l-vision-actions"><span className="l-field-help">{draft.useMediaCredential !== saved?.useMediaCredential ? '保存后切换密钥来源' : saved?.hasCredential ? '密钥已安全保存' : '尚未保存可用密钥'}</span><span className="push" /><button className="l-btn small" disabled={!dirty || busy} onClick={() => { setDraft(saved); setCredential(''); setClear(false); setError(''); setMessage(''); }}>放弃更改</button><button className="l-btn small primary" disabled={!dirty || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存智能服务'}</button></div></>}
+    </ul><div className="l-vision-actions"><span className="l-field-help">{draft.connectionId && draft.model.trim() ? '已绑定 API 连接与视觉模型' : '请选择 API 连接并填写视觉模型'}</span><span className="push" /><button className="l-btn small" disabled={!dirty || busy} onClick={() => { setDraft(saved); setError(''); setMessage(''); }}>放弃更改</button><button className="l-btn small primary" disabled={!dirty || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存智能服务'}</button></div>
+    <ApiConnectionPoolManager idPrefix="vision-" onSelect={id => { if (!draft.connectionId) patch({ connectionId: id }); }} /></>}
     {error && <p className="l-field-help l-danger" role="alert">{error}</p>}{message && <p className="l-field-help l-ok" role="status"><Check size={14} />{message}</p>}
   </section>;
 }
