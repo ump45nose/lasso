@@ -18,6 +18,7 @@ export interface ActionBarFastCallbacks {
   pin(image: NativeImage): Promise<void>;
   toast(text: string, badge?: string): void;
   appPrompts(): AppPrompt[];
+  translation?: () => Settings['translation'];
 }
 
 export class ActionBar {
@@ -27,6 +28,7 @@ export class ActionBar {
   private presets: Preset[] = [];
   private scripts: ActionBarState['scripts'] = [];
   private fonts: ActionBarState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
+  private translation: Settings['translation'] = { connectionId: '', model: '', targetLang: 'auto', copyTranslateEnabled: false, copyTranslateTrigger: 'double-cmd-c' };
   private busy = false;
   private width = 340;
   private bar = { x: 240, top: 320 };
@@ -70,8 +72,9 @@ export class ActionBar {
       }
       if (this.busy) return;
       const preset = this.presets.find(p => p.id === id && p.enabled);
-      if (preset && preset.target === 'api' && preset.kind !== 'image') {
-        await this.startFastCard(preset, this.selection, 'auto');
+      const fastTarget = preset ? this.resolveFastPreset(preset) : null;
+      if (fastTarget) {
+        await this.startFastCard(fastTarget.preset, this.selection, fastTarget.targetLang);
         return;
       }
       await this.run(id, this.selection);
@@ -157,8 +160,27 @@ export class ActionBar {
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'action-bar' } });
   }
 
+  private resolveFastPreset(preset: Preset): { preset: Preset; targetLang: 'auto' | 'zh' | 'en' } | null {
+    if (preset.kind === 'image') return null;
+    const translation = this.fast.translation?.() ?? this.translation;
+    if (preset.id === 'translate' && translation.connectionId.trim() && translation.model.trim()) {
+      const targetLang = translation.targetLang === 'zh' || translation.targetLang === 'en' ? translation.targetLang : 'auto';
+      return {
+        preset: { ...preset, target: 'api', connectionId: translation.connectionId.trim(), model: translation.model.trim() },
+        targetLang
+      };
+    }
+    if (preset.target === 'api') return { preset, targetLang: 'auto' };
+    return null;
+  }
+
   private snapshot(): ActionBarState {
-    const enabled = this.presets.filter(p => p.enabled).map(({ id, name, target, mode }) => ({ id, name, target, mode }));
+    const enabled = this.presets.filter(p => p.enabled).map(p => ({
+      id: p.id,
+      name: p.name,
+      target: this.resolveFastPreset(p) ? 'api' : p.target,
+      mode: p.mode
+    }));
     return { presets: enabled.slice(0, VISIBLE), more: enabled.slice(VISIBLE), scripts: this.scripts, busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
   }
 
@@ -170,6 +192,7 @@ export class ActionBar {
 
   update(presets: Preset[], busy: boolean, settings: Settings) {
     this.presets = presets; this.busy = busy; this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.translation = settings.translation;
     this.scripts = settings.scriptActions.filter(action => action.enabled).map(({ id, name }) => ({ id, name }));
     this.publish();
     if (!this.hasActions()) this.hide();
@@ -186,20 +209,22 @@ export class ActionBar {
   /** Opens the inline streaming card directly attached to the action bar (or summons the bar near cursor for OCR/palette runs). */
   async startFastCard(preset: Preset, selection: SelectionContext, targetLang: 'auto' | 'zh' | 'en' = 'auto', languageSwitch = false) {
     this.closeFast();
-    this.fastPreset = preset;
+    const resolved = this.resolveFastPreset(preset);
+    const activePreset = resolved ? resolved.preset : preset;
+    this.fastPreset = activePreset;
     this.menuOpen = false;
     this.selection = selection;
-    const isTranslation = preset.id === 'translate' || /翻译|translate/i.test(preset.name);
-    let prompt = composePrompt(preset, selection, this.fast.appPrompts());
+    const isTranslation = activePreset.id === 'translate' || /翻译|translate/i.test(activePreset.name);
+    let prompt = composePrompt(activePreset, selection, this.fast.appPrompts());
     if (targetLang !== 'auto') {
       prompt += isTranslation
         ? targetLang === 'zh' ? '\n\n请将上述内容准确翻译为简体中文，只输出译文。' : '\n\nPlease translate the content above into natural English and output only the translation.'
         : targetLang === 'zh' ? '\n\n请用简体中文输出。' : '\n\nPlease output in English.';
     }
-    const model = preset.model?.trim() || 'gpt-4.1-mini';
+    const model = activePreset.model?.trim() || '';
     this.fastCard = {
-      presetId: preset.id,
-      presetName: preset.name,
+      presetId: activePreset.id,
+      presetName: activePreset.name,
       model,
       status: 'streaming',
       text: '',
@@ -224,7 +249,7 @@ export class ActionBar {
     this.fastAbort = controller;
     try {
       const result = await this.fast.stream(
-        { connectionId: preset.connectionId, model, prompt, signal: controller.signal },
+        { connectionId: activePreset.connectionId, model, prompt, signal: controller.signal },
         (text, firstTokenMs) => {
           if (this.fastAbort !== controller || !this.fastCard) return;
           this.fastCard = { ...this.fastCard, text, firstTokenMs };

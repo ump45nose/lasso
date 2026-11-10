@@ -81,6 +81,7 @@ export class NotchIsland {
   private pomodoro: IslandState['pomodoro'] = null;
   private toastItem: IslandState['toast'] = null;
   private alerts: IslandAlertItem[] = [];
+  private alertBridgeMeta = new Map<string, { route?: string; rule?: string; rules?: string[] }>();
   private dismissedAlertKeys = new Set<string>();
   private readonly dismissedAlertsPath = join(app.getPath('userData'), 'island-dismissed-alerts.json');
   private nookPrefs: NookReminderPrefs = { enabled: true, gitWaiting: true, prFeedback: true, prBlocked: false };
@@ -555,7 +556,14 @@ export class NotchIsland {
 
   snoozeAlert(alertId: string, minutes = 10) {
     const target = this.alerts.find(a => a.id === alertId);
-    this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'snooze', id: alertId, minutes, ...(target ? { title: target.title, subtitle: target.subtitle, kind: target.kind, target: target.target } : {}) }));
+    const meta = this.alertBridgeMeta.get(alertId);
+    this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({
+      action: 'snooze',
+      id: alertId,
+      minutes,
+      ...(target ? { title: target.title, subtitle: target.subtitle, kind: target.kind, target: target.target } : {}),
+      ...(meta ?? {})
+    }));
     this.alerts = this.alerts.filter(a => a.id !== alertId);
     if (this.alerts.length === 0) this.setGlow(false);
     this.mode = this.resolveBaseMode();
@@ -656,13 +664,25 @@ export class NotchIsland {
           title?: string;
           subtitle?: string;
           target?: string;
+          route?: string;
+          rule?: string;
+          rules?: string[];
           glow?: boolean;
-          items?: IslandAlertItem[];
+          items?: (IslandAlertItem & { route?: string; rule?: string; rules?: string[] })[];
         };
         if (data.kind === 'slacking') {
           this.startPomodoro({ id: null, title: data.title || '休息提醒 · 站起来喝口水' }, 5, 'slacking');
           return;
         }
+
+        const recordMeta = (id: string, item: { route?: string; rule?: string; rules?: string[] }) => {
+          const rules = Array.isArray(item.rules) ? item.rules.filter((r): r is string => typeof r === 'string' && r.length > 0) : undefined;
+          const rule = typeof item.rule === 'string' && item.rule.length > 0 ? item.rule : undefined;
+          const route = typeof item.route === 'string' && item.route.length > 0 ? item.route : undefined;
+          if (route || rule || rules?.length) {
+            this.alertBridgeMeta.set(id, { ...(route ? { route } : {}), ...(rule ? { rule } : {}), ...(rules?.length ? { rules } : {}) });
+          }
+        };
 
         const isDismissed = (item: { id?: string; kind?: string; target?: string; title?: string }) => {
           if (item.id) return this.dismissedAlertKeys.has(item.id);
@@ -675,7 +695,10 @@ export class NotchIsland {
           if (fresh.length === 0) {
             return;
           }
-          this.alerts = fresh;
+          for (const item of fresh) {
+            if (item.id) recordMeta(item.id, item);
+          }
+          this.alerts = fresh.map(({ id, kind, title, subtitle, target }) => ({ id, kind, title, subtitle, target }));
         } else if (data.title) {
           if (isDismissed(data)) {
             return;
@@ -687,6 +710,7 @@ export class NotchIsland {
             subtitle: data.subtitle || '来自 Nook 提醒中心',
             target: data.target
           };
+          recordMeta(item.id, data);
           this.alerts = [item, ...this.alerts.filter(a => a.id !== item.id && !isDismissed(a))].slice(0, 6);
         } else {
           return;

@@ -48,6 +48,7 @@ export function validatePresets(value: unknown, connections?: readonly ApiConnec
     }
     if ((p.model !== undefined && typeof p.model !== 'string') || (p.effort !== undefined && typeof p.effort !== 'string')) throw new Error('模型与思考强度必须是有效选项');
     if (p.connectionId !== undefined && (typeof p.connectionId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(p.connectionId))) throw Error('预设 API 连接标识无效');
+    if (p.target === 'api' && p.kind !== 'image' && (!p.connectionId?.trim() || !p.model?.trim())) throw Error(`预设「${p.name}」需要选择 API 连接并填写模型名称`);
     if (p.target === 'api' && connections && !connections.some(connection => connection.id === p.connectionId)) throw Error(`预设「${p.name}」的 API 连接不存在，请重新选择连接`);
     if (p.temporaryChat !== undefined && typeof p.temporaryChat !== 'boolean') throw new Error('网页会话方式无效');
     if (p.kind !== undefined && !['chat', 'image'].includes(p.kind)) throw Error('预设类型无效');
@@ -132,6 +133,7 @@ export function migrateImagePresets(path: string, directory: string): Preset[] {
     const saved = JSON.parse(readFileSync(resultsPath, 'utf8'));
     for (const job of saved.jobs || []) if (!job.destination || job.destination === 'api') {
       job.generationModel ??= options.generationModel; job.editModel ??= options.editModel;
+      job.connectionId ??= 'conn-legacy-media';
       if (job.presetId && !job.presetId.startsWith('image-preset-')) job.presetId = 'image-preset-' + job.presetId;
     }
     writeFileAtomic(resultsPath, JSON.stringify(saved, null, 2) + '\n');

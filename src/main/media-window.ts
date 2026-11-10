@@ -91,20 +91,22 @@ export class MediaWindow {
   }
   async prepare(preset: Preset, prompt: string, reference?: NativeImage) {
     if (preset.kind !== 'image' || preset.target !== 'api' || !preset.image) throw Error('请选择 API 生图预设');
+    if (!preset.connectionId || !this.service.connections().some(connection => connection.id === preset.connectionId)) throw Error('API 连接不存在，请重新选择连接');
     if (this.preparing || this.service.snapshot().jobs.some(job => job.status === 'running')) throw Error('已有图片正在生成，请等待完成');
     this.preparing = true;
     try {
-    this.draft = { id: randomUUID(), presetId: preset.id, presetName: preset.name, prompt, options: structuredClone(preset.image) };
+    this.draft = { id: randomUUID(), presetId: preset.id, presetName: preset.name, connectionId: preset.connectionId, prompt, options: structuredClone(preset.image) };
     if (reference) this.service.addReference(reference.toPNG()); else this.service.selectReference(null);
     await this.show();
-    if (preset.mode === 'send') this.generate({ requestId: this.draft.id, draftId: this.draft.id, prompt });
+    if (preset.mode === 'send') this.generate({ requestId: this.draft.id, draftId: this.draft.id, prompt, connectionId: preset.connectionId });
     } finally { this.preparing = false; }
   }
   private generate(request: MediaGenerateRequest): MediaState {
     if (!this.draft || request?.draftId !== this.draft.id) throw Error('生图草稿已更新，请使用当前草稿');
     const reference = this.service.snapshot().reference;
+    const connectionId = request.connectionId || this.draft.connectionId;
     const next = this.service.generate({ ...this.draft.options, requestId: request.requestId, prompt: request.prompt,
-      presetId: this.draft.presetId, presetName: this.draft.presetName, ...(reference ? { referenceId: reference.id } : {}) });
+      connectionId, presetId: this.draft.presetId, presetName: this.draft.presetName, ...(reference ? { referenceId: reference.id } : {}) });
     this.draft.prompt = request.prompt;
     return this.snapshot(next);
   }
@@ -112,10 +114,12 @@ export class MediaWindow {
     const job = this.service.snapshot().jobs.find(item => item.id === id);
     if (!job || job.destination && job.destination !== 'api') throw Error('只能恢复 API 生图任务');
     if (this.service.snapshot().jobs.some(item => item.status === 'running')) throw Error('请等待当前生成完成');
+    const connectionId = job.connectionId || this.service.presetConnectionId(job.presetId);
+    if (!connectionId || !this.service.connections().some(connection => connection.id === connectionId)) throw Error('API 连接不存在，请重新选择连接');
     const image = imageId ? job.images?.find(image => image.id === imageId) : job.images?.[0];
     if (edit && !image) throw Error('请选择已生成的图片');
     const options = { ...defaultImageOptions(), aspect: job.aspect, resolution: job.resolution, count: job.count, customSize: job.customSize, quality: job.quality || 'auto', background: job.background || 'auto', outputFormat: job.outputFormat || 'png', generationModel: job.generationModel || '', editModel: job.editModel || '' };
-    this.draft = { id: randomUUID(), presetId: job.presetId || 'historical-image', presetName: job.presetName || '图片生成', prompt: edit ? '' : job.renderedPrompt || job.prompt, options };
+    this.draft = { id: randomUUID(), presetId: job.presetId || 'historical-image', presetName: job.presetName || '图片生成', connectionId, prompt: edit ? '' : job.renderedPrompt || job.prompt, options };
     this.service.selectReference(edit ? image!.id : job.referenceId || null);
     return this.snapshot();
   }

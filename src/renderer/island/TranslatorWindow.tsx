@@ -82,7 +82,6 @@ export function TranslatorWindow() {
   async function onLangChange(lang: TranslationLang) {
     clearDebounce(); langRef.current = lang; setActError(null);
     await window.island.setTranslatorLang(lang);
-    if (draft.trim()) await submitTranslate(draft, lang);
   }
 
   async function onPasteSource() {

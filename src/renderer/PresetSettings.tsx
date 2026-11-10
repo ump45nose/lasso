@@ -102,6 +102,6 @@ function PresetEditor({ preset, isNew, save, remove, back, error }: { preset: Pr
       </ul>
       {!isNew && <button className="l-btn danger l-quit" onClick={() => confirm === 'delete' ? void remove(preset.id) : setConfirm('delete')}><Trash2 size={14} />{confirm === 'delete' ? `再点一次删除「${preset.name}」` : '删除预设'}</button>}
     </div>
-    <SaveBar dirty={dirty} saved={saved} error={error} pending={isNew && !base ? '新预设尚未保存' : '有未保存的更改'} saveLabel="保存预设" saveDisabled={!draft.name.trim() || !draft.template.trim() || (draft.target === 'api' && !draft.connectionId)} discard={() => base ? setDraft(base) : back()} save={() => void commit()} />
+    <SaveBar dirty={dirty} saved={saved} error={error} pending={isNew && !base ? '新预设尚未保存' : '有未保存的更改'} saveLabel="保存预设" saveDisabled={!draft.name.trim() || !draft.template.trim() || (draft.target === 'api' && (!draft.connectionId || (draft.kind !== 'image' && !draft.model?.trim())))} discard={() => base ? setDraft(base) : back()} save={() => void commit()} />
   </>;
 }

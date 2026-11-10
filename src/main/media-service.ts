@@ -100,6 +100,10 @@ export class MediaService {
 
   setReferenceProvider(provider: NonNullable<MediaServiceAdapters['references']>): void { this.referenceProvider = provider; }
 
+  presetConnectionId(presetId?: string): string | undefined {
+    return presetId ? this.referenceProvider?.().presets.find(preset => preset.target === 'api' && preset.id === presetId)?.connectionId : undefined;
+  }
+
   saveConnection(input: ApiConnectionInput): ApiConnection {
     if (this.active) throw Error('生成期间不能更改 API 连接');
     this.validateConnection(input);
@@ -148,6 +152,12 @@ export class MediaService {
       connections.push(connection);
     }
     this.persistConnections(connections);
+    let jobsUpdated = false;
+    for (const job of this.jobs) if ((!job.destination || job.destination === 'api') && !job.connectionId) {
+      job.connectionId = media.id;
+      jobsUpdated = true;
+    }
+    if (jobsUpdated) this.persist();
     return {
       settings: { ...settings, translation: { ...settings.translation, connectionId: settings.translation.connectionId || media.id }, vision: { ...settings.vision, connectionId: settings.vision.connectionId || visionId } },
       presets: presets.map(preset => preset.target === 'api' && !preset.connectionId ? { ...preset, connectionId: media.id } : preset)
@@ -198,9 +208,11 @@ export class MediaService {
     input: { connectionId?: string; model?: string; prompt: string; signal?: AbortSignal },
     onDelta: (text: string, firstTokenMs: number) => void
   ): Promise<{ text: string; model: string; firstTokenMs: number }> {
-    const config = this.savedConnection(input.connectionId)!;
+    const connectionId = input.connectionId?.trim();
+    const model = input.model?.trim();
+    if (!connectionId || !model) throw Error('请先选择 API 连接与模型');
+    const config = this.savedConnection(connectionId)!;
     if (!config.baseURL) throw Error('请先在「设置 → 预设」中编辑 API 预设，填写并保存 API 地址与密钥');
-    const model = input.model?.trim() || 'gpt-4.1-mini';
     const headers: Record<string, string> = { ...this.headers(config), 'Content-Type': 'application/json', Accept: 'text/event-stream' };
     const started = performance.now();
     let firstTokenMs = 0;
@@ -289,7 +301,8 @@ export class MediaService {
     if (!validImageOptions(input)) throw Error('图片生成参数无效');
     if (input.background === 'transparent' && input.outputFormat === 'jpeg') throw Error('透明背景请选择 PNG 或 WebP');
     if (!input.presetId || typeof input.presetName !== 'string') throw Error('请选择生图预设');
-    const connectionId = input.connectionId ?? this.referenceProvider?.().presets.find(preset => preset.target === 'api' && preset.id === input.presetId)?.connectionId;
+    const connectionId = input.connectionId || this.presetConnectionId(input.presetId);
+    if (!connectionId) throw Error('API 连接不存在，请重新选择连接');
     const config = this.savedConnection(connectionId)!;
     const reference = input.referenceId ? this.references.get(input.referenceId) : undefined;
     if (input.referenceId && !reference) throw Error('参考图片已不可用，请重新选择');

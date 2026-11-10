@@ -543,13 +543,17 @@ static void handleDragSnap(NSEvent* event) {
     g_drag_snap.down = point;
     g_drag_snap.grabRatioX = std::clamp((point.x - rect.origin.x) / rect.size.width, 0.0, 1.0);
     g_drag_snap.grabOffsetY = std::clamp(screenTop() - point.y - rect.origin.y, 0.0, rect.size.height);
-    for (const auto& origin : g_snapped_origins) {
-      if (CFEqual(origin.window, window) && std::abs(rect.size.width - origin.snapped.size.width) <= 12 &&
-          std::abs(rect.size.height - origin.snapped.size.height) <= 12) {
-        g_drag_snap.original = origin.original;
+    for (auto it = g_snapped_origins.begin(); it != g_snapped_origins.end(); ++it) {
+      if (!CFEqual(it->window, window)) continue;
+      if (std::abs(rect.size.width - it->snapped.size.width) <= 12 &&
+          std::abs(rect.size.height - it->snapped.size.height) <= 12) {
+        g_drag_snap.original = it->original;
         g_drag_snap.canRestore = true;
-        break;
+      } else {
+        CFRelease(it->window);
+        g_snapped_origins.erase(it);
       }
+      break;
     }
     return;
   }
@@ -574,6 +578,17 @@ static void handleDragSnap(NSEvent* event) {
   }
   NSRect current;
   if (!axWindowRect(g_drag_snap.window, &current)) { resetDragSnap(); return; }
+  if (std::abs(current.size.width - g_drag_snap.initial.size.width) > 12 ||
+      std::abs(current.size.height - g_drag_snap.initial.size.height) > 12) {
+    for (auto it = g_snapped_origins.begin(); it != g_snapped_origins.end(); ++it) {
+      if (!CFEqual(it->window, g_drag_snap.window)) continue;
+      CFRelease(it->window);
+      g_snapped_origins.erase(it);
+      break;
+    }
+    resetDragSnap();
+    return;
+  }
   if (!g_drag_snap.active) {
     if (std::hypot(current.origin.x - g_drag_snap.initial.origin.x, current.origin.y - g_drag_snap.initial.origin.y) < 0.5) return;
     g_drag_snap.active = true;

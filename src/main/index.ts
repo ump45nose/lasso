@@ -367,9 +367,9 @@ async function runPreset(id: string, selection: SelectionContext | null, options
   return executePreset(preset, selection, options);
 }
 async function openFastInWindow(id: string, selection: SelectionContext) {
-  const usable = (preset: Preset) => preset.enabled && preset.kind !== 'image' && preset.target !== 'api';
-  const preset = state.presets.find(p => p.id === id && usable(p)) ?? state.presets.find(usable) ?? defaultPresets[0];
-  const result = await executePreset(preset, selection);
+  const usable = (preset: Preset): preset is Preset & { target: Target } => preset.enabled && preset.kind !== 'image' && preset.target !== 'api';
+  const preset = state.presets.find((p): p is Preset & { target: Target } => p.id === id && usable(p)) ?? state.presets.find(usable) ?? (defaultPresets[0] as Preset & { target: Target });
+  const result = await executePreset(preset, selection, { target: preset.target });
   if (result.error) { state.notice = result.error; publish(); }
 }
 async function executePreset(preset: Preset, selection: SelectionContext | null, options: LaunchOptions = {}) {
@@ -383,15 +383,22 @@ async function executePreset(preset: Preset, selection: SelectionContext | null,
   if (preset.kind === 'image' && options.imagePrompt !== undefined) selection = { text: options.imagePrompt, sourceApp: '', anchor: { x: 0, y: 0, width: 0, height: 0 } };
   if (preset.needsSelection && !selection?.text && !options.imageId) return { error: '请先选中文字' };
   const text = composePrompt(preset, selection, state.settings.appPrompts);
-  const target = options.target || preset.target;
+  const translation = state.settings.translation;
+  const useBuiltinTranslation = preset.id === 'translate' && preset.kind !== 'image' && !options.target && !options.imageId
+    && Boolean(translation.connectionId.trim() && translation.model.trim());
+  const target = useBuiltinTranslation ? 'api' : (options.target || preset.target);
   if (target === 'api') {
     if (preset.kind !== 'image') {
       const anchor = selection?.anchor.x || selection?.anchor.y
         ? selection.anchor
         : { ...screen.getCursorScreenPoint(), width: 12, height: 18 };
       const ctx: SelectionContext = { text: selection?.text || text, sourceApp: selection?.sourceApp || '', anchor };
+      const fastPreset: Preset = useBuiltinTranslation
+        ? { ...preset, target: 'api', connectionId: translation.connectionId.trim(), model: translation.model.trim() }
+        : { ...preset, target: 'api' };
+      const targetLang = useBuiltinTranslation && (translation.targetLang === 'zh' || translation.targetLang === 'en') ? translation.targetLang : 'auto';
       state.inputText = null; state.inputOpen = false; closePalette(false); motion.hide(); publish();
-      await actionBar.startFastCard({ ...preset, target: 'api' }, ctx, 'auto');
+      await actionBar.startFastCard(fastPreset, ctx, targetLang);
       return { error: null };
     }
     try {
@@ -823,7 +830,8 @@ async function boot() {
       paste: () => island.pasteSelection(),
       pin: pinImage,
       toast: (text, badge) => island.toast(text, badge),
-      appPrompts: () => state.settings.appPrompts
+      appPrompts: () => state.settings.appPrompts,
+      translation: () => state.settings.translation
     },
     { onAppendNote: appendNoteText }
   );

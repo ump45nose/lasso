@@ -124,7 +124,7 @@ export interface MediaDraft {
 }
 export type MediaFontSettings = Pick<Settings, 'fonts' | 'importedFonts'>;
 export interface MediaState extends MediaFontSettings { jobs: MediaJob[]; reference: MediaReference | null; draft: MediaDraft | null }
-export interface MediaGenerateRequest { requestId: string; draftId: string; prompt: string }
+export interface MediaGenerateRequest { requestId: string; draftId: string; prompt: string; connectionId?: string }
 export type MediaOutputAction = 'copy' | 'save' | 'pin' | 'edit';
 export interface MediaAPI {
   saveDraft(id: string, prompt: string): Promise<void>;
