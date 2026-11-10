@@ -40,6 +40,8 @@ const api: ScreenshotAPI = {
   export:(frame,action,format,contentMode)=>ipcRenderer.invoke('screenshot:export',frame,action,format,contentMode),
   saveAnnotationMemory:memory=>ipcRenderer.invoke('screenshot:save-annotation-memory',memory),
   copyText:request=>ipcRenderer.invoke('screenshot:copy-text',request),
-  sendText:request=>ipcRenderer.invoke('screenshot:send-text',request)
+  sendText:request=>ipcRenderer.invoke('screenshot:send-text',request),
+  fastText:(id,revision,text,rect)=>ipcRenderer.invoke('screenshot:fast-text',id,revision,text,rect),
+  noteText:(id,revision,text)=>ipcRenderer.invoke('screenshot:note-text',id,revision,text)
 };
 contextBridge.exposeInMainWorld('screenshot',api);

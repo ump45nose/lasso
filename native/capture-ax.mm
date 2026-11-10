@@ -2,17 +2,24 @@
 #import <Cocoa/Cocoa.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <QuartzCore/QuartzCore.h>
+#import <Carbon/Carbon.h>
+#include <cmath>
 #include <vector>
 #include <string>
 
 struct CaptureBounds { double x,y,w,h; };
 struct Query { napi_async_work work; napi_deferred deferred; int pid; double x,y; std::vector<CaptureBounds> rects; int error=0; bool permission=false; bool granted=false; };
 struct BridgeEvent { std::string name; std::string payload; };
+struct FinderTrigger { double x, y; bool rightHold; };
 
 static napi_threadsafe_function g_bridge_tsfn = nullptr;
 static id g_present_obs = nil;
 static id g_dismiss_obs = nil;
 static NSMutableArray<NSPanel*>* g_glow_panels = nil;
+static napi_threadsafe_function g_finder_tsfn = nullptr;
+static id g_finder_monitor = nil;
+static dispatch_source_t g_finder_timer = nil;
+static NSPoint g_finder_down;
 
 static napi_value number(napi_env e,double n){napi_value v;napi_create_double(e,n,&v);return v;}
 static void prop(napi_env e,napi_value o,const char*k,double n){napi_set_named_property(e,o,k,number(e,n));}
@@ -220,6 +227,170 @@ static bool setAxWindowRect(AXUIElementRef win, double x, double y, double w, do
   return e1 == kAXErrorSuccess || e2 == kAXErrorSuccess;
 }
 
+static AXUIElementRef copyFrontWindow() {
+  if (!AXIsProcessTrusted()) return nullptr;
+  NSRunningApplication* app = NSWorkspace.sharedWorkspace.frontmostApplication;
+  if (!app || app.processIdentifier <= 0) return nullptr;
+  AXUIElementRef appRef = AXUIElementCreateApplication(app.processIdentifier);
+  AXUIElementSetMessagingTimeout(appRef, 0.2);
+  CFTypeRef win = nullptr;
+  AXError error = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute, &win);
+  CFRelease(appRef);
+  if (error != kAXErrorSuccess || !win) return nullptr;
+  if (CFGetTypeID(win) != AXUIElementGetTypeID()) { CFRelease(win); return nullptr; }
+  AXUIElementSetMessagingTimeout((AXUIElementRef)win, 0.2);
+  return (AXUIElementRef)win;
+}
+
+static napi_value focusedWindowFrame(napi_env e, napi_callback_info) {
+  @autoreleasepool {
+    AXUIElementRef win = copyFrontWindow();
+    if (win) {
+      CFTypeRef position = nullptr, size = nullptr;
+      AXError posError = AXUIElementCopyAttributeValue(win, kAXPositionAttribute, &position);
+      AXError sizeError = AXUIElementCopyAttributeValue(win, kAXSizeAttribute, &size);
+      CGPoint point = CGPointZero;
+      CGSize dimensions = CGSizeZero;
+      bool ok = posError == kAXErrorSuccess && sizeError == kAXErrorSuccess && position && size &&
+        CFGetTypeID(position) == AXValueGetTypeID() && CFGetTypeID(size) == AXValueGetTypeID() &&
+        AXValueGetValue((AXValueRef)position, kAXValueTypeCGPoint, &point) &&
+        AXValueGetValue((AXValueRef)size, kAXValueTypeCGSize, &dimensions) &&
+        std::isfinite(point.x) && std::isfinite(point.y) &&
+        std::isfinite(dimensions.width) && std::isfinite(dimensions.height) && dimensions.width > 0 && dimensions.height > 0;
+      if (position) CFRelease(position);
+      if (size) CFRelease(size);
+      CFRelease(win);
+      if (ok) {
+        napi_value rect;
+        napi_create_object(e, &rect);
+        prop(e, rect, "x", point.x);
+        prop(e, rect, "y", point.y);
+        prop(e, rect, "width", dimensions.width);
+        prop(e, rect, "height", dimensions.height);
+        return rect;
+      }
+    }
+  }
+  napi_value result;
+  napi_get_null(e, &result);
+  return result;
+}
+
+static void onMain(void (^block)(void)) {
+  if (NSThread.isMainThread) block();
+  else dispatch_sync(dispatch_get_main_queue(), block);
+}
+
+static void cancelFinderHold() {
+  if (g_finder_timer) {
+    dispatch_source_cancel(g_finder_timer);
+    g_finder_timer = nil;
+  }
+}
+
+static void stopFinderMonitoring() {
+  onMain(^{
+    cancelFinderHold();
+    if (g_finder_monitor) {
+      [NSEvent removeMonitor:g_finder_monitor];
+      g_finder_monitor = nil;
+    }
+    if (g_finder_tsfn) {
+      napi_release_threadsafe_function(g_finder_tsfn, napi_tsfn_abort);
+      g_finder_tsfn = nullptr;
+    }
+  });
+}
+
+static bool finderIsFrontmost() {
+  return [NSWorkspace.sharedWorkspace.frontmostApplication.bundleIdentifier isEqualToString:@"com.apple.finder"];
+}
+
+static void callFinderJS(napi_env env, napi_value callback, void*, void* data) {
+  auto* point = (FinderTrigger*)data;
+  if (env && callback) {
+    napi_value result, trigger, receiver;
+    napi_create_object(env, &result);
+    prop(env, result, "x", point->x);
+    prop(env, result, "y", point->y);
+    napi_create_string_utf8(env, point->rightHold ? "right-hold" : "middle", NAPI_AUTO_LENGTH, &trigger);
+    napi_set_named_property(env, result, "trigger", trigger);
+    napi_get_undefined(env, &receiver);
+    napi_call_function(env, receiver, callback, 1, &result, nullptr);
+  }
+  delete point;
+}
+
+static void emitFinderTrigger(NSPoint point, bool rightHold) {
+  NSScreen* primary = NSScreen.screens.firstObject;
+  if (!g_finder_tsfn || !primary) return;
+  auto* event = new FinderTrigger{point.x, NSMaxY(primary.frame) - point.y, rightHold};
+  if (napi_call_threadsafe_function(g_finder_tsfn, event, napi_tsfn_nonblocking) != napi_ok) delete event;
+}
+
+static napi_value startFinderTrigger(napi_env e, napi_callback_info info) {
+  size_t n = 1;
+  napi_value args[1];
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  napi_valuetype type;
+  if (n != 1 || napi_typeof(e, args[0], &type) != napi_ok || type != napi_function) {
+    napi_throw_type_error(e, nullptr, "Finder trigger callback required");
+    return nullptr;
+  }
+  stopFinderMonitoring();
+  napi_value name;
+  napi_create_string_utf8(e, "lasso-finder-trigger", NAPI_AUTO_LENGTH, &name);
+  if (napi_create_threadsafe_function(e, args[0], nullptr, name, 0, 1, nullptr, nullptr, nullptr,
+                                    callFinderJS, &g_finder_tsfn) != napi_ok) {
+    napi_throw_error(e, nullptr, "Could not create Finder trigger callback");
+    return nullptr;
+  }
+  napi_unref_threadsafe_function(e, g_finder_tsfn);
+  onMain(^{
+    NSEventMask mask = NSEventMaskOtherMouseDown | NSEventMaskRightMouseDown | NSEventMaskRightMouseUp |
+                       NSEventMaskRightMouseDragged | NSEventMaskLeftMouseDown;
+    g_finder_monitor = [NSEvent addGlobalMonitorForEventsMatchingMask:mask handler:^(NSEvent* event) {
+      if (event.type == NSEventTypeRightMouseUp || event.type == NSEventTypeLeftMouseDown) {
+        cancelFinderHold();
+        return;
+      }
+      if (!finderIsFrontmost()) { cancelFinderHold(); return; }
+      NSPoint point = NSEvent.mouseLocation;
+      if (event.type == NSEventTypeOtherMouseDown && event.buttonNumber == 2) {
+        cancelFinderHold();
+        emitFinderTrigger(point, false);
+      } else if (event.type == NSEventTypeRightMouseDragged) {
+        if (std::hypot(point.x - g_finder_down.x, point.y - g_finder_down.y) > 6.0) cancelFinderHold();
+      } else if (event.type == NSEventTypeRightMouseDown) {
+        cancelFinderHold();
+        g_finder_down = point;
+        g_finder_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+        dispatch_source_set_timer(g_finder_timer, dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), DISPATCH_TIME_FOREVER, 0);
+        dispatch_source_set_event_handler(g_finder_timer, ^{
+          cancelFinderHold();
+          if (!finderIsFrontmost()) return;
+          CGEventRef down = CGEventCreateKeyboardEvent(nullptr, kVK_Escape, true);
+          CGEventRef up = CGEventCreateKeyboardEvent(nullptr, kVK_Escape, false);
+          if (down) { CGEventPost(kCGHIDEventTap, down); CFRelease(down); }
+          if (up) { CGEventPost(kCGHIDEventTap, up); CFRelease(up); }
+          emitFinderTrigger(g_finder_down, true);
+        });
+        dispatch_resume(g_finder_timer);
+      }
+    }];
+  });
+  napi_value result;
+  napi_get_undefined(e, &result);
+  return result;
+}
+
+static napi_value stopFinderTrigger(napi_env e, napi_callback_info) {
+  stopFinderMonitoring();
+  napi_value result;
+  napi_get_undefined(e, &result);
+  return result;
+}
+
 static napi_value snapWindow(napi_env e, napi_callback_info info) {
   size_t n = 4;
   napi_value args[4];
@@ -232,15 +403,10 @@ static napi_value snapWindow(napi_env e, napi_callback_info info) {
     napi_get_value_double(e, args[2], &w);
     napi_get_value_double(e, args[3], &h);
     @autoreleasepool {
-      NSRunningApplication* app = [[NSWorkspace sharedWorkspace] frontmostApplication];
-      if (app && app.processIdentifier > 0) {
-        AXUIElementRef appRef = AXUIElementCreateApplication(app.processIdentifier);
-        CFTypeRef winRef = nullptr;
-        if (AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute, &winRef) == kAXErrorSuccess && winRef) {
-          ok = setAxWindowRect((AXUIElementRef)winRef, x, y, w, h);
-          CFRelease(winRef);
-        }
-        CFRelease(appRef);
+      AXUIElementRef win = copyFrontWindow();
+      if (win) {
+        ok = setAxWindowRect(win, x, y, w, h);
+        CFRelease(win);
       }
     }
   }
@@ -375,12 +541,16 @@ static napi_value init(napi_env e,napi_value exports){
     {"startBridge",nullptr,startBridge,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"postBridge",nullptr,postBridge,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"snapWindow",nullptr,snapWindow,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"focusedWindowFrame",nullptr,focusedWindowFrame,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"startFinderTrigger",nullptr,startFinderTrigger,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"stopFinderTrigger",nullptr,stopFinderTrigger,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"tileTwoWindows",nullptr,tileTwoWindows,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"frontmostApp",nullptr,frontmostApp,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"notchGeometry",nullptr,notchGeometry,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"setStationaryWindow",nullptr,setStationaryWindow,nullptr,nullptr,nullptr,napi_default,nullptr}
   };
   napi_define_properties(e,exports,sizeof(d)/sizeof(d[0]),d);
+  napi_add_env_cleanup_hook(e, [](void*) { stopFinderMonitoring(); }, nullptr);
   return exports;
 }
 NAPI_MODULE(NODE_GYP_MODULE_NAME,init)

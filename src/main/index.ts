@@ -29,12 +29,12 @@ import { validMemorySettings, type MemorySettings } from '../shared/memory';
 import { ActionBar } from './action-bar';
 import { NotchIsland } from './island';
 import { TaskManager } from './tasks';
-import { readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
+import { defaultPresets, readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
 import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
 import { validateEditorShortcuts, type GlobalActionId, type EditorShortcutMap, type IgnoredAppRule } from '../shared/shortcuts';
-import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
+import { captureModeLabels, captureModes, type CaptureMode, type CaptureRect } from '../shared/capture';
 import type { CaptureDelay, EfficiencyCaptureMode } from '../shared/capture-efficiency';
-import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope } from '../shared/contracts';
+import type { Action, ShellState, SelectionContext, Preset, Settings, LaunchOptions, Target, AgentAnswer, PaletteEvent, PaletteScope, IslandCliTask } from '../shared/contracts';
 import { RecordingPanel } from './recording-panel';
 import { ActionShortcuts } from './action-shortcuts';
 import { installCaptureLibraryIPC } from './capture-library';
@@ -103,6 +103,10 @@ function publish() {
   if (win && !win.isDestroyed()) win.webContents.send('shell:changed', snapshot());
   actionBar?.update(state.presets, false, state.settings);
   island?.updateSettings(state.settings);
+  const cliTasks: IslandCliTask[] = tasks?.snapshot().tasks.flatMap(task =>
+    (task.target === 'codex' || task.target === 'pi') && (task.activity === 'running' || task.activity === 'waiting')
+      ? [{ id: task.id, target: task.target, title: task.title, activity: task.activity }] : []) ?? [];
+  island?.updateCliTasks(cliTasks);
 }
 function layout() {
   if (!win || win.isDestroyed() || !tasks) return;
@@ -114,6 +118,7 @@ function layout() {
 async function openPalette(scope: PaletteScope) {
   showWindow();
   // Capture before hiding so the palette sits on the page the user was looking at.
+  if (!win || win.isDestroyed()) return;
   const backdrop = palette ? palette.backdrop : await tasks.capture();
   palette = { scope, backdrop };
   layout(); win.webContents.focus();
@@ -123,12 +128,12 @@ async function openPalette(scope: PaletteScope) {
 function closePalette(restore = true) {
   if (!palette) return;
   palette = null;
-  if (!win.isDestroyed()) win.webContents.send('shell:palette', { scope: null, backdrop: null } satisfies PaletteEvent);
+  if (win && !win.isDestroyed()) win.webContents.send('shell:palette', { scope: null, backdrop: null } satisfies PaletteEvent);
   clearSelection();
   if (restore) { layout(); if (!state.settingsOpen && !state.inputOpen) tasks.focus(); }
 }
 function showWindow() {
-  if (!win) return;
+  if (!win || win.isDestroyed()) return;
   setWindowPresence(win, true);
   // A display may have been disconnected while the window was hidden.
   const area = screen.getDisplayMatching(win.getBounds()).workArea;
@@ -143,8 +148,9 @@ function showWindow() {
     setImmediate(() => { if (!quitting) tasks.warmPreferred(); });
   }
 }
-function openCustomCapture(){closePalette(false);state.customCaptureOpen=true;layout();showWindow();win.webContents.focus();publish();}
+function openCustomCapture(){if (!win || win.isDestroyed()) return; closePalette(false);state.customCaptureOpen=true;layout();showWindow();win.webContents.focus();publish();}
 function openSettings() {
+  if (!win || win.isDestroyed()) return;
   capture?.configure(state.settings);
   closePalette(false);
   state.settingsOpen = true;
@@ -154,12 +160,14 @@ function openSettings() {
   publish();
 }
 function setPin() {
+  if (!win || win.isDestroyed()) return;
   state.pinned = !state.pinned;
   win.setAlwaysOnTop(state.pinned, 'floating');
   updateTray();
   publish();
 }
 function expand() {
+  if (!win || win.isDestroyed()) return;
   const bounds = win.getBounds();
   const area = screen.getDisplayMatching(bounds).workArea;
   if (!state.expanded) {
@@ -251,13 +259,15 @@ function updateTray() {
     { label: '贴出剪贴板内容', accelerator: state.settings.actionShortcuts['pin-clipboard'] || undefined, click: () => { void runGlobalAction('pin-clipboard').catch(error => { state.notice = error.message; publish(); }); } },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
     { label: '运行预设…', click: () => void openPalette('all') },
-    { label: 'EdgeNotes 边缘便签', accelerator: 'Control+Option+N', click: () => island?.notes.toggleDrawer(true) },
+    { label: '浮动便签', accelerator: 'Alt+N', click: () => island?.notes.toggleDrawer(true) },
     { label: 'Finder 超级动作面板…', accelerator: 'Control+Option+F', click: () => void island?.finder.summon() },
     { label: '窗口分屏与工作区', submenu: [
       { label: '左半屏', accelerator: 'Control+Option+Left', click: () => island?.snapWindow('left-half') },
       { label: '右半屏', accelerator: 'Control+Option+Right', click: () => island?.snapWindow('right-half') },
       { label: '最大化', accelerator: 'Control+Option+Up', click: () => island?.snapWindow('maximize') },
       { label: '居中阅读窗', accelerator: 'Control+Option+Down', click: () => island?.snapWindow('center') },
+      { label: '移至左屏', accelerator: 'Control+Option+Command+Left', click: () => island?.snapWindow('prev-display') },
+      { label: '移至右屏', accelerator: 'Control+Option+Command+Right', click: () => island?.snapWindow('next-display') },
       { type: 'separator' },
       { label: '一键 2/3 研发 + 1/3 AI 双栏', accelerator: 'Control+Option+Return', click: () => island?.snapWindow('coding-ai') },
       { label: '50/50 对半分屏', click: () => island?.snapWindow('equal-split') }
@@ -328,9 +338,30 @@ function saveCaptureSettings(options: Pick<Settings, 'selectionEnabled' | 'clipb
   capture.configure(next); updateTray(); publish();
   return { error: null };
 }
+async function triggerFastText(text: string, anchorRect?: CaptureRect) {
+  if (anchorRect && (![anchorRect.x, anchorRect.y, anchorRect.width, anchorRect.height].every(Number.isFinite) || anchorRect.width <= 0 || anchorRect.height <= 0)) throw Error('无效的文字位置');
+  const anchor = anchorRect ?? { ...screen.getCursorScreenPoint(), width: 12, height: 18 };
+  const preset = state.presets.find(preset => preset.enabled && preset.target === 'api' && preset.kind !== 'image') ?? {
+    id: '__builtin_ocr_fast__', name: '快速翻译/速解', target: 'api', kind: 'chat', mode: 'send', enabled: true, needsSelection: true,
+    template: '请直接给出以下内容的中英互译或核心要点速解：\n\n{text}'
+  } satisfies Preset;
+  capture.suppress();
+  await actionBar.startFastCard(preset, { text, sourceApp: '', anchor }, 'auto', true);
+}
+function appendNoteText(text: string) { island?.notes.appendScratchpad(text); }
+
 async function runPreset(id: string, selection: SelectionContext | null, options: LaunchOptions = {}) {
   const preset = state.presets.find(p => p.id === id && p.enabled);
   if (!preset) return { error: '这个预设已停用或删除' };
+  return executePreset(preset, selection, options);
+}
+async function openFastInWindow(id: string, selection: SelectionContext) {
+  const usable = (preset: Preset) => preset.enabled && preset.kind !== 'image' && preset.target !== 'api';
+  const preset = state.presets.find(p => p.id === id && usable(p)) ?? state.presets.find(usable) ?? defaultPresets[0];
+  const result = await executePreset(preset, selection);
+  if (result.error) { state.notice = result.error; publish(); }
+}
+async function executePreset(preset: Preset, selection: SelectionContext | null, options: LaunchOptions = {}) {
   if (options.imageId && options.imageId !== inputImage?.id) return { error: '图片已被替换，请重新选择。' };
   if(options.textId&&options.textId!==state.inputText?.id)return {error:'文字已被替换，请重新选择。'};
   if(options.imageId&&options.textId)return {error:'请选择图片或文字中的一种输入。'};
@@ -664,6 +695,7 @@ async function boot() {
   app.on('browser-window-blur', deferHide);
   app.on('browser-window-focus', () => clearTimeout(blurTimer));
   screen.on('display-removed', () => {
+    if (!win || win.isDestroyed()) return;
     const area = screen.getDisplayMatching(win.getBounds()).workArea;
     win.setBounds(state.expanded ? area : fitToWorkArea(win.getBounds(), area));
   });
@@ -730,11 +762,12 @@ async function boot() {
       else openSettings();
     },
     onPinImage: pinImage,
-    onSendTextToLasso: receiveText
+    onPinText: async text => { await screenshots.pins.create({ kind: 'text', text }); },
+    onFocusTask: selectTask
   });
   island.updateSettings(state.settings);
   actionBar = new ActionBar(
-    async (id, selection) => { await runPreset(id, selection); },
+    async (id, selection, openInWindow) => { if (openInWindow) await openFastInWindow(id, selection); else await runPreset(id, selection); },
     async (id, selection) => { await runScriptAction(id, selection); },
     openSettings,
     {
@@ -743,7 +776,8 @@ async function boot() {
       pin: pinImage,
       toast: (text, badge) => island.toast(text, badge),
       appPrompts: () => state.settings.appPrompts
-    }
+    },
+    { onAppendNote: appendNoteText }
   );
   capture = new SelectionCapture(selection => {
     if (screenshots?.active) return;
@@ -760,7 +794,7 @@ async function boot() {
   actionBar.update(state.presets, false, state.settings);
   screenshots = new CaptureManager(async image => {
     openImage(images.add(image));
-  }, () => { const visible=win.isVisible(); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{persistSettings({...state.settings,screenshot:preferences});publish();},()=>intelligence);
+  }, () => { const visible = Boolean(win && !win.isDestroyed() && win.isVisible()); actionBar.hide(true); capture.suppress(); clearSelection(); motion.hide(true); return visible; }, restore => { capture?.suppress(); if (restore && !quitting) showWindow(); }, receiveText, updateTray, () => state.settings.screenshot, message => { state.notice = message; publish(); },()=>state.settings,()=>state.settings.memory,preferences=>{persistSettings({...state.settings,screenshot:preferences});publish();},()=>intelligence,{fastText:triggerFastText,noteText:appendNoteText});
   let recordingTrayState: string | undefined;
   recording=new RecordingManager({
     settings:()=>state.settings.screenshot.recording,
@@ -818,7 +852,10 @@ async function boot() {
 if (!hasLock) app.quit();
 else {
   app.on('second-instance', (_event, argv) => { if (!argv.includes('--background')) showWindow(); });
-  app.on('activate', () => { if (!win || (!win.isVisible() && !win.isMinimized())) showWindow(); });
+  app.on('activate', () => {
+    if (!win || win.isDestroyed()) return;
+    if (!win.isVisible() && !win.isMinimized()) showWindow();
+  });
   app.on('window-all-closed', () => {}); // Menu-bar app stays alive while hidden.
   // Without a confirmation there is nothing to intercept: any quit (⌘Q, Dock, logout) marks the app as quitting so windows close for real.
   app.on('before-quit', event => {

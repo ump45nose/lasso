@@ -6,6 +6,8 @@ contextBridge.exposeInMainWorld('pin', {
   action: action => ipcRenderer.invoke('ui-shots:pin-action', action),
   source: () => ipcRenderer.invoke('ui-shots:pin-source'),
   text: (...args) => ipcRenderer.invoke('ui-shots:pin-update', 'text', ...args),
+  fastText: async () => ({ error: null }),
+  noteText: async () => ({ error: null }),
   setOpacity: value => ipcRenderer.invoke('ui-shots:pin-update', 'opacity', value),
   setZoom: value => ipcRenderer.invoke('ui-shots:pin-update', 'zoom', value),
   setGroup: value => ipcRenderer.invoke('ui-shots:pin-update', 'group', value),
@@ -37,5 +39,6 @@ contextBridge.exposeInMainWorld('screenshot', {
   action: action => ipcRenderer.invoke('ui-shots:pin-action', action),
   saveAnnotationMemory: memory => ipcRenderer.invoke('ui-shots:annotation-memory', memory),
   export: (frame, action, format, contentMode) => ipcRenderer.invoke('ui-shots:export', frame, action, format, contentMode),
-  copyText: async () => {}, sendText: async () => ({ error:null })
+  copyText: async () => {}, sendText: async () => ({ error:null }),
+  fastText: async () => ({ error:null }), noteText: async () => ({ error:null })
 });

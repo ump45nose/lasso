@@ -182,7 +182,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     if (!global.uiShotsNetwork?.hasSession(process.mainModule.require('electron').session.defaultSession) || BrowserWindow.getAllWindows().some(win=>!global.uiShotsNetwork.hasSession(win.webContents.session))) throw Error('Fixture network session isolation missing');
     if (!global.uiShotsNode?.verify()) throw Error('Fixture Node runtime isolation missing before product startup');
     const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-    const find = surface => BrowserWindow.getAllWindows().find(w => surface ? w.webContents.getURL().includes('surface=' + surface) : !w.webContents.getURL().includes('surface='));
+    const find = surface => BrowserWindow.getAllWindows().find(w => {
+      const url = w.webContents.getURL();
+      if (!url.startsWith('file:') || !url.includes('/renderer/index.html')) return false;
+      const current = new URL(url).searchParams.get('surface');
+      return surface ? current === surface : current === null;
+    });
     for (let i = 0; i < 40 && !(find() && find('action-bar')); i++) await wait(250);
     const page = async (w, script) => { try { return await w.webContents.executeJavaScript(script); } catch (error) { throw Error(error.message + '\nScript: ' + script); } };
     const move = async (w, x, y) => { w.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(x), y: Math.round(y) }); await wait(450); };
@@ -520,7 +525,7 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       expect(await page(m,`(()=>{const items=[...document.querySelectorAll('.l-history-list > li')];return items.length===6&&items.every((li,i)=>li.getBoundingClientRect().height>=li.scrollHeight-1&&(!i||li.getBoundingClientRect().top>=items[i-1].getBoundingClientRect().bottom-.5));})()`),'Capture history items shrunk or overlapped when exceeding max-height');
       s.history.items=savedItems;await click('#capture-history','刷新历史');await ready(m,`document.querySelectorAll('.l-history-list > li').length===2`);
     }
-    await fill('[aria-label="搜索截图历史"]','设计评审');expect(await page(m,`document.querySelectorAll('.l-history-list > li').length===1 && document.querySelector('.l-history-list').textContent.includes('含标注')`),'History search did not retain marked result');await shot('#capture-history .l-history-search','settings-history-search');
+    await fill('[aria-label="搜索截图历史"]','设计评审');await ready(m,`document.querySelectorAll('.l-history-list > li').length===1 && document.querySelector('.l-history-list').textContent.includes('含标注')`);await shot('#capture-history .l-history-search','settings-history-search');
     for(const label of ['再编辑','贴图','复制'])await click('#capture-history .l-history-list',label);
     await click('#capture-history .l-history-list','删除');expect(s.history.items.length===2,'History delete skipped inline confirmation');await shot('#capture-history .l-history-search','settings-history-delete-confirm');await click('#capture-history .l-history-list','确认删除');expect(s.history.items.length===1,'History delete did not persist');
     await fill('[aria-label="搜索截图历史"]','');await click('#capture-history','清空历史');expect(s.history.items.length===1,'History clear skipped inline confirmation');await click('#capture-history','确认清空');expect(!s.history.items.length,'History did not clear');await shot('#capture-history .l-history-search','settings-history-empty');
@@ -642,8 +647,9 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
   // Selection action bar: hover on the first preset, then the ··· menu with its first row hovered, plus inline Fast API card and system suite surfaces.
   saved.push(...await main(async () => {
     const { find, page, wait, ready, move, center, save } = global.uiShots, w = find('action-bar'), names = [];
-    if(global.uiShots.focusedCases.length)return names;
+    if(global.uiShots.focusedCases.length&&!global.uiShots.focusedCases.some(name=>['action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-board','island-cli','finder-panel'].includes(name)))return names;
     w.setOpacity(1); w.showInactive(); w.webContents.send('bar:enter', { tip: 'above', menu: 'above' }); await wait(500);
+    if (!await page(w, `Boolean(document.querySelector('button[aria-label="入便签"]'))`)) throw Error('Action bar missing append-note button');
     const first = await center(w, '.ab-buttons button'); if (first) await move(w, ...first);
     names.push(await save(w, 'action-bar'));
     await page(w, "document.querySelector('[aria-haspopup=menu]').click()"); await wait(450);
@@ -667,7 +673,12 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
     });
     await wait(450);
+    if (!await page(w, `[...document.querySelectorAll('.ab-fast-foot button')].some(button=>button.textContent.includes('转入主窗口')) && document.querySelector('.ab-fast-foot').scrollWidth<=document.querySelector('.ab-fast-foot').clientWidth`)) throw Error('Fast card main-window handoff button is missing or clipped');
     names.push(await save(w, 'action-bar-fast-card'));
+    w.webContents.send('bar:changed', { ...barState, fastCard: { presetId:'__builtin_ocr_fast__',presetName:'快速翻译/速解',model:'未配置',status:'error',text:'',error:'尚未配置 New API，可转入主窗口继续。',firstTokenMs:null,isTranslation:false,targetLang:'auto' } });
+    await wait(450);
+    if (!await page(w, `Boolean(document.querySelector('.ab-fast-foot .open-window:not(:disabled)'))`)) throw Error('Built-in fast-card handoff is unavailable after API failure');
+    names.push(await save(w, 'action-bar-fast-card-error'));
     w.webContents.send('bar:changed', { ...barState, fastCard: null });
     w.hide();
 
@@ -706,13 +717,35 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await wait(450);
       names.push(await save(isl, 'island-alert'));
 
+      const cliTasks = [
+        { id: 'cli-1', target: 'codex', title: '重构浮动便签与 Finder 面板', activity: 'running' },
+        { id: 'cli-2', target: 'pi', title: '执行回归测试与构建验证', activity: 'waiting' }
+      ];
+      isl.webContents.send('island:changed', {
+        ...baseIsl,
+        mode: 'idle',
+        glow: true,
+        cliTasks
+      });
+      await wait(450);
+      names.push(await save(isl, 'island-cli'));
+
       isl.webContents.send('island:changed', {
         ...baseIsl,
         mode: 'board',
-        glow: true
+        glow: true,
+        cliTasks
       });
       await wait(450);
+      if (!await page(isl, `Boolean(document.querySelector('.isl-cli-row')) && [...document.querySelectorAll('.isl-snap-grid button')].some(b => b.textContent.includes('移至左屏'))`)) {
+        throw Error('Island board missing CLI task rows or cross-display snap buttons');
+      }
+      if (!await page(isl, `[...document.querySelectorAll('.isl-snap-grid button, .isl-quick-bar button')].every(button=>{const r=button.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;})`)) throw Error('Production IslandBoard clips window actions');
       names.push(await save(isl, 'island-board'));
+      isl.webContents.send('island:changed', { ...baseIsl, mode: 'board', cliTasks: Array.from({length:8},(_,i)=>({...cliTasks[i%2],id:`cli-many-${i}`})) });
+      await wait(450);
+      if (!await page(isl, `document.querySelector('.isl-board-tasks').scrollHeight > document.querySelector('.isl-board-tasks').clientHeight && [...document.querySelectorAll('.isl-snap-grid button, .isl-quick-bar button')].every(button=>button.getBoundingClientRect().bottom<=innerHeight)`)) throw Error('IslandBoard task overflow obscured window actions');
+      names.push(await save(isl, 'island-board-many-tasks'));
       isl.hide();
     }
 
@@ -722,9 +755,31 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       await ready(notesWin, 'Boolean(window.island && document.querySelector(".en-stage"))');
       notesWin.setOpacity(1); notesWin.showInactive();
       const baseNotes = await page(notesWin, 'window.island.getNotesState()');
-      notesWin.webContents.send('notes:changed', { ...baseNotes, open: true });
+      const notesPayload = {
+        ...baseNotes,
+        open: true,
+        pinnedOnTop: true,
+        activeFile: 'Scratchpad.md',
+        content: '# Scratchpad 随手记\n\n- 核对划词「入便签」与截图 OCR 速解联动\n- 检查 Finder 面板 Worktree 移入与软链\n\n```ts\nawait window.actionBar.appendNote();\n```',
+        files: ['Scratchpad.md', 'release-checklist.md']
+      };
+      notesWin.webContents.send('notes:changed', notesPayload);
       await wait(450);
+      if (!await page(notesWin, `[...document.querySelectorAll('.en-footer, .en-footer-path')].every(el => el.scrollWidth <= el.clientWidth) && document.querySelector('.en-footer-meta').textContent.includes('⌥N 显隐')`)) throw Error('EdgeNotes footer path or shortcut is clipped');
+      if (!await page(notesWin, `[...document.querySelectorAll('.en-icon-btn span')].every(el => el.getBoundingClientRect().height <= 20) && document.querySelector('.en-actions').getBoundingClientRect().right <= innerWidth`)) throw Error('EdgeNotes header actions wrap or overflow');
       names.push(await save(notesWin, 'edge-notes'));
+      await page(notesWin, `document.querySelector('.en-picker-btn')?.click()`);
+      await wait(300);
+      if (!await page(notesWin, `Boolean(document.querySelector('.en-dropdown'))`)) throw Error('EdgeNotes picker dropdown did not open');
+      names.push(await save(notesWin, 'edge-notes-picker'));
+      await page(notesWin, `window.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape'}))`);
+      await wait(100);
+      if (!await page(notesWin, `!document.querySelector('.en-dropdown')`)) throw Error('EdgeNotes Escape shortcut did not close the current picker');
+      await page(notesWin, `document.querySelector('.en-markdown-preview').click()`);
+      await ready(notesWin, `Boolean(document.querySelector('.en-editor'))`);
+      names.push(await save(notesWin, 'edge-notes-editor'));
+      await page(notesWin, `document.querySelector('.en-editor').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape',bubbles:true}))`);
+      await ready(notesWin, `Boolean(document.querySelector('.en-markdown-preview'))`);
       notesWin.webContents.send('notes:changed', { ...baseNotes, open: false });
       notesWin.hide();
     }
@@ -737,10 +792,21 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       const baseFinder = await page(finderWin, 'window.island.getFinderState()');
       finderWin.webContents.send('finder:changed', {
         ...baseFinder,
-        folder: '/Users/sm5145/WorkSpace/Code/Github/mac-ai-prompt',
-        selection: ['/Users/sm5145/WorkSpace/Code/Github/mac-ai-prompt/src/main/island.ts']
+        folder: '/Users/yuwk/Developer/Repos/Personal/lasso',
+        selection: ['/Users/yuwk/Developer/Repos/Personal/lasso/outputs/architecture.png'],
+        hasImageSelection: true,
+        cutPaths: ['/Users/yuwk/Downloads/draft-spec.md'],
+        moveTargets: [
+          { id: 'wt-1', label: 'lasso · suite-p2-and-notes', path: '/Users/yuwk/Developer/Repos/Personal/lasso.worktrees/suite-p2-and-notes', kind: 'worktree' },
+          { id: 'repo-1', label: 'Personal / lasso', path: '/Users/yuwk/Developer/Repos/Personal/lasso', kind: 'repo' },
+          { id: 'dir-notes', label: 'LassoNotes 便签目录', path: '/Users/yuwk/Documents/LassoNotes', kind: 'common' }
+        ]
       });
       await wait(450);
+      if (!await page(finderWin, `[...document.querySelectorAll('.fp-img-grid .fp-qbtn')].some(b => b.textContent.includes('原地转 .webp')) && document.querySelectorAll('.fp-target-row').length === 3`)) {
+        throw Error('Finder panel missing image actions or worktree move targets');
+      }
+      if (!await page(finderWin, `[...document.querySelectorAll('.fp-head, .fp-img-grid, .fp-target-list')].every(el=>{const r=el.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;})`)) throw Error('Production Finder panel clips its action sections');
       names.push(await save(finderWin, 'finder-panel'));
       finderWin.hide();
     }
@@ -1156,8 +1222,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     for(let y=0;y<inlineHeight;y++)for(let x=0;x<inlineWidth;x++){const i=(y*inlineWidth+x)*4;inlinePixels[i]=40+(x+2*y)%180;inlinePixels[i+1]=40+y%180;inlinePixels[i+2]=40+x%180;inlinePixels[i+3]=255;}
     const inlineImage=nativeImage.createFromBitmap(inlinePixels,{width:inlineWidth,height:inlineHeight}).toDataURL();
     states['editor-advanced-inline-rotation']={...states['editor-advanced-transform'],stage9:'inline-rotation',image:inlineImage,backdrop:inlineImage,width:inlineWidth,height:inlineHeight,pixelWidth:inlineWidth,pixelHeight:inlineHeight,selection:inlineCrop,placement:inlineCrop,presentation:'inline',origin:'screen',viewSize:{width:inlineWidth,height:inlineHeight},editableRegion:{display:{id:1,bounds:{x:0,y:0,width:inlineWidth,height:inlineHeight},scaleFactor:1,rotation:0},sourceSize:{width:inlineWidth,height:inlineHeight},initialCrop:inlineCrop,currentCrop:inlineCrop,ratio:null}};
-    const settingsCases=['settings-loupe-grid-off','settings-loupe-grid-on','settings-advanced-capture','settings-advanced-narrow-capture'];
-    if(focusedCases.some(name=>!Object.hasOwn(states,name)&&!settingsCases.includes(name)))throw Error('Unknown UI case: '+focusedCases.filter(name=>!Object.hasOwn(states,name)&&!settingsCases.includes(name)).join(', '));
+    const otherCases=['settings-loupe-grid-off','settings-loupe-grid-on','settings-advanced-capture','settings-advanced-narrow-capture','action-bar','edge-notes','edge-notes-picker','edge-notes-editor','island-board','island-cli','finder-panel'];
+    if(focusedCases.some(name=>!Object.hasOwn(states,name)&&!otherCases.includes(name)))throw Error('Unknown UI case: '+focusedCases.filter(name=>!Object.hasOwn(states,name)&&!otherCases.includes(name)).join(', '));
     let state = null, exports = [], regionUpdates=[],exportDelay=0; const memorySaves = [], intelligenceReceipts=[],scrollReceipts=[],clipboardAudits=[],advancedChecks=[],screenshotActions=[];
     const verify=(ok,message)=>{if(!ok)throw Error(message);};
     const record=(method,args)=>intelligenceReceipts.push({method,args});
@@ -1467,13 +1533,14 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
         exports=[];await click('[aria-label="设置选区尺寸"]');
         await query(`document.querySelector('[aria-label="选区宽度"]').focus()`);await press('Return');
         expect(exports.length===0,'Dimension Enter triggered output');await press('Escape');
-        app.focus({steal:true});w.focus();w.webContents.focus();await press('Return');for(let i=0;i<100&&!exports.length;i++)await wait(50);
+        app.focus({steal:true});w.focus();w.webContents.focus();await press('Return');for(let i=0;i<600&&!exports.length;i++)await wait(50);
         expect(exports.length===1&&exports[0].action==='copy','Enter did not copy current region once: '+JSON.stringify({exports:exports.map(e=>e.action),ui:await query(`({busy:document.querySelector('.ed').getAttribute('aria-busy'),focus:document.activeElement?.tagName,error:document.querySelector('.ed-toast')?.textContent})`)}));
-        for(let i=0;i<100&&await query(`document.querySelector('.ed').getAttribute('aria-busy')==='true'`);i++)await wait(50);
+        for(let i=0;i<600&&await query(`document.querySelector('.ed').getAttribute('aria-busy')==='true'`);i++)await wait(50);
+        expect(await query(`document.querySelector('.ed').getAttribute('aria-busy')==='false'`),'Enter output did not finish before double click');
         exports=[];const copyBox=await rect(),cx=copyBox.x+copyBox.width*.8,cy=copyBox.y+copyBox.height*.8;
         await move(w,cx,cy);w.webContents.sendInputEvent({type:'mouseDown',x:cx,y:cy,button:'left',clickCount:2});w.webContents.sendInputEvent({type:'mouseUp',x:cx,y:cy,button:'left',clickCount:2});
-        for(let i=0;i<100&&!exports.length;i++)await wait(50);
-        expect(exports.length===1&&exports[0].action==='copy','Double click did not copy current region once');result.enterAndDoubleClick=true;
+        for(let i=0;i<600&&!exports.length;i++)await wait(50);
+        expect(exports.length===1&&exports[0].action==='copy','Double click did not copy current region once: '+JSON.stringify({exports:exports.map(e=>e.action),point:{x:cx,y:cy},ui:await query(`({busy:document.querySelector('.ed').getAttribute('aria-busy'),focus:document.activeElement?.tagName,error:document.querySelector('.ed-toast')?.textContent})`)}));result.enterAndDoubleClick=true;
 
 
         fs.writeFileSync(path.join(out,'interaction-verification.json'),JSON.stringify(result,null,2));
@@ -1571,6 +1638,23 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       }
       names.push(await save(w, name));
       if (name === 'editor-window') {
+        await ready(w, 'Boolean(document.querySelector(".editor-text-line"))');
+        await page(w, `(() => {
+          const line = document.querySelector('.editor-text-line');
+          const range = document.createRange();
+          range.selectNodeContents(line);
+          const sel = window.getSelection();
+          sel.removeAllRanges();
+          sel.addRange(range);
+          document.dispatchEvent(new Event('selectionchange'));
+        })()`);
+        await wait(350);
+        if (!await page(w, `Boolean(document.querySelector('.ed-text-actions')) && [...document.querySelectorAll('.ed-text-actions button')].some(b => b.textContent.includes('快速翻译/速解')) && [...document.querySelectorAll('.ed-text-actions button')].some(b => b.textContent.includes('入便签'))`)) {
+          throw Error('Editor OCR text actions missing fastText or noteText button');
+        }
+        names.push(await save(w, 'editor-ocr-actions'));
+        await page(w, `(() => { window.getSelection().removeAllRanges(); document.dispatchEvent(new Event('selectionchange')); })()`);
+        await wait(200);
         const checks=[];
         for (const width of [760,1020]) {
           w.setSize(width,650);await wait(250);
@@ -1615,6 +1699,19 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
     })()`); await wait(250);
     if (!await page(p, `document.querySelector('.editor-text-layer')?.classList.contains('enabled') && document.querySelector('button[aria-label="选择文字"]')?.getAttribute('aria-pressed') === 'true'`)) {
       throw Error('Clicking text-select button did not enable text selection mode on pin');
+    }
+    await page(p, `(() => {
+      const line = document.querySelector('.editor-text-line');
+      const range = document.createRange();
+      range.selectNodeContents(line);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+    })()`);
+    await wait(250);
+    if (!await page(p, `Boolean(document.querySelector('button[aria-label="快速翻译/速解"]') && document.querySelector('button[aria-label="入便签"]'))`)) {
+      throw Error('Pin text-select toolbar missing fastText or noteText button');
     }
     names.push(await save(p, 'pin-text-select'));
     await page(p, `document.querySelector('button[aria-label="选择文字"]')?.click()`); await wait(200);

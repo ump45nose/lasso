@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { sign } from '@electron/osx-sign';
 import { packager } from '@electron/packager';
@@ -14,6 +14,7 @@ const paths = await packager({
   dir: '.', out: process.env.LASSO_PACKAGE_OUT || 'release', name: 'Lasso', executableName: 'MacAIPrompt',
   appBundleId: 'local.mac-ai-prompt', appCategoryType: 'public.app-category.productivity',
   platform: 'darwin', arch: process.arch, overwrite: true, asar: false, prune: true,
+  download: { cacheRoot: resolve('outputs/.electron-cache'), checksums: JSON.parse(readFileSync('node_modules/electron/checksums.json', 'utf8')) },
   ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /^\/\.(?:github|claude|worktree)(?:\/|$)/, /\.tsbuildinfo$/],
   extendInfo: {
     LSUIElement: true,

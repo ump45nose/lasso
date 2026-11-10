@@ -7,7 +7,7 @@ import { result } from '../ipc';
 import { exportTableXlsx, renderFormula, type IntelligenceService } from './intelligence';
 import type { OCRService } from './ocr';
 
-type Feature = 'recognize' | 'analyze' | 'visionLanguage' | 'previewFormula' | 'openURL' | 'exportTable' | 'pinFormula' | 'copyText' | 'sendText' | 'invalidateOCR';
+type Feature = 'recognize' | 'analyze' | 'visionLanguage' | 'previewFormula' | 'openURL' | 'exportTable' | 'pinFormula' | 'copyText' | 'sendText' | 'fastText' | 'noteText' | 'invalidateOCR';
 /** IPC channel per editor feature; the screenshot and pin hosts keep their historical names. */
 export type EditorChannels = Record<Feature, string>;
 /** The live edit in the calling window. Each host supplies its own ownership and revision rules. */
@@ -25,7 +25,11 @@ export interface EditorSession {
   textSent(id: string): void;
   recognized?(result: OCRResult): void;
 }
-export interface EditorHost { settings(): ScreenshotSettings; intelligence(): IntelligenceService; suppress(): void; text(text: string): Promise<void> }
+export interface EditorExternal {
+  fastText?: (text: string, bounds?: CaptureRect) => Promise<void> | void;
+  noteText?: (text: string) => Promise<void> | void;
+}
+export interface EditorHost extends EditorExternal { settings(): ScreenshotSettings; intelligence(): IntelligenceService; suppress(): void; text(text: string): Promise<void> }
 
 export function validCrop(crop: CaptureRect | undefined, size: { width: number; height: number }, min = 1): CaptureRect {
   if (!crop || ![crop.x, crop.y, crop.width, crop.height].every(Number.isSafeInteger) || crop.x < 0 || crop.y < 0 || crop.width < min || crop.height < min || crop.x + crop.width > size.width || crop.y + crop.height > size.height) throw Error('无效的裁剪范围');
@@ -71,6 +75,14 @@ export function handleEditorServices(channels: EditorChannels, session: (event: 
   ipcMain.handle(channels.sendText, (e, r: { id: string; revision: number; text: string }) => {
     const s = session(e);
     return result(async () => { const text = editorText(r?.text, '请先选择图中文字'); s.accept(r.id, r.revision); await host.text(text); s.textSent(r.id); });
+  });
+  ipcMain.handle(channels.fastText, (e, id: string, revision: number, text: string, rect?: CaptureRect) => {
+    const s = session(e);
+    return result(async () => { s.check(id, revision); await host.fastText?.(editorText(text, '请先选择图中文字'), rect); });
+  });
+  ipcMain.handle(channels.noteText, (e, id: string, revision: number, text: string) => {
+    const s = session(e);
+    return result(async () => { s.check(id, revision); await host.noteText?.(editorText(text, '请先选择图中文字')); });
   });
   ipcMain.on(channels.invalidateOCR, (e, r: { id: string; revision: number }) => {
     let s: EditorSession;

@@ -53,13 +53,13 @@ export class RecordingPanel {
   async close() {
     const panel = this.panel;
     const result = await this.act({ type: 'cancel' });
-    if (!result.error && panel && !panel.isDestroyed()) panel.destroy();
+    if (!result.error && panel && !panel.isDestroyed()) { panel.destroy(); if (this.panel === panel) this.panel = null; }
   }
   async act(action:RecordingAction){
     const recording=this.deps.recording();
     if(!recording)return {state:null,error:'录制尚未就绪'};
     if(action?.type==='cancel')this.deps.screenshots().cancelRecordingSelection();
-    if(action?.type==='start')this.panel?.hide();
+    if(action?.type==='start' && this.panel && !this.panel.isDestroyed())this.panel.hide();
     const result=await recording.action(action);
     if(result.error)this.deps.notice(result.error);
     if(action?.type==='start' && !this.deps.quitting())await this.show();
@@ -67,7 +67,8 @@ export class RecordingPanel {
   }
   changed(session: RecordingSessionState | null) {
     if(this.panel&&!this.panel.isDestroyed()){this.panel.webContents.send('shell:recording-changed',session);this.layout(session);}
-    if(session&&!this.deps.quitting()&&!this.panel?.isVisible())void this.show();
+    const isVis = Boolean(this.panel && !this.panel.isDestroyed() && this.panel.isVisible());
+    if(session&&!this.deps.quitting()&&!isVis)void this.show();
   }
   trayItems():Electron.MenuItemConstructorOptions[]{
     const recording=this.deps.recording(),screenshots=this.deps.screenshots();

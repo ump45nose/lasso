@@ -2,7 +2,7 @@ import { RegionControls } from './RegionControls';
 import { regionPoints,resizeRegion,moveRegion } from '../../shared/region-geometry';
 import { Fragment, forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Flashlight, Search, Stamp, Eraser, Link2, SlidersHorizontal, RotateCw, FlipHorizontal2, FlipVertical2, Contrast, Barcode, ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, Languages, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Sigma, Slash, Square, Table2, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
+import { Flashlight, Search, Stamp, Eraser, Link2, SlidersHorizontal, RotateCw, FlipHorizontal2, FlipVertical2, Contrast, Barcode, ChevronDown, Circle, Copy, Crop, Download, EyeOff, Grid3x3, Hash, Highlighter, Languages, Minus, MousePointer2, MoveUpRight, PenLine, Pin, Pipette, Plus, Redo2, ScanLine, ScanText, GalleryVerticalEnd, Send, Sigma, Slash, Sparkles, Square, StickyNote, Table2, TextSelect, Trash2, Type, Undo2, Droplets, X } from 'lucide-react';
 import type { BarcodeItem, CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
 import type { TranslationBlock } from '../../shared/intelligence';
 import { IntelligencePanel, type IntelligenceView } from './IntelligencePanel';
@@ -30,7 +30,7 @@ const styled: Tool[] = ['arrow', 'line', 'rectangle', 'ellipse', 'pen', 'highlig
 const sizes = [16, 24, 32, 40, 48, 64, 96];
 const colors=['#e24a35','#eaaa31','#3a9866','#337cc1','#9b62b8','#171717','#ffffff']; // ui-check-ignore: annotation inks are image content, not UI
 /** OCR status text maps to a dot: running, ready, needs attention, or waiting for edits to finish. */
-const ocrTone = (status: string) => status.startsWith('正在') ? 'loading' : status.startsWith('拖选') || status.startsWith('已复制') ? 'ok' : status.includes('未') ? 'warn' : 'idle';
+const ocrTone = (status: string) => status.startsWith('正在') ? 'loading' : status.startsWith('拖选') || status.startsWith('已') ? 'ok' : status.includes('未') ? 'warn' : 'idle';
 type Sample = NonNullable<ReturnType<AnnotationEditor['sample']>> & { left: number; top: number };
 interface PickerHandle { move(x: number, y: number, clientX: number, clientY: number): void; leave(): void; lock(x: number, y: number, clientX: number, clientY: number): string | null }
 const placeLoupe = (clientX: number, clientY: number) => ({ left: Math.max(8, Math.min(window.innerWidth - 148, clientX + 20)), top: Math.max(8, Math.min(window.innerHeight - 232, clientY + 20)) });
@@ -184,6 +184,8 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   }
   useEffect(()=>{if(ready&&state.copyIntent&&state.copyIntent!==lastCopy.current){lastCopy.current=state.copyIntent;void output('copy');}},[ready,state.copyIntent]);
   async function copyText(){if(!selection.current||mutating.current)return;try{await window.screenshot.copyText({id:state.editId,revision:version.current,text:selection.current});setOCRStatus('已复制选中文字');}catch(e){setError((e as Error).message);}}
+  async function fastText(){if(!selectedText||mutating.current)return;try{const r=await window.screenshot.fastText(state.editId,revision,selectedText);if(r.error)setError(r.error);}catch(e){setError((e as Error).message);}}
+  async function noteText(){if(!selectedText||mutating.current)return;try{const r=await window.screenshot.noteText(state.editId,revision,selectedText);if(r.error)setError(r.error);else setOCRStatus('已追加到便签');}catch(e){setError((e as Error).message);}}
   async function sendText(){if(!selection.current||mutating.current||exporting.current)return;exporting.current=true;setBusy(true);try{const result=await window.screenshot.sendText({id:state.editId,revision:version.current,text:selection.current});if(result.error)setError(result.error);}catch(e){setError((e as Error).message);}finally{exporting.current=false;if(alive.current)setBusy(false);}}
   useEffect(()=>{
     let composing=false;
@@ -262,8 +264,10 @@ export function Editor({state, source:given}:{state:ScreenshotState; source?:HTM
   const ocrChip=<motion.div className={'ed-chip'+(ocrOpen?' open':'')} initial={{opacity:0,y:4}} animate={{opacity:1,y:0}} transition={{...spring,delay:.04}}>
       <button className="ed-chip-main" aria-expanded={ocrOpen} aria-label="文字识别选项" disabled={!ready} onClick={()=>{setRegionPanelOpen(false);setFormatOpen(false);setOCROpen(o=>!o);}}><span className={'ed-dot '+ocrTone(ocrStatus)}/><ScanText/><span className="ed-chip-text" role="status">{ocrStatus}</span><ChevronDown className="ed-chev"/></button>
       {barcodes.length>0&&<button className="ed-chip-main ed-barcode-chip" aria-label="条码结果" aria-expanded={intelligence==='barcode'} onClick={()=>{closeMenus();setIntelligence('barcode');}}><Barcode/><span className="mono">{barcodes[0].symbology}</span><span className="ed-chip-text">{barcodes[0].payload}</span></button>}
-      <AnimatePresence initial={false}>{selectedText&&<motion.span key="text" className="ed-chip-actions" initial={{opacity:0,width:0}} animate={{opacity:1,width:'auto'}} exit={{opacity:0,width:0}} transition={spring}>
+      <AnimatePresence initial={false}>{selectedText&&<motion.span key="text" className="ed-chip-actions ed-text-actions" initial={{opacity:0,width:0}} animate={{opacity:1,width:'auto'}} exit={{opacity:0,width:0}} transition={spring}>
         <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void copyText()}><Copy/>复制文字</button>
+        <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void fastText()}><Sparkles/>快速翻译/速解</button>
+        <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void noteText()}><StickyNote/>入便签</button>
         <button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>void sendText()}><Send/>文字预设</button><button onMouseDown={e=>e.preventDefault()} disabled={busy} onClick={()=>maskSame()}><Link2/>联动遮挡相同文字</button></motion.span>}</AnimatePresence>
       <AnimatePresence>{ocrOpen&&<motion.div className="ed-pop" initial={{opacity:0,y:-4,scale:.98}} animate={{opacity:1,y:0,scale:1}} exit={{opacity:0,transition:{duration:.1}}} transition={spring}>
         <Segmented label="文字识别模式" value={ocrMode} onChange={mode=>changeOCR(mode,enhance)} options={[['text','正文'],['code','代码 / 网址']]}/>

@@ -78,7 +78,7 @@ export class TaskManager {
   private tasks = new Map<string, Task>();
   private activeId: string | null = null;
   private polling = false;
-  private probe: { taskId: string; view: WebContentsView; controller: AbortController } | null = null;
+  private probe: { taskId: string; view: WebContentsView; nav: number; preview: WebContentsView; controller: AbortController } | null = null;
   private timer: ReturnType<typeof setInterval>;
   constructor(
     private window: BrowserWindow,
@@ -251,7 +251,14 @@ export class TaskManager {
       }
     }
   }
-  focus() { this.active?.view?.webContents.focus(); }
+  focus() {
+    const task = this.active;
+    if (task && !task.agent && !task.view) {
+      this.select(task.id);
+      this.layout(this.lastBounds, true);
+    }
+    this.active?.view?.webContents.focus();
+  }
   /** Snapshot of the visible page, used as the command palette backdrop. */
   async capture(): Promise<string | null> {
     const view = this.active?.visible ? this.active.view : null;
@@ -319,6 +326,7 @@ export class TaskManager {
     });
     contents.on('did-start-navigation', (_event, _url, _inPlace, isMainFrame) => {
       if (!isMainFrame) return;
+      this.abortProbeFor(task.id);
       task.navigation++; task.restoreUrl = null; task.activity = 'unknown'; task.observed = null;
       task.retainedReason = null; task.retryReleaseAt = 0;
       task.lastActivityAt = Date.now();
@@ -347,6 +355,7 @@ export class TaskManager {
     });
   }
   private navigate(task: Task, url: string): Promise<void> {
+    this.abortProbeFor(task.id);
     task.url = url;
     const contents = task.view!.webContents;
     return new Promise((resolve, reject) => {
@@ -405,6 +414,7 @@ export class TaskManager {
   select(id: string) {
     const task = this.tasks.get(id);
     if (!task) return;
+    this.abortProbeFor(task.id);
     if (this.active) this.active.lastActivityAt = Date.now();
     this.activeId = id; task.lastActivityAt = Date.now();
     this.deliveredAgents.delete(id);
@@ -558,7 +568,7 @@ export class TaskManager {
       // proof as waitRestored so a recovered page does not remain permanently pending.
       if (!task.controller && task.resumeUrl && task.savedResponseId && old
         && isRestoredPage(old, task.resumeUrl, task.savedResponseId)
-        && isRestoredPage(snapshot, task.resumeUrl, task.savedResponseId)) {
+        && isRestoredPage(snapshot, task.resumeUrl, task.savedResponseId) && old.progress === snapshot.progress) {
         task.resumeUrl = null; task.delivery = null;
       }
       task.observed = snapshot; task.activity = snapshot.activity; task.hasDraft = snapshot.hasDraft;
@@ -574,9 +584,12 @@ export class TaskManager {
       return false;
     }
   }
+  private isActiveVisible(task: Task) {
+    return task.id === this.activeId && !this.window.isDestroyed() && this.window.isVisible() && !this.window.isMinimized() && !app.isHidden();
+  }
   private eligible(task: Task) {
     return this.tasks.has(task.id) && !task.preset?.temporaryChat && isIdleCandidate({
-      active: task.id === this.activeId && this.window.isVisible() && !this.window.isMinimized() && !app.isHidden(), resident: Boolean(task.view), activity: this.status(task),
+      active: this.isActiveVisible(task), resident: Boolean(task.view), activity: this.status(task),
       hasDraft: task.hasDraft, pending: Boolean(task.controller || task.pendingText || task.resumeUrl || task.image), hasPopup: task.popups.size > 0,
       restoreUrl: task.restoreUrl, lastActivityAt: task.lastActivityAt
     }, Date.now(),this.idleMs);
@@ -587,13 +600,13 @@ export class TaskManager {
     try {
       const codex = [...this.tasks.values()].filter(t => t.target === 'codex' && t.agent?.state.resident);
       this.runtime.closeIfIdle(this.idleMs);
-      if (codex.length && codex.every(t => (t.id !== this.activeId || !this.window.isVisible() || this.window.isMinimized() || app.isHidden()) && t.agent!.canRelease && Date.now() - t.lastActivityAt >= this.idleMs)) {
+      if (codex.length && codex.every(t => !this.isActiveVisible(t) && t.agent!.canRelease && Date.now() - t.lastActivityAt >= this.idleMs)) {
         for (const task of codex) task.agent!.release();
         this.runtime.closeIfUnused();
       }
       for (const task of [...this.tasks.values()]) {
         if (task.agent) {
-          if (task.target === 'pi' && task.agent.state.resident && (task.id !== this.activeId || !this.window.isVisible() || this.window.isMinimized() || app.isHidden()) && task.agent.canRelease && Date.now() - task.lastActivityAt >= this.idleMs) task.agent.release();
+          if (task.target === 'pi' && task.agent.state.resident && !this.isActiveVisible(task) && task.agent.canRelease && Date.now() - task.lastActivityAt >= this.idleMs) task.agent.release();
           continue;
         }
         if (!await this.observe(task)) continue;
@@ -611,55 +624,62 @@ export class TaskManager {
     }
     // A conversation-shaped URL alone does not prove that the website can restore it.
     // At most one temporary hidden page checks the saved answer before any resident is destroyed.
-    const view = new WebContentsView({ webPreferences: {
+    const view = task.view!;
+    const preview = new WebContentsView({ webPreferences: {
       partition: partition(task.target), nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false
     } });
-    view.setBounds(task.view!.getBounds()); view.setVisible(false);
-    this.window.contentView.addChildView(view);
-    this.secure(view.webContents);
-    view.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+    preview.setBounds(view.getBounds()); preview.setVisible(false);
+    this.window.contentView.addChildView(preview);
+    this.secure(preview.webContents);
+    preview.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     const controller = new AbortController();
-    this.probe = { taskId: task.id, view, controller };
-    const stop = () => { if (!view.webContents.isDestroyed()) view.webContents.stop(); };
+    const probeRef = { taskId: task.id, controller, view, nav: task.navigation, preview };
+    this.probe = probeRef;
+    const stop = () => { if (!preview.webContents.isDestroyed()) preview.webContents.stop(); };
     controller.signal.addEventListener('abort', stop, { once: true });
     const timeout = setTimeout(() => controller.abort(), 20_000);
     let verified = false;
     try {
-      await view.webContents.loadURL(url);
-      const adapter = webAdapter(task.target, view.webContents);
+      await abortable(preview.webContents.loadURL(url), controller.signal);
+      const adapter = webAdapter(task.target, preview.webContents);
       await adapter.waitRestored(url, responseId, controller.signal);
+      controller.signal.throwIfAborted();
       verified = true;
     } catch {
       // Failed/expired login and unavailable conversation links keep the original page alive.
     } finally {
       clearTimeout(timeout); controller.signal.removeEventListener('abort', stop);
-      if (this.probe?.view === view) {
-        this.window.contentView.removeChildView(view); view.webContents.close(); this.probe = null;
-      }
+      if (!preview.webContents.isDestroyed()) { if (!this.window.isDestroyed()) this.window.contentView.removeChildView(preview); preview.webContents.close(); }
+      if (this.probe === probeRef) this.probe = null;
     }
-    if (!this.tasks.has(task.id)) return;
+    if (!this.tasks.has(task.id) || this.isActiveVisible(task) || task.view !== probeRef.view || task.navigation !== probeRef.nav) return;
     task.retryReleaseAt = Date.now() + this.idleMs;
     if (!verified) {
       task.retainedReason = '恢复链接暂不可用，保留页面'; this.notify();
       return;
     }
     // The user may have switched to this task, edited it, or started a new turn during the check.
-    if (await this.observe(task) && this.eligible(task) && task.restoreUrl === url && task.observed?.responseId === responseId) {
+    if (await this.observe(task) && !controller.signal.aborted && !this.isActiveVisible(task) && task.view === probeRef.view && task.navigation === probeRef.nav
+      && task.activity !== 'running' && task.activity !== 'waiting' && this.eligible(task) && task.restoreUrl === url && task.observed?.responseId === responseId) {
       task.savedResponseId = responseId;
       this.destroyPage(task); task.delivery = null; task.observed = null; task.retainedReason = null; this.notify();
     }
   }
+  private abortProbeFor(id: string) {
+    if (this.probe?.taskId === id) this.probe.controller.abort();
+  }
   private destroyPage(task: Task) {
-    if (this.probe?.taskId === task.id) this.probe.controller.abort();
+    this.abortProbeFor(task.id);
     task.controller?.abort();
     for (const popup of task.popups) popup.destroy();
     const view = task.view;
     task.view = null; task.visible = false; task.adapter = null;
-    if (view) { this.window.contentView.removeChildView(view); view.webContents.close(); }
+    if (view) { if (!this.window.isDestroyed()) this.window.contentView.removeChildView(view); view.webContents.close(); }
   }
   close(id: string) {
     const task = this.tasks.get(id);
     if (!task) return;
+    this.abortProbeFor(task.id);
     const ids = [...this.tasks.keys()];
     const index = ids.indexOf(id);
     this.tasks.delete(id); this.deliveredAgents.delete(id); task.agent?.dispose(); this.images.remove(task.image); this.destroyPage(task);
@@ -680,8 +700,8 @@ export class TaskManager {
     clearInterval(this.timer);
     if (this.probe) {
       this.probe.controller.abort();
-      this.window.contentView.removeChildView(this.probe.view);
-      this.probe.view.webContents.close();
+      if (!this.window.isDestroyed()) this.window.contentView.removeChildView(this.probe.preview);
+      this.probe.preview.webContents.close();
       this.probe = null;
     }
     const tasks = [...this.tasks.values()];

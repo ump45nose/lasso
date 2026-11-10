@@ -14,6 +14,7 @@ const api: ActionBarAPI = {
   copyFastResult: text => ipcRenderer.invoke('bar:fast-copy', text),
   replaceSelection: text => ipcRenderer.invoke('bar:fast-replace', text),
   pinFastResult: text => ipcRenderer.invoke('bar:fast-pin', text),
+  appendNote: () => ipcRenderer.invoke('bar:append-note'),
   hit: inside => ipcRenderer.send('bar:hit', inside),
   onState: callback => on<ActionBarState>('bar:changed', callback),
   onEnter: callback => on<ActionBarLayout>('bar:enter', callback)

@@ -14,6 +14,9 @@ export interface NativeAx {
   startBridge(cb: (event: { name: string; payload: string }) => void): void;
   postBridge(name: string, payload: string): void;
   snapWindow(x: number, y: number, w: number, h: number): boolean;
+  focusedWindowFrame(): CaptureRect | null;
+  startFinderTrigger(cb: (point: { x: number; y: number; trigger: 'middle' | 'right-hold' }) => void): void;
+  stopFinderTrigger(): void;
   tileTwoWindows(x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number): number;
   notchGeometry(): { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
   setStationaryWindow(handle: Buffer): void;

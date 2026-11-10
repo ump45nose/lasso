@@ -17,7 +17,7 @@ import { clip } from './candidates';
 import { CandidateDetection } from './candidate-detection';
 import { RecordingCapture } from './recording-capture';
 import { OCRService, visionOCR } from './ocr';
-import { editorSettings, handleEditorServices, validCrop, type EditorSession } from './editor-services';
+import { editorSettings, handleEditorServices, validCrop, type EditorExternal, type EditorSession } from './editor-services';
 import { imageDocument, normalizeRegionAnnotations, validateAnnotations, type PinnedDocument } from './document';
 import { CaptureHistoryStore } from './history-store';
 import { PinManager } from './pins';
@@ -109,7 +109,7 @@ export class CaptureManager {
   }
   private stopEditorServices: ()=>void;
   private ocr=new OCRService((id,revision)=>this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);
-  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'|'toolbarTools'|'mouseActions'>,memory:()=>MemorySettings,private savePreferences:(settings:ScreenshotSettings)=>void,private intelligence:()=>IntelligenceService) {
+  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'|'toolbarTools'|'mouseActions'>,memory:()=>MemorySettings,private savePreferences:(settings:ScreenshotSettings)=>void,private intelligence:()=>IntelligenceService,external:EditorExternal={}) {
     rmSync(this.sleepDirectory,{recursive:true,force:true});
     this.idle=new IdleSleep(memory,async()=>{if(!this.sleepJob){this.sleepJob=this.suspendEditor();try{await this.sleepJob;}finally{this.sleepJob=null;}}});
     this.regionsStore=new RegionStore(join(app.getPath('userData'),'capture-regions.json'),()=>this.settings().rememberRegionAcrossLaunches);
@@ -121,7 +121,7 @@ export class CaptureManager {
     this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';
     this.configureNativeAppearance();
     this.history=new CaptureHistoryStore(join(app.getPath('userData'),'capture-history'),()=>this.settings().history);
-    this.pins=new PinManager({image:receive,text:receiveText,suppress:()=>this.after(),changed,preferences:()=>this.settings(),generalSettings:()=>this.appearance(),saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligence(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
+    this.pins=new PinManager({...external,image:receive,text:receiveText,suppress:()=>this.after(),changed,preferences:()=>this.settings(),generalSettings:()=>this.appearance(),saveAnnotationMemory:memory=>this.saveAnnotationMemory(memory),canEdit:()=>!this.active,intelligence:()=>this.intelligence(),saveWorkspaceSettings:pinWorkspace=>this.savePreferences({...this.settings(),pinWorkspace}),recordHistory:async(document,id)=>{await this.history.add(document,{id,captureKind:'pin'});}});
     const owns=(e:IpcMainEvent|IpcMainInvokeEvent)=>fromMainFrame(e,this.cachedWindow);
     const assert=(e:IpcMainEvent|IpcMainInvokeEvent)=>{if(!owns(e))throw new Error('截图操作只允许截图窗口调用');};
     ipcMain.handle('screenshot:checkpoint',(e,editId:string,checkpoint:EditorCheckpoint|null)=>{assert(e);if(this.state?.editId===editId)this.checkpointReply?.(checkpoint);});
@@ -160,7 +160,7 @@ export class CaptureManager {
       textSent:id=>{if(this.state?.editId===id)this.cancel();},
       recognized:result=>{if(this.state?.editId===result.id&&this.editRevision===result.revision)this.historyOCR={id:result.id,revision:result.revision,text:result.lines.map(line=>line.text).join('\n')};}
     };};
-    this.stopEditorServices=handleEditorServices({recognize:'screenshot:recognize',analyze:'screenshot:analyze',visionLanguage:'screenshot:vision-language',previewFormula:'screenshot:preview-formula',openURL:'screenshot:open-url',exportTable:'screenshot:export-table',pinFormula:'screenshot:pin-formula',copyText:'screenshot:copy-text',sendText:'screenshot:send-text',invalidateOCR:'screenshot:invalidate-ocr'},session,{settings:()=>this.settings(),intelligence:()=>this.intelligence(),suppress:()=>this.after(),text:text=>this.receiveText(text)});
+    this.stopEditorServices=handleEditorServices({recognize:'screenshot:recognize',analyze:'screenshot:analyze',visionLanguage:'screenshot:vision-language',previewFormula:'screenshot:preview-formula',openURL:'screenshot:open-url',exportTable:'screenshot:export-table',pinFormula:'screenshot:pin-formula',copyText:'screenshot:copy-text',sendText:'screenshot:send-text',fastText:'screenshot:fast-text',noteText:'screenshot:note-text',invalidateOCR:'screenshot:invalidate-ocr'},session,{...external,settings:()=>this.settings(),intelligence:()=>this.intelligence(),suppress:()=>this.after(),text:text=>this.receiveText(text)});
     screen.on('display-added',this.displayAdded);
     screen.on('display-removed',this.displayRemoved);
     screen.on('display-metrics-changed',this.displayMetrics);

@@ -8,6 +8,7 @@ function refresh() {
   if (quitting) return;
   let hasContent = false;
   for (const [window, content] of windows) {
+    if (window.isDestroyed()) { windows.delete(window); continue; }
     const open = !app.isHidden() && (window.isVisible() || window.isMinimized());
     window.excludedFromShownWindowsMenu = !content || !open;
     hasContent ||= content && open;
@@ -18,6 +19,7 @@ function refresh() {
 
 /** Only open content windows participate in the Dock and macOS window menu. */
 export function setWindowPresence(window: BrowserWindow, content: boolean) {
+  if (window.isDestroyed()) { windows.delete(window); return; }
   if (!windows.has(window)) {
     window.on('show', refresh);
     window.on('hide', refresh);

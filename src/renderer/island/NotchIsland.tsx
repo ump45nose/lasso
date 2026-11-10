@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Bell, Check, Clock, Coffee, Columns2, Crop, FileText, Flame, FolderOpen, LayoutGrid, Maximize2, PanelLeft, PanelRight, Pause, Play, RotateCcw, Settings2, Sparkles, Square, X } from 'lucide-react';
+import { ArrowLeftToLine, ArrowRightToLine, Bell, Check, Clock, Coffee, Columns2, Crop, FileText, Flame, FolderOpen, LayoutGrid, Maximize2, PanelLeft, PanelRight, Pause, Play, RotateCcw, Settings2, Sparkles, Square, Terminal, X } from 'lucide-react';
 import type { IslandAPI, IslandState } from '../../shared/contracts';
 import { BrandMark } from '../BrandMark';
 import { useFonts } from '../fonts';
@@ -22,6 +22,7 @@ function formatClock(seconds: number): string {
 
 export function NotchIsland() {
   const [state, setState] = useState<IslandState | null>(null);
+  const [isHovered, setIsHovered] = useState(false);
   useFonts(state?.fonts);
 
   useEffect(() => {
@@ -33,17 +34,21 @@ export function NotchIsland() {
   }, []);
 
   if (!state) return null;
-  const { mode, pomodoro, toast, alerts, nookTasks, glow, notch } = state;
+  const { mode, pomodoro, toast, alerts, nookTasks, cliTasks = [], glow, notch } = state;
+  const firstCli = cliTasks[0] ?? null;
   const notchW = notch?.hasNotch === false ? 0 : (notch?.width ?? 156);
   const notchH = notch?.hasNotch === false ? 24 : (notch?.height ?? 28);
   const compactMode = mode === 'idle' || mode === 'focus';
+  const isIdleCollapsed = mode === 'idle' && !firstCli && !isHovered;
 
   function enterShell() {
+    setIsHovered(true);
     window.island.hit(true);
     if (mode === 'focus') window.island.setMode('focus-hover');
   }
 
   function leaveShell() {
+    setIsHovered(false);
     if (mode === 'focus-hover') window.island.setMode('focus');
     window.island.hit(false);
   }
@@ -66,7 +71,7 @@ export function NotchIsland() {
         layout
         transition={spring}
         style={{ '--notch-w': `${notchW}px`, '--notch-h': `${notchH}px` } as React.CSSProperties}
-        className={`isl-shell mode-${mode}${glow ? ' glow-on' : ''}${notch?.hasNotch === false ? ' no-notch' : ''}`}
+        className={`isl-shell mode-${mode}${glow ? ' glow-on' : ''}${notch?.hasNotch === false ? ' no-notch' : ''}${compactMode && firstCli ? ' has-cli' : ''}${isIdleCollapsed ? ' idle-collapsed' : ''}`}
         role="region"
         aria-label="Lasso 刘海岛"
         onPointerEnter={enterShell}
@@ -116,6 +121,14 @@ export function NotchIsland() {
               <span className="dot complete" />
               <span className="isl-toast-text">{toast.text}</span>
               {toast.badge && <kbd className="isl-kbd mono">{toast.badge}</kbd>}
+              <button
+                type="button"
+                className="isl-icon isl-toast-close"
+                aria-label="关闭提示"
+                onClick={() => window.island.setMode(pomodoro?.active ? (pomodoro.kind === 'slacking' ? 'slacking' : 'focus') : 'idle')}
+              >
+                <X size={12} />
+              </button>
             </motion.div>
           )}
 
@@ -204,6 +217,9 @@ export function NotchIsland() {
                 <span className="isl-tag mono">{alerts.length} 条</span>
                 <button type="button" className="isl-icon push" aria-label="打开工作台" onClick={() => window.island.setMode('board')}>
                   <LayoutGrid size={13} />
+                </button>
+                <button type="button" className="isl-icon" aria-label="全部关闭" onClick={() => void window.island.dismissAlert('*')}>
+                  <X size={13} />
                 </button>
               </div>
               <ul className="isl-alert-list">
@@ -294,13 +310,33 @@ export function NotchIsland() {
                 )}
               </div>
 
+              <div className="isl-board-tasks">
+              {cliTasks.length > 0 && (
+                <>
+                  <div className="isl-sec-head">
+                    <span>活跃 CLI 任务</span>
+                    <span className="mono">{cliTasks.length} ACTIVE</span>
+                  </div>
+                  <div className="isl-cli-list" role="list" aria-label="活跃 CLI 任务">
+                    {cliTasks.map(task => (
+                      <button key={task.id} type="button" className={`isl-cli-row ${task.activity}`} onClick={() => void window.island.focusTask(task.id)}>
+                        <span className={`dot ${task.activity}`} />
+                        <Terminal size={12} className="isl-clay-icon" />
+                        <span className="isl-cli-title">{task.target === 'codex' ? 'Codex' : 'Pi'} · {task.title}</span>
+                        <span className="isl-cli-state mono">{task.activity === 'waiting' ? '待审批 →' : '运行中 →'}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
               <div className="isl-sec-head">
                 <span>Nook 待办联动</span>
                 <span className="mono">{nookTasks.length} OPEN</span>
               </div>
               {nookTasks.length === 0 && <p className="isl-task-empty">暂无 Nook 待办，可直接开始 25m 专注</p>}
               <ul className="isl-task-list">
-                {nookTasks.slice(0, 4).map(task => (
+                {nookTasks.slice(0, cliTasks.length > 0 ? 2 : 4).map(task => (
                   <li key={task.id} className="isl-task-row">
                     <button
                       type="button"
@@ -324,6 +360,7 @@ export function NotchIsland() {
                   </li>
                 ))}
               </ul>
+              </div>
 
               <div className="isl-sec-head">
                 <span>窗口分屏与工作区排布</span>
@@ -342,6 +379,12 @@ export function NotchIsland() {
                 <button type="button" className="isl-btn primary" onClick={() => void window.island.snapWindow('coding-ai')}>
                   <Columns2 size={12} />2/3 研发双栏
                 </button>
+                <button type="button" className="isl-btn" onClick={() => void window.island.snapWindow('prev-display')}>
+                  <ArrowLeftToLine size={12} />移至左屏 <kbd className="isl-kbd mono">⌃⌥⌘←</kbd>
+                </button>
+                <button type="button" className="isl-btn" onClick={() => void window.island.snapWindow('next-display')}>
+                  <ArrowRightToLine size={12} />移至右屏 <kbd className="isl-kbd mono">⌃⌥⌘→</kbd>
+                </button>
               </div>
 
               <div className="isl-quick-bar">
@@ -349,7 +392,7 @@ export function NotchIsland() {
                   <Crop size={12} />区域截图
                 </button>
                 <button type="button" className="isl-btn" onClick={() => void window.island.quickAction('toggle-notes')}>
-                  <FileText size={12} />边缘便签
+                  <FileText size={12} />浮动便签 <kbd className="isl-kbd mono">⌥N</kbd>
                 </button>
                 <button type="button" className="isl-btn" onClick={() => void window.island.quickAction('open-finder-panel')}>
                   <FolderOpen size={12} />Finder 动作
@@ -361,6 +404,18 @@ export function NotchIsland() {
             </motion.div>
           )}
         </AnimatePresence>
+        {compactMode && firstCli && (
+          <button
+            type="button"
+            className={`ni-pill ${firstCli.activity}`}
+            aria-label={`切换到 CLI 任务 ${firstCli.title}`}
+            onClick={() => void window.island.focusTask(firstCli.id)}
+          >
+            <span className={`dot ${firstCli.activity}`} />
+            <span className="ni-pill-title">{firstCli.target === 'codex' ? 'Codex' : 'Pi'} · {firstCli.title}</span>
+            <span className="ni-pill-state mono">{firstCli.activity === 'waiting' ? '待审批' : '运行中'}</span>
+          </button>
+        )}
       </motion.div>
     </div>
   );

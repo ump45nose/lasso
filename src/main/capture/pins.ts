@@ -5,7 +5,7 @@ import { constants, mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs
 import { copyFile as copyDiskFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { pinOpacities, type CaptureFrame, type ExportAction, type PinAction, type PinState } from '../../shared/capture';
+import { pinOpacities, type CaptureFrame, type CaptureRect, type ExportAction, type PinAction, type PinState } from '../../shared/capture';
 import type { AnnotationStyleMemory, ScreenshotSettings, ScreenshotOutputFormat, ScreenshotExportContentMode } from '../../shared/screenshot-settings';
 import { pinWorkspaceDefaults, validatePinWorkspaceSettings, type PinArrangeMode, type PinContentPayload, type PinKind, type PinWorkspaceSettings, type PinWorkspaceState } from '../../shared/history-sync';
 import { deserializePinnedDocument, imageDocument, serializePinnedDocument, validateAnnotations, type PinnedDocument, type SerializedPinnedDocument } from './document';
@@ -16,13 +16,13 @@ import { fitToWorkArea } from '../position';
 import { writeFileAtomic } from '../files';
 import { closeOnCommandW, fromMainFrame, result, sealLocal } from '../ipc';
 import type { IntelligenceService } from './intelligence';
-import { editorSettings, handleEditorServices, validCrop, type EditorSession } from './editor-services';
+import { editorSettings, handleEditorServices, validCrop, type EditorExternal, type EditorSession } from './editor-services';
 
 type SavedPin = {id:string;document:SerializedPinnedDocument;payload:PinContentPayload;title:string;groupId:string;locked:boolean;thumbnail:boolean;topmost:boolean;visible:boolean;opacity:number;zoomPercent:number;bounds:Rectangle;normalBounds?:Rectangle};
 type DiskPin=Omit<SavedPin,'document'>&{documentFile:string};
 type Pin = {win:BrowserWindow;state:PinState;document:PinnedDocument;storedDocument:SerializedPinnedDocument;ocr:OCRService;bytes:number;visible:boolean;normalBounds?:Rectangle;restBounds?:Rectangle;drag?:{cursor:{x:number;y:number};bounds:Rectangle};editorRevision:number};
 type PinInput = {kind:PinKind;text?:string;color?:string;filePath?:string;groupId?:string};
-type PinOptions = {
+type PinOptions = EditorExternal & {
   image:(image:NativeImage)=>Promise<void>;
   text:(text:string)=>Promise<void>;
   suppress:()=>void;
@@ -78,18 +78,15 @@ export class PinManager {
       'pin:update-text':(pin:Pin,value:unknown)=>this.updateText(pin,value)
     }))ipcMain.handle(channel,(e,value:unknown)=>{const pin=this.owner(e);return result(()=>apply(pin,value));});
     ipcMain.handle('pin:text',(e,text:string,send:boolean,revision:number)=>{const pin=this.owner(e);return result(async()=>{
-      if(revision!==pin.state.revision)throw Error('贴图已更新，请重新选字');
-      if(typeof send!=='boolean'||typeof text!=='string'||!text.trim()||text.length>100000)throw Error('没有可输出的贴图文字');
-      const kind=pin.state.kind??'image',payload=pin.state.payload;
-      if(kind==='image'){
-        const recognized=pin.state.lines.map(line=>line.glyphs.map(glyph=>glyph.text).join('')).filter(Boolean).join('\n');
-        if(!recognized.includes(text))throw Error('请先选择图中文字');
-      }else if(kind==='text'){
-        if(text!==payload?.text)throw Error('贴图文字已变化，请重新操作');
-      }else if(kind==='color'){
-        if(send||(text!==payload?.colorHex&&text!==payload?.colorRgb))throw Error('颜色贴图仅支持复制当前 HEX 或 RGB 色值');
-      }else throw Error('文件贴图不支持文字输出');
+      if(typeof send!=='boolean')throw Error('没有可输出的贴图文字');
+      this.selectedText(pin,text,revision,!send);
       this.options.suppress();if(send)await this.options.text(text);else await clipboard.writeText(text);
+    });});
+    ipcMain.handle('pin:fast-text',(e,text:string,revision:number,rect?:CaptureRect)=>{const pin=this.owner(e);return result(async()=>{
+      this.selectedText(pin,text,revision);await this.options.fastText?.(text,rect);
+    });});
+    ipcMain.handle('pin:note-text',(e,text:string,revision:number)=>{const pin=this.owner(e);return result(async()=>{
+      this.selectedText(pin,text,revision);await this.options.noteText?.(text);
     });});
     ipcMain.handle('pin:source',e=>{
       const pin=this.owner(e);
@@ -109,7 +106,7 @@ export class PinManager {
       ocr:pin.ocr,
       textSent:id=>{if(pin.state.editing&&pin.state.editId===id)this.showPin(pin);}
     };};
-    this.stopEditorServices=handleEditorServices({recognize:'pin:editor-recognize',analyze:'pin:editor-analyze',visionLanguage:'pin:editor-vision-language',previewFormula:'pin:editor-preview-formula',openURL:'pin:editor-open-url',exportTable:'pin:editor-export-table',pinFormula:'pin:editor-pin-formula',copyText:'pin:editor-copy-text',sendText:'pin:editor-send',invalidateOCR:'pin:editor-invalidate'},session,{settings:this.options.preferences,intelligence:this.options.intelligence,suppress:this.options.suppress,text:this.options.text});
+    this.stopEditorServices=handleEditorServices({recognize:'pin:editor-recognize',analyze:'pin:editor-analyze',visionLanguage:'pin:editor-vision-language',previewFormula:'pin:editor-preview-formula',openURL:'pin:editor-open-url',exportTable:'pin:editor-export-table',pinFormula:'pin:editor-pin-formula',copyText:'pin:editor-copy-text',sendText:'pin:editor-send',fastText:'pin:editor-fast-text',noteText:'pin:editor-note-text',invalidateOCR:'pin:editor-invalidate'},session,{settings:this.options.preferences,intelligence:this.options.intelligence,suppress:this.options.suppress,text:this.options.text,fastText:this.options.fastText,noteText:this.options.noteText});
     ipcMain.handle('pin:editor-action',(e,action:string)=>{const pin=this.owner(e);return result(()=>{
       if(!pin.state.editing)throw Error('贴图未在编辑');
       if(action==='cancel')this.showPin(pin);
@@ -123,7 +120,21 @@ export class PinManager {
     screen.on('display-metrics-changed',this.fit);
     this.ready=this.restoreWorkspace();
   }
-  state():PinWorkspaceState {return {settings:structuredClone(this.settings),closedCount:this.closed.length,pins:[...this.pins.values()].map(pin=>({id:pin.state.id,title:pin.state.title||'贴图',kind:pin.state.kind||'image',groupId:pin.state.groupId||this.settings.activeGroupId,locked:!!pin.state.locked,thumbnail:!!pin.state.thumbnail,visible:pin.win.isVisible(),opacity:pin.state.opacity}))};}
+  private selectedText(pin:Pin,text:string,revision:number,allowColor=false){
+    if(pin.state.editing)throw Error('请在贴图编辑器中操作文字');
+    if(revision!==pin.state.revision)throw Error('贴图已更新，请重新选字');
+    if(typeof text!=='string'||!text.trim()||text.length>100000)throw Error('没有可输出的贴图文字');
+    const kind=pin.state.kind??'image',payload=pin.state.payload;
+    if(kind==='image'){
+      const recognized=pin.state.lines.map(line=>line.glyphs.map(glyph=>glyph.text).join('')).filter(Boolean).join('\n');
+      if(!recognized.includes(text))throw Error('请先选择图中文字');
+    }else if(kind==='text'){
+      if(text!==payload?.text)throw Error('贴图文字已变化，请重新操作');
+    }else if(kind==='color'){
+      if(!allowColor||(text!==payload?.colorHex&&text!==payload?.colorRgb))throw Error('颜色贴图仅支持复制当前 HEX 或 RGB 色值');
+    }else throw Error('文件贴图不支持文字输出');
+  }
+  state():PinWorkspaceState {return {settings:structuredClone(this.settings),closedCount:this.closed.length,pins:[...this.pins.values()].map(pin=>({id:pin.state.id,title:pin.state.title||'贴图',kind:pin.state.kind||'image',groupId:pin.state.groupId||this.settings.activeGroupId,locked:!!pin.state.locked,thumbnail:!!pin.state.thumbnail,visible:!pin.win.isDestroyed()&&pin.win.isVisible(),opacity:pin.state.opacity}))};}
   async saveWorkspace(settings:PinWorkspaceSettings){
     await this.ready;validatePinWorkspaceSettings(settings);
     const next=structuredClone(settings);this.options.saveWorkspaceSettings(next);this.settings=next;
@@ -250,7 +261,7 @@ export class PinManager {
   arrange(mode:PinArrangeMode,groupId?:string){
     if(!['grid','horizontal','vertical','align-left','align-top'].includes(mode))throw Error('不支持的排列方式');
     if(groupId!==undefined)this.group(groupId);
-    const pins=[...this.pins.values()].filter(pin=>(!groupId||pin.state.groupId===groupId)&&!pin.state.locked&&!pin.state.editing&&pin.win.isVisible());if(!pins.length)return;
+    const pins=[...this.pins.values()].filter(pin=>(!groupId||pin.state.groupId===groupId)&&!pin.state.locked&&!pin.state.editing&&!pin.win.isDestroyed()&&pin.win.isVisible());if(!pins.length)return;
     const area=screen.getDisplayMatching(pins[0].win.getBounds()).workArea,columns=mode==='vertical'?1:mode==='horizontal'?pins.length:Math.ceil(Math.sqrt(pins.length)),rows=Math.ceil(pins.length/columns),gap=12;
     const left=Math.min(...pins.map(pin=>pin.win.getBounds().x)),top=Math.min(...pins.map(pin=>pin.win.getBounds().y));
     pins.forEach((pin,index)=>{const b=pin.win.getBounds();let next:Rectangle;
@@ -502,7 +513,7 @@ export class PinManager {
   trayItems():Electron.MenuItemConstructorOptions[]{return [
     {label:'恢复全部贴图 / 退出穿透',enabled:this.size>0,click:()=>{for(const pin of this.pins.values())this.restore(pin);}},
     {label:'隐藏全部贴图',enabled:this.size>0,click:()=>{for(const pin of this.pins.values()){pin.visible=false;pin.win.hide();}this.changed();}},
-    ...[...this.pins.values()].map(pin=>({label:pin.win.getTitle()+(pin.state.passthrough?' · 穿透':!pin.win.isVisible()?' · 已隐藏':''),click:()=>this.restore(pin)}))
+    ...[...this.pins.values()].map(pin=>({label:(!pin.win.isDestroyed()?pin.win.getTitle():pin.state.title)+(pin.state.passthrough?' · 穿透':(!pin.win.isDestroyed()&&!pin.win.isVisible())?' · 已隐藏':''),click:()=>this.restore(pin)}))
   ];}
-  dispose(){if(this.disposed)return;if(this.persistTimer)clearTimeout(this.persistTimer);this.persist();this.disposed=true;this.floating.dispose();screen.removeListener('display-removed',this.fit);screen.removeListener('display-metrics-changed',this.fit);for(const channel of ['pin:drag-start','pin:drag-move','pin:drag-end'])ipcMain.removeAllListeners(channel);this.stopEditorServices();for(const pin of [...this.pins.values()]){pin.ocr.reset();pin.win.destroy();}for(const channel of ['pin:state','pin:action','pin:text','pin:source','pin:editor-export','pin:editor-action','pin:set-opacity','pin:set-zoom','pin:set-group','pin:update-text'])ipcMain.removeHandler(channel);}
+  dispose(){if(this.disposed)return;if(this.persistTimer)clearTimeout(this.persistTimer);this.persist();this.disposed=true;this.floating.dispose();screen.removeListener('display-removed',this.fit);screen.removeListener('display-metrics-changed',this.fit);for(const channel of ['pin:drag-start','pin:drag-move','pin:drag-end'])ipcMain.removeAllListeners(channel);this.stopEditorServices();for(const pin of [...this.pins.values()]){pin.ocr.reset();pin.win.destroy();}for(const channel of ['pin:state','pin:action','pin:text','pin:fast-text','pin:note-text','pin:source','pin:editor-export','pin:editor-action','pin:set-opacity','pin:set-zoom','pin:set-group','pin:update-text'])ipcMain.removeHandler(channel);}
 }

@@ -95,7 +95,7 @@ function pageBridge(command: PageCommand, expected = ''): PageSnapshot {
     url: location.href, title: document.title, ready, login, draft, running, hasDraft,
     userMessages: userBubbles.length || document.querySelectorAll('[data-message-author-role="user"]').length,
     emptyHome, activity, restoreUrl, historyLoaded, recoveryError, temporary, lastInputAt: context.__quickAskActivity.lastInputAt,
-    progress: `${lastTurn?.getAttribute('data-content-search-turn-key') || ''}:${turnState || ''}:${lastTurn?.textContent?.length || 0}`,
+    progress: JSON.stringify([lastTurn?.getAttribute('data-content-search-turn-key') || '', turnState || '', lastTurn?.textContent || '']),
     responseId: [...(lastTurn?.querySelectorAll('[data-chatgpt-selection-message-id]') || [])].at(-1)?.getAttribute('data-chatgpt-selection-message-id') || null,
     attachmentPresent: attachments,
     attachmentReady: attachments && !form?.querySelector('[role="progressbar"], [data-state="uploading"], .animate-spin') && Boolean(send && !send.disabled),
@@ -182,13 +182,13 @@ export class ChatGPTAdapter {
   }
   async waitRestored(url: string, responseId: string, signal: AbortSignal) {
     let retried = false;
-    let matched = false;
+    let matched: PageSnapshot | null = null;
     while (!signal.aborted) {
       const saved = await this.read();
       const complete = isRestoredPage(saved, url, responseId);
       // History fetch can finish while the UI still briefly shows a cached turn.
-      if (complete && matched) return;
-      matched = complete;
+      if (complete && matched && matched.responseId === saved.responseId && matched.progress === saved.progress) return;
+      matched = complete ? saved : null;
       if (saved.recoveryError && saved.historyLoaded && !retried) {
         signal.throwIfAborted();
         retried = true;

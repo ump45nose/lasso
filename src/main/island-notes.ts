@@ -1,51 +1,23 @@
 import { app, ipcMain, screen } from 'electron';
-import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import type { BrowserWindow, Display, IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { EdgeNoteItem, EdgeNotesState, IslandState } from '../shared/contracts';
+import type { EdgeNotesState, IslandState } from '../shared/contracts';
+import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
 
-const NOTES_W = 376, NOTES_H = 548;
+const NOTES_W = 420, NOTES_H = 488;
+const SCRATCHPAD = 'Scratchpad.md';
 
 function resolveNotesFolder(): string {
   const folder = process.env.LASSO_DATA_ROOT
     ? join(app.getPath('userData'), 'notes')
     : join(homedir(), 'Documents/LassoNotes');
   mkdirSync(folder, { recursive: true });
-  const scratchPath = join(folder, 'Scratchpad.md');
-  if (!existsSync(scratchPath)) {
-    writeFileSync(
-      scratchPath,
-      '# Scratchpad 随手记\n\n- 划词选择任意英文后点「翻译」即可走 New API 流式直出，按 `↵` 直接回填替换\n- 右侧贴边悬停即可拉出本抽屉，点击右下角「撕下为贴图」可将当前笔记钉在桌面\n- `⌃⌥N` 展开 / 收起本抽屉，`⌃⌥F` 唤起 Finder 超级动作面板\n- `⌃⌥←` / `⌃⌥→` 左右半屏吸附，`⌃⌥↵` 一键 2/3 编辑器 + 1/3 AI 双栏工作区\n',
-      'utf8'
-    );
-  }
+  const scratchPath = join(folder, SCRATCHPAD);
+  if (!existsSync(scratchPath)) writeFileSync(scratchPath, '# Scratchpad 随手记\n\n', 'utf8');
   return folder;
-}
-
-function loadNotesFromDisk(folder: string): EdgeNoteItem[] {
-  const files = readdirSync(folder).filter(name => name.endsWith('.md'));
-  const items: EdgeNoteItem[] = files.map(fileName => {
-    const full = join(folder, fileName);
-    const stat = statSync(full);
-    const content = readFileSync(full, 'utf8');
-    const firstHeading = content.split('\n').find(line => line.trim().startsWith('#'))?.replace(/^#+\s*/, '').trim();
-    const id = fileName.replace(/\.md$/i, '');
-    const pinned = fileName.toLowerCase() === 'scratchpad.md';
-    const d = stat.mtime;
-    const updatedAt = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-    return {
-      id,
-      title: firstHeading || id,
-      fileName,
-      pinned,
-      updatedAt,
-      content
-    };
-  });
-  items.sort((a, b) => (a.pinned === b.pinned ? a.fileName.localeCompare(b.fileName) : a.pinned ? -1 : 1));
-  return items;
 }
 
 export interface EdgeNotesDeps {
@@ -56,20 +28,28 @@ export interface EdgeNotesDeps {
 
 export class EdgeNotes {
   readonly window: BrowserWindow;
-  private folder: string;
-  private open = false;
-  private notes: EdgeNoteItem[] = [];
-  private activeId = 'Scratchpad';
+  private state: Omit<EdgeNotesState, 'notes'>;
+  private boundsByDisplay = new Map<number, { x: number; y: number }>();
 
-  constructor(private fonts: IslandState['fonts'], private deps: EdgeNotesDeps) {
-    this.folder = resolveNotesFolder();
-    this.notes = loadNotesFromDisk(this.folder);
-    if (this.notes[0]) this.activeId = this.notes[0].id;
+  constructor(fonts: IslandState['fonts'], private deps: EdgeNotesDeps) {
+    const notesDir = resolveNotesFolder();
+    this.state = { open: false, pinnedOnTop: true, activeFile: SCRATCHPAD, content: '', files: [], notesDir, fonts };
+    this.reload();
 
     this.window = createIslandWindow(NOTES_W, NOTES_H, { focusable: true });
-    this.window.setIgnoreMouseEvents(true, { forward: true });
+    this.window.setMovable(true);
     this.window.setAlwaysOnTop(true, 'floating');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    this.window.webContents.setIgnoreMenuShortcuts(true);
+    this.window.on('close', event => {
+      event.preventDefault();
+      this.hideDrawer();
+    });
+    this.window.on('moved', () => {
+      const bounds = this.window.getBounds();
+      const display = screen.getDisplayMatching(bounds);
+      this.boundsByDisplay.set(display.id, { x: bounds.x, y: bounds.y });
+    });
 
     const { check } = deps;
     ipcMain.handle('notes:state', event => {
@@ -80,83 +60,114 @@ export class EdgeNotes {
       check(event);
       this.toggleDrawer(Boolean(open));
     });
-    ipcMain.on('notes:hit', (event, inside: boolean) => {
+    ipcMain.handle('notes:select', (event, name: string) => {
       check(event);
-      this.window.setIgnoreMouseEvents(!inside, { forward: true });
-      if (inside && this.open) this.window.focus();
+      const file = this.noteFile(name);
+      if (!file) return;
+      this.state.activeFile = file;
+      this.reload();
+      this.publish();
     });
-    ipcMain.handle('notes:select', (event, id: string) => {
-      check(event);
-      if (this.notes.some(n => n.id === id)) {
-        this.activeId = id;
-        this.publish();
-      }
-    });
-    ipcMain.handle('notes:save', (event, id: string, content: string) => {
+    ipcMain.handle('notes:save', (event, name: string, content: string) => {
       check(event);
       if (typeof content !== 'string') throw new Error('便签内容无效');
-      const note = this.notes.find(n => n.id === id);
-      if (!note) return;
-      const full = join(this.folder, note.fileName);
-      writeFileSync(full, content, 'utf8');
-      const firstHeading = content.split('\n').find(line => line.trim().startsWith('#'))?.replace(/^#+\s*/, '').trim();
-      const now = new Date();
-      note.content = content;
-      note.title = firstHeading || note.id;
-      note.updatedAt = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const file = this.noteFile(name);
+      if (!file) return;
+      writeFileAtomic(join(this.state.notesDir, file), content);
+      if (this.state.activeFile === file) this.state.content = content;
       this.publish();
     });
     ipcMain.handle('notes:create', (event, title?: string) => {
       check(event);
       const stamp = new Date().toISOString().slice(5, 16).replace(/[:T]/g, '-');
       const id = title?.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '-') || `Note-${stamp}`;
-      const fileName = `${id}.md`;
-      const full = join(this.folder, fileName);
-      writeFileSync(full, `# ${title || id}\n\n`, { encoding: 'utf8', flag: 'wx' });
-      this.notes = loadNotesFromDisk(this.folder);
-      this.activeId = id;
+      let file = `${id}.md`;
+      if (!title?.trim()) for (let suffix = 2; existsSync(join(this.state.notesDir, file)); suffix++) file = `${id}-${suffix}.md`;
+      writeFileSync(join(this.state.notesDir, file), `# ${title || file.slice(0, -3)}\n\n`, { encoding: 'utf8', flag: 'wx' });
+      this.state.activeFile = file;
+      this.reload();
       this.publish();
     });
-    ipcMain.handle('notes:pin', async (event, id: string) => {
+    ipcMain.handle('notes:delete', (event, name: string) => {
       check(event);
-      const note = this.notes.find(n => n.id === id);
-      if (!note) return;
+      const file = this.noteFile(name);
+      if (!file) throw new Error('便签不存在');
+      if (file === SCRATCHPAD) throw new Error('不能删除 Scratchpad.md');
+      unlinkSync(join(this.state.notesDir, file));
+      this.state.activeFile = SCRATCHPAD;
+      this.reload();
+      this.publish();
+      return this.snapshot();
+    });
+    ipcMain.handle('notes:set-pinned', (event, pinned: boolean) => {
+      check(event);
+      this.state.pinnedOnTop = Boolean(pinned);
+      this.window.setAlwaysOnTop(this.state.pinnedOnTop, 'floating');
+      this.publish();
+      return this.snapshot();
+    });
+    ipcMain.handle('notes:pin', async (event, name: string) => {
+      check(event);
+      const file = this.noteFile(name);
+      if (!file) return;
       const image = await this.window.webContents.capturePage({ x: 8, y: 14, width: NOTES_W - 18, height: NOTES_H - 28 });
       if (!image.isEmpty()) {
         await this.deps.onPinImage(image);
-        this.deps.toast(`已将「${note.title}」钉为桌面贴图`, 'Pin');
+        this.deps.toast(`已将「${file.replace(/\.md$/i, '')}」钉为桌面贴图`, 'Pin');
       }
     });
 
-    this.window.once('ready-to-show', () => {
-      this.place();
-      if (!process.env.LASSO_DATA_ROOT) this.window.showInactive();
-      this.publish();
-    });
+    this.window.once('ready-to-show', () => this.publish());
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'edge-notes' } });
   }
 
-  place() {
+  place(display: Display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())) {
     if (this.window.isDestroyed()) return;
-    const area = screen.getPrimaryDisplay().workArea;
-    const x = area.x + area.width - NOTES_W;
-    const y = Math.round(area.y + (area.height - NOTES_H) / 2);
-    this.window.setBounds({ x, y, width: NOTES_W, height: NOTES_H });
+    const area = display.workArea;
+    const position = this.boundsByDisplay.get(display.id) ?? { x: area.x + area.width - NOTES_W - 32, y: area.y + 56 };
+    this.window.setBounds({ ...position, width: NOTES_W, height: NOTES_H });
   }
 
-  toggleDrawer(open = !this.open) {
-    this.open = open;
-    if (open) {
-      this.notes = loadNotesFromDisk(this.folder);
-      this.window.setIgnoreMouseEvents(false);
-    } else {
-      this.window.setIgnoreMouseEvents(true, { forward: true });
-    }
+  openDrawer() {
+    if (this.window.isDestroyed()) return;
+    this.reload();
+    this.place();
+    this.state.open = true;
+    this.publish();
+    this.window.show();
+    this.window.focus();
+  }
+
+  hideDrawer() {
+    if (this.window.isDestroyed()) return;
+    this.state.open = false;
+    this.window.hide();
     this.publish();
   }
 
+  toggleDrawer(open = !this.state.open) {
+    if (open) this.openDrawer();
+    else this.hideDrawer();
+  }
+
+  appendScratchpad(text: string) {
+    if (!text.trim()) return;
+    const path = join(this.state.notesDir, SCRATCHPAD);
+    const latest = readFileSync(path, 'utf8');
+    const now = new Date(), pad = (value: number) => String(value).padStart(2, '0');
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const addition = `\n\n> ${stamp}\n${text.trim()}\n`;
+    const content = latest + addition;
+    writeFileAtomic(path, content);
+    if (this.state.activeFile === SCRATCHPAD) {
+      this.state.content = content;
+      this.publish();
+    }
+    this.deps.toast('已追加到 Scratchpad', 'Note');
+  }
+
   updateFonts(fonts: IslandState['fonts']) {
-    this.fonts = fonts;
+    this.state.fonts = fonts;
     this.publish();
   }
 
@@ -164,19 +175,28 @@ export class EdgeNotes {
     if (!this.window.isDestroyed()) this.window.destroy();
   }
 
+  private noteFile(name: string): string | undefined {
+    return this.state.files.find(file => file === name || file.replace(/\.md$/i, '') === name);
+  }
+
+  private reload() {
+    this.state.files = readdirSync(this.state.notesDir)
+      .filter(name => name.endsWith('.md') && statSync(join(this.state.notesDir, name)).isFile())
+      .sort((a, b) => a === SCRATCHPAD ? -1 : b === SCRATCHPAD ? 1 : a.localeCompare(b));
+    if (!this.state.files.includes(this.state.activeFile)) this.state.activeFile = SCRATCHPAD;
+    this.state.content = readFileSync(join(this.state.notesDir, this.state.activeFile), 'utf8');
+  }
+
   private snapshot(): EdgeNotesState {
-    return {
-      open: this.open,
-      folder: this.folder,
-      activeId: this.activeId,
-      notes: this.notes,
-      fonts: this.fonts
-    };
+    const notes = this.state.files.map(fileName => {
+      const path = join(this.state.notesDir, fileName);
+      const content = readFileSync(path, 'utf8');
+      return { fileName, content };
+    });
+    return { ...this.state, files: [...this.state.files], notes };
   }
 
   private publish() {
-    if (!this.window.isDestroyed()) {
-      this.window.webContents.send('notes:changed', this.snapshot());
-    }
+    if (!this.window.isDestroyed()) this.window.webContents.send('notes:changed', this.snapshot());
   }
 }

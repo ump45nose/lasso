@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, useAnimationControls } from 'motion/react';
-import { Braces, Copy, CornerDownLeft, Ellipsis, Pin, RotateCcw, Settings2, X, Zap } from 'lucide-react';
+import { ArrowUpRight, Braces, Copy, CornerDownLeft, Ellipsis, Pin, RotateCcw, Settings2, StickyNote, X, Zap } from 'lucide-react';
 import { BAR_MENU, presetTargetLabels as targetLabels, type ActionBarAPI, type ActionBarLayout, type ActionBarState, type FastApiCardState } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
 import { useFonts } from './fonts';
@@ -73,6 +73,9 @@ function FastApiCard({ card, side }: { card: FastApiCardState; side: 'above' | '
       <button type="button" className="ab-fast-icon push" aria-label="重新生成" title="重新生成" onClick={() => void window.actionBar.retryFastCard(card.targetLang)}>
         <RotateCcw size={13} />
       </button>
+      <button type="button" className="ab-fast-btn open-window" onClick={() => void window.actionBar.runPreset(card.presetId)}>
+        <ArrowUpRight size={13} />转入主窗口
+      </button>
     </div>
   </motion.div>;
 }
@@ -131,7 +134,8 @@ export function ActionBar() {
     clearTimeout(tipTimer.current); setTip(null); setPressed(preset.id);
     if (preset.target === 'api') {
       setTimeout(() => { setPressed(null); if (!button) setMenu(false); }, 120);
-      void window.actionBar.runPreset(preset.id);
+      if (state?.fastCard?.presetId === preset.id) void window.actionBar.retryFastCard(state.fastCard.targetLang);
+      else void window.actionBar.runPreset(preset.id);
       return;
     }
     setTimeout(() => { setPressed(null); setSending({ target: targetLabels[preset.target], width }); if (!button) setMenu(false); }, 120);
@@ -142,6 +146,12 @@ export function ActionBar() {
     setPressed(id);
     setTimeout(() => { setPressed(null); setMenu(false); }, 120);
     void window.actionBar.runScript(id);
+  }
+  function appendNote(button?: HTMLButtonElement) {
+    if (button && spot?.id !== 'note') { lastSpot.current = null; setSpot({ id: 'note', x: button.offsetLeft, width: button.offsetWidth }); }
+    clearTimeout(tipTimer.current); setTip(null); setPressed('note');
+    setTimeout(() => setPressed(null), 120);
+    void window.actionBar.appendNote();
   }
   function toggleMenu(open: boolean) {
     setMenu(open); clearTimeout(tipTimer.current); setTip(null);
@@ -172,6 +182,8 @@ export function ActionBar() {
             {presets.map(preset => <button key={preset.id} disabled={state!.busy || Boolean(pressed)} aria-label={`${preset.name} · ${targetLabels[preset.target]} · ${preset.mode === 'edit' ? '先编辑' : '直接发送'}`}
               onPointerEnter={event => enter(preset.id, event)} onClick={event => run(preset, event.currentTarget)}>{preset.name}</button>)}
             {presets.length > 0 && <span className="ab-sep" />}
+            <button style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }} disabled={Boolean(state?.busy || pressed)} aria-label="入便签"
+              onPointerEnter={event => enter('note', event)} onClick={event => appendNote(event.currentTarget)}><StickyNote size={14} />入便签</button>
             <button aria-label="更多动作与设置" aria-haspopup="menu" aria-expanded={menu} onPointerEnter={event => enter('more', event)} onClick={() => toggleMenu(!menu)}><Ellipsis size={16} /></button>
           </motion.span>}
       </AnimatePresence>
@@ -199,7 +211,7 @@ export function ActionBar() {
       {tip && !menu && !fastCard && !sending && <motion.div key="tip" ref={tipBox} className={'ab-tip ' + tipSide} role="tooltip"
         initial={{ opacity: 0, y: tipSide === 'above' ? 3 : -3, x: tipX }} animate={{ opacity: 1, y: 0, x: tipX }}
         exit={{ opacity: 0, transition: { duration: 0.1 } }} transition={spring}>
-        {tipPreset ? <><Badge target={tipPreset.target} />{targetLabels[tipPreset.target]}<span className="ab-tip-dim">· {tipPreset.mode === 'edit' ? '先编辑' : '直接发送'}</span></> : <>更多动作与设置</>}
+        {tipPreset ? <><Badge target={tipPreset.target} />{targetLabels[tipPreset.target]}<span className="ab-tip-dim">· {tipPreset.mode === 'edit' ? '先编辑' : '直接发送'}</span></> : tip.id === 'note' ? <>入便签<span className="ab-tip-dim">· 追加到 Scratchpad</span></> : <>更多动作与设置</>}
       </motion.div>}
     </AnimatePresence>
   </div>;

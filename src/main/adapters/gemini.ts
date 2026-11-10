@@ -30,6 +30,11 @@ function geminiBridge(command: PageCommand, expected = ''): PageSnapshot {
   const draft = editor ? textOf(editor).replace(/\r\n?/g, '\n') : '';
   const responses = [...document.querySelectorAll<HTMLElement>('model-response')];
   const last = responses.at(-1);
+  const body = last?.querySelector<HTMLElement>('message-content, .model-response-text, .markdown') ?? last;
+  const answer = body?.cloneNode(true) as HTMLElement | undefined;
+  answer?.querySelectorAll('button, [role="button"], message-actions').forEach(node => node.remove());
+  const lastText = answer?.textContent || '';
+  const busy = running || Boolean(last && (last.getAttribute('aria-busy') === 'true' || [...last.querySelectorAll('mat-progress-spinner, [role="progressbar"], [aria-busy="true"]')].some(visible)));
   const completed = Boolean(last && [...last.querySelectorAll<HTMLElement>('button, [role="button"]')].some(b => /复制|Copy|重新生成|Regenerate|Good response|Bad response/i.test(label(b))));
   const attachment = input?.querySelector('file-preview, uploaded-file, [data-test-id="file-preview"], .file-preview, .attachment-container, img[alt="attachment"]');
   const uploading = Boolean(input && [...input.querySelectorAll('mat-progress-spinner, [role="progressbar"], .uploading')].some(visible));
@@ -38,16 +43,20 @@ function geminiBridge(command: PageCommand, expected = ''): PageSnapshot {
   const ready = Boolean(editor && !login);
   const temporary = Boolean(document.querySelector('chat-window.is-temporary-chat'));
   const restoreUrl = !temporary && location.hostname === 'gemini.google.com' && /^\/app\/[\w-]+$/.test(location.pathname) ? location.origin + location.pathname : null;
-  const responseId = last?.getAttribute('data-response-id') || last?.id || (last?.innerText.trim() || null);
+  const responseId = last?.getAttribute('data-response-id') || last?.id || (lastText.trim() || null);
+  const userMessages = document.querySelectorAll('user-query').length;
+  const recoveryText = [...document.querySelectorAll('[role="alert"], .error-message, error-page, .conversation-not-found')].filter(visible).map(node => node.textContent).join('\n') || (!last && !userMessages ? document.body.innerText : '');
+  const recoveryError = /(?:对话|對話|聊天)(?:已|目前|暂时|暫時)?(?:不再可用|不可用|不存在|无法加载|無法載入)|(?:无法|無法)(?:加载|載入|打开|開啟).{0,12}(?:对话|對話|聊天)|(?:conversation|chat) (?:is |was )?(?:no longer available|unavailable|not found|does not exist)|(?:couldn['’]?t|cannot|can['’]?t|unable to|failed to) (?:load|open|find).{0,24}(?:conversation|chat)/i.test(recoveryText);
   const waiting = [...document.querySelectorAll('[role="dialog"], [role="alertdialog"]')].some(visible);
   const hasDraft = Boolean(draft || hasAttachment || uploading);
   const snapshot: PageSnapshot = {
     url: location.href, title: document.title, ready, login, draft, running, hasDraft,
-    userMessages: document.querySelectorAll('user-query').length, emptyHome: ready && !restoreUrl && !hasDraft && !running,
+    userMessages, emptyHome: ready && !restoreUrl && !hasDraft && !busy,
     canSend: Boolean(send && !send.disabled && send.getAttribute('aria-disabled') !== 'true'),
-    activity: !ready ? login ? 'waiting' : 'unknown' : running ? 'running' : waiting ? 'waiting' : hasDraft ? 'draft' : completed ? 'complete' : !restoreUrl ? 'idle' : 'unknown',
-    restoreUrl, responseId, historyLoaded: Boolean(restoreUrl && last && completed), recoveryError: false, temporary,
-    lastInputAt: context.__quickAskActivity.lastInputAt, progress: `${responses.length}:${last?.innerText.length || 0}:${running}`,
+    activity: !ready ? login ? 'waiting' : 'unknown' : busy ? 'running' : waiting ? 'waiting' : hasDraft ? 'draft' : completed ? 'complete' : !restoreUrl ? 'idle' : 'unknown',
+    restoreUrl, responseId, historyLoaded: Boolean(restoreUrl) && userMessages > 0 && Boolean(last) && Boolean(responseId) && lastText.trim().length > 0 && !busy,
+    recoveryError, ...(recoveryError ? { refusal: 'Gemini 对话不存在或暂时无法加载，请检查原对话链接。' } : {}), temporary,
+    lastInputAt: context.__quickAskActivity.lastInputAt, progress: JSON.stringify([responses.length, lastText, running]),
     attachmentReady: hasAttachment && !uploading && !uploadError && Boolean(send && !send.disabled && send.getAttribute('aria-disabled') !== 'true'), attachmentPresent: hasAttachment, uploadError
   };
   if (command === 'read' || command === 'retry-restore') return snapshot;

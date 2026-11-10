@@ -18,5 +18,6 @@ contextBridge.exposeInMainWorld('screenshot', {
   exportTable: request=>ipcRenderer.invoke('ui-shots:table-export',request), pinFormula:request=>ipcRenderer.invoke('ui-shots:formula-pin',request),
   recognize: request=>ipcRenderer.invoke('ui-shots:recognize',request),
   invalidateOCR: () => {}, export: (frame, action, format, contentMode) => ipcRenderer.invoke('ui-shots:export', frame, action, format, contentMode),
-  saveAnnotationMemory: memory => ipcRenderer.invoke('ui-shots:annotation-memory', memory), copyText: request => ipcRenderer.invoke('ui-shots:editor-text', 'copy', request), sendText: request => ipcRenderer.invoke('ui-shots:editor-text', 'send', request)
+  saveAnnotationMemory: memory => ipcRenderer.invoke('ui-shots:annotation-memory', memory), copyText: request => ipcRenderer.invoke('ui-shots:editor-text', 'copy', request), sendText: request => ipcRenderer.invoke('ui-shots:editor-text', 'send', request),
+  fastText: done, noteText: done
 });

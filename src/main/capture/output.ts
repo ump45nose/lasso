@@ -100,7 +100,7 @@ function encodeBmp(image: NativeImage): Buffer {
 /** Minimal VP8L literal encoder: fixed 8-bit channel codes, no transforms or native dependency.
  * https://developers.google.com/speed/webp/docs/webp_lossless_bitstream_specification
  */
-function encodeWebp(image: NativeImage): Buffer {
+export function encodeWebp(image: NativeImage): Buffer {
   const { width, height } = image.getSize();
   if (width > 16384 || height > 16384) throw Error('WebP 图片宽高不能超过 16384 像素');
   const pixels = straightBitmap(image), data = Buffer.alloc(pixels.length + 128);

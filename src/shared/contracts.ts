@@ -254,6 +254,7 @@ export interface ActionBarAPI {
   copyFastResult(text: string): Promise<void>;
   replaceSelection(text: string): Promise<void>;
   pinFastResult(text: string): Promise<void>;
+  appendNote(): Promise<void>;
   /** The pointer entered or left the capsule; outside it the window lets clicks through. */
   hit(inside: boolean): void;
   onState(callback: (state: ActionBarState) => void): () => void;
@@ -274,6 +275,12 @@ export interface IslandTaskItem {
   title: string;
   listTitle: string;
 }
+export type IslandCliTask = {
+  id: string;
+  target: 'codex' | 'pi';
+  title: string;
+  activity: 'running' | 'waiting';
+};
 export interface IslandState {
   mode: IslandMode;
   glow: boolean;
@@ -290,6 +297,7 @@ export interface IslandState {
   toast: { id: string; text: string; badge?: string } | null;
   alerts: IslandAlertItem[];
   nookTasks: IslandTaskItem[];
+  cliTasks: IslandCliTask[];
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
 }
 export type SnapSlot =
@@ -299,31 +307,55 @@ export type SnapSlot =
   | 'bottom-half'
   | 'maximize'
   | 'center'
+  | 'prev-display'
+  | 'next-display'
   | 'coding-ai'
   | 'equal-split';
 
 export interface EdgeNoteItem {
-  id: string;
-  title: string;
   fileName: string;
-  pinned: boolean;
-  updatedAt: string;
   content: string;
 }
 
-export interface EdgeNotesState {
+export type EdgeNotesState = {
   open: boolean;
-  folder: string;
-  activeId: string;
+  pinnedOnTop: boolean;
+  activeFile: string;
+  content: string;
+  files: string[];
+  notesDir: string;
   notes: EdgeNoteItem[];
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
-}
+};
 
-export interface FinderPanelState {
+export type FinderMoveTarget = {
+  id: string;
+  label: string;
+  path: string;
+  kind: 'common' | 'repo' | 'worktree';
+};
+export type FinderPanelState = {
   folder: string;
   selection: string[];
+  hasImageSelection: boolean;
+  cutPaths: string[];
+  moveTargets: FinderMoveTarget[];
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
-}
+};
+export type FinderActionReq =
+  | { kind: 'new-file'; name: string; content?: string }
+  | { kind: 'copy-paths'; style: 'posix' | 'quoted' | 'filename' }
+  | { kind: 'open-terminal'; app?: 'Terminal' | 'Warp' | 'Ghostty' }
+  | { kind: 'open-editor'; app: 'Cursor' | 'VSCode' | 'Zed' }
+  | { kind: 'cut-selection' }
+  | { kind: 'paste-move' }
+  | { kind: 'delete-permanent' }
+  | { kind: 'convert-webp' }
+  | { kind: 'ocr-copy' }
+  | { kind: 'ocr-pin' }
+  | { kind: 'pin-image' }
+  | { kind: 'move-to-target'; targetDir: string }
+  | { kind: 'symlink-to-target'; targetDir: string };
 
 export interface IslandAPI {
   getState(): Promise<IslandState>;
@@ -334,25 +366,26 @@ export interface IslandAPI {
   stopPomodoro(): Promise<void>;
   completeTask(taskId: string): Promise<void>;
   snoozeAlert(alertId: string, minutes?: number): Promise<void>;
-  dismissAlert(alertId: string): Promise<void>;
+  dismissAlert(alertId?: string): Promise<void>;
   restartService(label: string): Promise<void>;
   quickAction(action: 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel'): Promise<void>;
   setGlow(enabled: boolean): Promise<void>;
   snapWindow(slot: SnapSlot): Promise<void>;
+  focusTask(taskId: string): Promise<void>;
   onState(callback: (state: IslandState) => void): () => void;
   // EdgeNotes surface API
   getNotesState(): Promise<EdgeNotesState>;
   setNotesOpen(open: boolean): void;
-  notesHit(inside: boolean): void;
   selectNote(id: string): Promise<void>;
   saveNote(id: string, content: string): Promise<void>;
   createNote(title?: string): Promise<void>;
+  deleteNote(name: string): Promise<EdgeNotesState>;
+  setNotesPinned(pinned: boolean): Promise<EdgeNotesState>;
   pinNoteToDesktop(id: string): Promise<void>;
   onNotesState(callback: (state: EdgeNotesState) => void): () => void;
   // Finder Super Action Panel surface API
   getFinderState(): Promise<FinderPanelState>;
-  finderCreateFile(ext: 'md' | 'txt' | 'py' | 'json' | 'sh'): Promise<void>;
-  finderRunAction(action: 'copy-path' | 'open-terminal' | 'open-cursor' | 'open-vscode' | 'send-to-lasso'): Promise<void>;
+  finderAction(req: FinderActionReq): Promise<FinderPanelState>;
   finderClose(): void;
   onFinderState(callback: (state: FinderPanelState) => void): () => void;
 }

@@ -6,6 +6,8 @@ import type { Settings, ShellState } from '../shared/contracts';
 import { ignoresApplication } from './selection';
 import { nativeAx } from './native-ax';
 
+const SUITE_RESERVED: Record<string, string> = { 'alt+n': '浮动便签（⌥N）' };
+
 export interface ActionShortcutDeps {
   state: () => Pick<ShellState, 'settings' | 'shortcutError'>;
   persistSettings: (next: Settings) => void;
@@ -38,7 +40,7 @@ export class ActionShortcuts {
     const conflicts:string[]=[],keys=new Set<string>();
     for(const action of globalActionIds){
       const shortcut=settings.actionShortcuts[action]||'',key=canonicalShortcut(shortcut);
-      const error=!isValidShortcut(shortcut)?'快捷键格式无效':key==='alt+space'?'Option+Space 已留给 Raycast':key&&keys.has(key)?'快捷键与其他动作重复':this.register(action,shortcut);
+      const error=!isValidShortcut(shortcut)?'快捷键格式无效':key==='alt+space'?'Option+Space 已留给 Raycast':SUITE_RESERVED[key]?`已用于${SUITE_RESERVED[key]}`:key&&keys.has(key)?'快捷键与其他动作重复':this.register(action,shortcut);
       if(key)keys.add(key);
       if(error){conflicts.push(`${globalActionLabels[action]}：${error}`);if(action==='open-launcher')state.shortcutError=error;}
       else if(shortcut)this.registeredActions.set(action,shortcut);
@@ -51,6 +53,7 @@ export class ActionShortcuts {
     if (!isValidShortcut(shortcut)) return { error: '支持 F1–F24 单键，其他按键请搭配修饰键；留空则取消绑定。' };
     const key = canonicalShortcut(shortcut);
     if (key === 'alt+space') return { error: 'Option+Space 已留给 Raycast，请选择其他快捷键。' };
+    if (SUITE_RESERVED[key]) return { error: `已用于${SUITE_RESERVED[key]}，请选择其他快捷键。` };
     const conflict = globalActionIds.find(id => id !== action && key && canonicalShortcut(state.settings.actionShortcuts[id] || '') === key);
     if (conflict) return { error: `已用于「${globalActionLabels[conflict]}」。` };
     const current = this.registeredActions.get(action), changed = !current || canonicalShortcut(current) !== key;

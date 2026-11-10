@@ -11,6 +11,8 @@ const api: PinAPI = {
   setGroup:groupId=>ipcRenderer.invoke('pin:set-group',groupId),
   updateText:text=>ipcRenderer.invoke('pin:update-text',text),
   text:(text,send,revision)=>ipcRenderer.invoke('pin:text',text,send,revision),
+  fastText:(text,revision,rect)=>ipcRenderer.invoke('pin:fast-text',text,revision,rect),
+  noteText:(text,revision)=>ipcRenderer.invoke('pin:note-text',text,revision),
   source:()=>ipcRenderer.invoke('pin:source'),
   startDrag:()=>ipcRenderer.send('pin:drag-start'),
   drag:()=>ipcRenderer.send('pin:drag-move'),
@@ -41,7 +43,9 @@ const screenshot: ScreenshotAPI = {
   export:(frame,action,format,contentMode)=>ipcRenderer.invoke('pin:editor-export',frame,action,format,contentMode),
   saveAnnotationMemory:memory=>ipcRenderer.invoke('screenshot:save-annotation-memory',memory),
   copyText:request=>ipcRenderer.invoke('pin:editor-copy-text',request),
-  sendText:request=>ipcRenderer.invoke('pin:editor-send',request)
+  sendText:request=>ipcRenderer.invoke('pin:editor-send',request),
+  fastText:(id,revision,text,rect)=>ipcRenderer.invoke('pin:editor-fast-text',id,revision,text,rect),
+  noteText:(id,revision,text)=>ipcRenderer.invoke('pin:editor-note-text',id,revision,text)
 };
 contextBridge.exposeInMainWorld('pin',api);
 contextBridge.exposeInMainWorld('screenshot',screenshot);

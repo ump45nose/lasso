@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { AlignLeft, AlignStartVertical, ArrowUpRight, Check, ChevronDown, Clipboard, Copy, Ellipsis, EyeOff, File as FileIcon, Folder, GripVertical, Grid2X2, Lock, Maximize2, Minimize2, MousePointerClick, Pause, PenLine, Pin, Play, RotateCcw, Save, ScanText, Send, TextSelect, Type, Unlock, X } from 'lucide-react';
+import { AlignLeft, AlignStartVertical, ArrowUpRight, Check, ChevronDown, Clipboard, Copy, Ellipsis, EyeOff, File as FileIcon, Folder, GripVertical, Grid2X2, Lock, Maximize2, Minimize2, MousePointerClick, Pause, PenLine, Pin, Play, RotateCcw, Save, ScanText, Send, Sparkles, StickyNote, TextSelect, Type, Unlock, X } from 'lucide-react';
 import type { PinAPI, PinAction, PinState, PinWorkspaceAPI } from '../../shared/capture';
 import type { PinGroup, PinWorkspaceState } from '../../shared/history-sync';
 import { spring } from '../motion';
@@ -88,7 +88,7 @@ export function Pinned(){
   },[]);
   if(!state)return null;
   if(state.editing&&state.editId)return <PinEdit editId={state.editId} pinId={state.id}/>;
-  const kind=state.kind||'image',payload=state.payload,canSelectText=kind==='image'&&pickText&&!moving,showTools=hover||moving||dragging||options||textEditing;
+  const kind=state.kind||'image',payload=state.payload,canSelectText=kind==='image'&&pickText&&!moving,showTools=hover||moving||dragging||options||textEditing||Boolean(pickText&&text);
   const animation=playback.source,image=animation?.frames[playback.frame]??state.image;
   const playbackControl=animation&&<Tool label={playback.paused?'播放动态贴图':'暂停动态贴图'} active={playback.paused} onClick={()=>{setPlayback(previous=>({...previous,paused:!previous.paused}));setTip(playback.paused?'暂停动态贴图':'播放动态贴图');}}>{playback.paused?<Play/>:<Pause/>}</Tool>;
   const status=error||tip||(pickText&&state.lines.length?'拖选图中文字 · 再点选字恢复拖动':state.status);
@@ -120,6 +120,7 @@ export function Pinned(){
         <span className="pin-grip" aria-label={state.locked?'贴图已锁定':'拖动贴图'} {...dragHandlers}>{state.locked?<Lock/>:<GripVertical/>}</span>
         {playbackControl}
         {kind==='image'&&<Tool label="选择文字" active={pickText} onClick={togglePickText}><TextSelect/></Tool>}
+        {pickText&&text&&<><Tool label="快速翻译/速解" disabled={textEditing} onClick={()=>void run(window.pin.fastText(text,state.revision))}><Sparkles/></Tool><Tool label="入便签" disabled={textEditing} onClick={()=>void run(window.pin.noteText(text,state.revision))}><StickyNote/></Tool></>}
         {(kind==='image'||kind==='text')&&<Tool label={kind==='text'?'编辑文字':animation?'动态贴图请在录制预览中裁剪':'编辑贴图'} disabled={kind==='image'&&(state.locked||!!animation)} onClick={()=>{if(kind==='text'){setTextEditing(on=>!on);setDraft(payload?.text||'');}else void action('edit');}}><PenLine/></Tool>}
         {(kind==='image'||kind==='text')&&<Tool label={kind==='text'||text?'文字预设':'图片预设'} active={!!text} disabled={textEditing} onClick={()=>{if(kind==='text')void outputText(true,payload?.text);else if(text)void outputText(true);else void action('image');}}><Send/></Tool>}
         <Tool label="快速保存" disabled={textEditing} onClick={()=>void action('quick-save')}><Save/></Tool>

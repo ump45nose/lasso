@@ -373,7 +373,8 @@ html.ab-html, body.ab-body { background: transparent; overflow: hidden; user-sel
 .ab-fast-body { padding: 12px 14px; max-height: 220px; overflow-y: auto; user-select: text; }
 .ab-fast-text { margin: 0; font-family: var(--font-text); font-size: 14px; line-height: 1.65; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
 .ab-fast-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border-radius: 8px; background: var(--danger-wash); color: var(--danger); font-size: 12.5px; }
-.ab-fast-foot { height: 40px; display: flex; align-items: center; gap: 6px; padding: 0 10px; border-top: 0.5px solid var(--line); background: var(--bg); }
+.ab-fast-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 7px 10px; border-top: 0.5px solid var(--line); background: var(--bg); }
+.ab-fast-foot .open-window { width: 100%; justify-content: center; }
 .ab-fast-foot .push { margin-left: auto; }
 .ab-fast-btn { height: 26px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: 7px; border: 0.5px solid var(--line-strong); background: var(--surface); font-size: 12px; color: var(--ink-2); white-space: nowrap; transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast); }
 .ab-fast-btn:hover:not(:disabled) { background: var(--clay-wash); border-color: var(--clay-line); color: var(--clay-ink); }

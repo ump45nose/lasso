@@ -54,6 +54,8 @@ export interface PinAPI {
   onState(callback: (state: PinState) => void): () => void;
   action(action: PinAction): Promise<{error: string | null}>;
   text(text: string, send: boolean, revision: number): Promise<{error: string | null}>;
+  fastText(text: string, revision: number, rect?: CaptureRect): Promise<{ error: string | null }>;
+  noteText(text: string, revision: number): Promise<{ error: string | null }>;
   source(): Promise<PinSource>;
   setOpacity(opacity: number): Promise<{ error: string | null }>;
   setZoom(factor: number): Promise<{ error: string | null }>;
@@ -100,4 +102,6 @@ export interface ScreenshotAPI {
   saveAnnotationMemory(memory: AnnotationStyleMemory): Promise<void>;
   copyText(request: {id: string; revision: number; text: string}): Promise<void>;
   sendText(request: {id: string; revision: number; text: string}): Promise<{error: string | null}>;
+  fastText(id: string, revision: number, text: string, rect?: CaptureRect): Promise<{ error: string | null }>;
+  noteText(id: string, revision: number, text: string): Promise<{ error: string | null }>;
 }

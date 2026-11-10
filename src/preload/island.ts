@@ -16,20 +16,21 @@ const api: IslandAPI = {
   quickAction: action => ipcRenderer.invoke('island:quick', action),
   setGlow: enabled => ipcRenderer.invoke('island:glow', enabled),
   snapWindow: slot => ipcRenderer.invoke('island:snap-window', slot),
+  focusTask: taskId => ipcRenderer.invoke('island:focus-task', taskId),
   onState: callback => on<IslandState>('island:changed', callback),
 
   getNotesState: () => ipcRenderer.invoke('notes:state'),
   setNotesOpen: open => ipcRenderer.send('notes:open', open),
-  notesHit: inside => ipcRenderer.send('notes:hit', inside),
   selectNote: id => ipcRenderer.invoke('notes:select', id),
   saveNote: (id, content) => ipcRenderer.invoke('notes:save', id, content),
   createNote: title => ipcRenderer.invoke('notes:create', title),
+  deleteNote: name => ipcRenderer.invoke('notes:delete', name),
+  setNotesPinned: pinned => ipcRenderer.invoke('notes:set-pinned', pinned),
   pinNoteToDesktop: id => ipcRenderer.invoke('notes:pin', id),
   onNotesState: callback => on<EdgeNotesState>('notes:changed', callback),
 
   getFinderState: () => ipcRenderer.invoke('finder:state'),
-  finderCreateFile: ext => ipcRenderer.invoke('finder:create-file', ext),
-  finderRunAction: action => ipcRenderer.invoke('finder:run-action', action),
+  finderAction: req => ipcRenderer.invoke('island:finder-action', req),
   finderClose: () => ipcRenderer.send('finder:close'),
   onFinderState: callback => on<FinderPanelState>('finder:changed', callback)
 };
