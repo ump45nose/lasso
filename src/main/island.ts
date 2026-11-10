@@ -10,11 +10,17 @@ import type {
   IslandMode,
   IslandState,
   IslandTaskItem,
+  NookReminderPrefs,
   Settings,
   SnapSlot
 } from '../shared/contracts';
 import { fromMainFrame } from './ipc';
 import { FinderPanel } from './island-finder';
+import { ClipboardHistoryPanel, type ClipboardCopyEvent } from './island-clipboard';
+import { TranslatorPanel } from './island-translator';
+import type { MediaService } from './media-service';
+import type { TranslationSettings } from '../shared/media';
+import { writeFileAtomic } from './files';
 import { EdgeNotes } from './island-notes';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
@@ -22,8 +28,8 @@ import { nativeAx, type NativeAx } from './native-ax';
 const WIN_W = 540, WIN_H = 560;
 
 const MODES: readonly IslandMode[] = ['idle', 'focus', 'focus-hover', 'slacking', 'nook-alert', 'toast', 'board'];
-const SNAP_SLOTS: readonly SnapSlot[] = ['left-half', 'right-half', 'top-half', 'bottom-half', 'maximize', 'center', 'coding-ai', 'equal-split', 'prev-display', 'next-display'];
-const QUICK_ACTIONS = ['screenshot-area', 'open-settings', 'toggle-notes', 'open-finder-panel'] as const;
+const SNAP_SLOTS: readonly SnapSlot[] = ['left-half', 'right-half', 'top-half', 'bottom-half', 'top-left', 'top-right', 'bottom-left', 'bottom-right', 'maximize', 'center', 'coding-ai', 'equal-split', 'prev-display', 'next-display'];
+const QUICK_ACTIONS = ['screenshot-area', 'open-settings', 'toggle-notes', 'open-finder-panel', 'open-translator', 'open-clipboard'] as const;
 
 function readNookTasks(): IslandTaskItem[] {
   const base = process.env.LASSO_DATA_ROOT
@@ -58,12 +64,17 @@ export interface NotchIslandCallbacks {
   onPinImage: (image: NativeImage, title?: string) => Promise<void>;
   onPinText: (text: string, title?: string) => Promise<void>;
   onFocusTask: (taskId: string) => void;
+  mediaService: MediaService;
+  settings: () => Settings;
+  saveTranslation: (settings: TranslationSettings) => void;
 }
 
 export class NotchIsland {
   readonly window: BrowserWindow;
   readonly notes: EdgeNotes;
   readonly finder: FinderPanel;
+  readonly translator: TranslatorPanel;
+  readonly clipboardHistory: ClipboardHistoryPanel;
   private ax: Partial<NativeAx>;
   private mode: IslandMode = 'idle';
   private glow = false;
@@ -71,6 +82,14 @@ export class NotchIsland {
   private toastItem: IslandState['toast'] = null;
   private alerts: IslandAlertItem[] = [];
   private dismissedAlertKeys = new Set<string>();
+  private readonly dismissedAlertsPath = join(app.getPath('userData'), 'island-dismissed-alerts.json');
+  private nookPrefs: NookReminderPrefs = { enabled: true, gitWaiting: true, prFeedback: true, prBlocked: false };
+  private copyTranslateEnabled = false;
+  private dragSnapEnabled: boolean | undefined;
+  private lastCopy: ClipboardCopyEvent | null = null;
+  private lastTranslatedChangeCount = -1;
+  private pendingDoubleCopyAt = 0;
+  private copyTimer: ReturnType<typeof setTimeout> | null = null;
   private nookTasks: IslandTaskItem[] = [];
   private cliTasks: IslandCliTask[] = [];
   private fonts: IslandState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
@@ -82,6 +101,10 @@ export class NotchIsland {
   constructor(private callbacks: NotchIslandCallbacks) {
     this.ax = process.env.LASSO_DATA_ROOT ? {} : nativeAx();
     this.nookTasks = readNookTasks();
+    if (existsSync(this.dismissedAlertsPath)) {
+      const keys: unknown = JSON.parse(readFileSync(this.dismissedAlertsPath, 'utf8'));
+      if (Array.isArray(keys)) this.dismissedAlertKeys = new Set(keys.filter((key): key is string => typeof key === 'string'));
+    }
 
     this.window = createIslandWindow(WIN_W, WIN_H, { focusable: false, fullscreenable: false, enableLargerThanScreen: true });
     this.window.setIgnoreMouseEvents(true, { forward: true });
@@ -91,7 +114,7 @@ export class NotchIsland {
     this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
 
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
-      if (![this.window, this.notes.window, this.finder.window].some(win => fromMainFrame(event, win))) throw new Error('套件表面来源不匹配');
+      if (![this.window, this.notes?.window, this.finder?.window, this.translator?.window, this.clipboardHistory?.window].some(win => win && fromMainFrame(event, win))) throw new Error('套件表面来源不匹配');
     };
     const toast = (text: string, badge?: string) => this.toast(text, badge);
     this.notes = new EdgeNotes(this.fonts, { check, toast, onPinImage: callbacks.onPinImage });
@@ -100,6 +123,18 @@ export class NotchIsland {
       toast,
       pinImage: callbacks.onPinImage,
       pinText: callbacks.onPinText
+    });
+    this.clipboardHistory = new ClipboardHistoryPanel(this.fonts, {
+      check, pinImage: callbacks.onPinImage, pinText: callbacks.onPinText,
+      noteText: text => this.notes.appendScratchpad(text),
+      onCopy: event => this.handleCopy(event), ax: this.ax
+    });
+    this.translator = new TranslatorPanel(this.fonts, {
+      check, mediaService: callbacks.mediaService,
+      translationSettings: () => callbacks.settings().translation,
+      saveTargetLang: targetLang => callbacks.saveTranslation({ ...callbacks.settings().translation, targetLang }),
+      writeText: text => this.clipboardHistory.writeText(text),
+      pinText: callbacks.onPinText, noteText: text => this.notes.appendScratchpad(text), ax: this.ax
     });
 
     this.placeWindows();
@@ -145,7 +180,7 @@ export class NotchIsland {
     });
     ipcMain.handle('island:snooze-alert', (event, alertId: string, minutes = 10) => {
       check(event);
-      if (typeof alertId !== 'string' || !alertId || !Number.isFinite(minutes) || minutes <= 0) throw new Error('提醒或延后时间无效');
+      if (typeof alertId !== 'string' || !alertId || ![10, 30, 120].includes(minutes)) throw new Error('提醒或延后时间无效');
       this.snoozeAlert(alertId, minutes);
     });
     ipcMain.handle('island:dismiss-alert', (event, alertId?: string) => {
@@ -172,11 +207,25 @@ export class NotchIsland {
         void this.finder.summon();
         return;
       }
+      if (action === 'open-translator') { this.translator.open(); return; }
+      if (action === 'open-clipboard') { this.clipboardHistory.open(); return; }
       this.callbacks.onQuickAction(action);
     });
     ipcMain.handle('island:glow', (event, enabled: boolean) => {
       check(event);
       this.setGlow(Boolean(enabled));
+    });
+    ipcMain.handle('island:nook-prefs', (event, patch: Partial<NookReminderPrefs>) => {
+      check(event);
+      if (!patch || typeof patch !== 'object' || Array.isArray(patch) || Object.entries(patch).some(([key, value]) => !Object.hasOwn(this.nookPrefs, key) || typeof value !== 'boolean')) throw Error('Nook 提醒设置无效');
+      this.nookPrefs = { ...this.nookPrefs, ...patch };
+      this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'set-reminder-prefs', ...patch }));
+      this.publish();
+    });
+    ipcMain.handle('island:copy-translate', (event, enabled: boolean) => {
+      check(event);
+      if (typeof enabled !== 'boolean') throw Error('复制即译开关无效');
+      callbacks.saveTranslation({ ...callbacks.settings().translation, copyTranslateEnabled: enabled });
     });
     ipcMain.handle('island:snap-window', (event, slot: SnapSlot) => {
       check(event);
@@ -191,7 +240,17 @@ export class NotchIsland {
     });
 
     this.ax.startBridge?.(({ name, payload }) => this.handleBridgeNotification(name, payload));
+    this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'get-reminder-prefs' }));
     this.ax.startFinderTrigger?.(() => void this.finder.summon());
+    this.ax.startCopyWatch?.(event => {
+      if (!event.doubleCopy || !this.callbacks.settings().translation.copyTranslateEnabled || this.callbacks.settings().translation.copyTranslateTrigger !== 'double-cmd-c') return;
+      this.pendingDoubleCopyAt = event.timestamp;
+      if (this.copyTimer) clearTimeout(this.copyTimer);
+      this.copyTimer = setTimeout(() => {
+        this.copyTimer = null;
+        void this.clipboardHistory.poll().then(() => this.translateCopy()).catch(error => console.error('复制即译采集失败', error));
+      }, 100);
+    });
 
     this.window.once('ready-to-show', () => {
       if (!process.env.LASSO_DATA_ROOT) this.window.showInactive();
@@ -246,8 +305,10 @@ export class NotchIsland {
       mode: this.mode,
       glow: this.glow,
       notch: geo
-        ? { hasNotch: geo.hasNotch, width: Math.round(geo.width), height: Math.round(geo.height) }
-        : { hasNotch: true, width: 156, height: 28 },
+        ? { hasNotch: geo.hasNotch, width: Math.round(geo.width), height: Math.round(geo.height), menuBarHeight: Math.round(geo.menuBarHeight) }
+        : { hasNotch: true, width: 156, height: 28, menuBarHeight: 28 },
+      nookPrefs: { ...this.nookPrefs },
+      copyTranslateEnabled: this.copyTranslateEnabled,
       pomodoro: this.pomodoro,
       toast: this.toastItem,
       alerts: this.alerts,
@@ -265,9 +326,38 @@ export class NotchIsland {
 
   updateSettings(settings: Settings) {
     this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.copyTranslateEnabled = settings.translation.copyTranslateEnabled;
+    if (!this.copyTranslateEnabled) this.pendingDoubleCopyAt = 0;
+    if (this.dragSnapEnabled !== settings.windowDragSnap) {
+      this.ax.setWindowDragSnapEnabled?.(settings.windowDragSnap);
+      this.dragSnapEnabled = settings.windowDragSnap;
+    }
     this.publish();
     this.notes.updateFonts(this.fonts);
     this.finder.updateFonts(this.fonts);
+    this.translator.updateSettings(settings);
+    this.clipboardHistory.updateFonts(this.fonts);
+  }
+
+  private handleCopy(event: ClipboardCopyEvent) {
+    this.lastCopy = event;
+    const settings = this.callbacks.settings().translation;
+    if (settings.copyTranslateEnabled && (settings.copyTranslateTrigger === 'every-copy' || this.pendingDoubleCopyAt && !this.copyTimer)) this.translateCopy();
+  }
+
+  private translateCopy() {
+    const settings = this.callbacks.settings().translation, copy = this.lastCopy;
+    if (!settings.copyTranslateEnabled || !copy || copy.entry.kind !== 'text' || copy.changeCount === this.lastTranslatedChangeCount) return;
+    if (settings.copyTranslateTrigger === 'double-cmd-c' && (!this.pendingDoubleCopyAt || Date.now() - this.pendingDoubleCopyAt > 700 || copy.timestamp < this.pendingDoubleCopyAt - 450)) return;
+    const meta = this.ax.pasteboardMeta?.();
+    if (!meta || meta.concealed || meta.changeCount !== copy.changeCount) return;
+    this.pendingDoubleCopyAt = 0;
+    this.lastTranslatedChangeCount = copy.changeCount;
+    this.translator.open(copy.entry.text, copy.pid);
+  }
+
+  private persistDismissedAlerts() {
+    writeFileAtomic(this.dismissedAlertsPath, JSON.stringify([...this.dismissedAlertKeys]) + '\n');
   }
 
   updateCliTasks(tasks: IslandCliTask[]) {
@@ -353,6 +443,10 @@ export class NotchIsland {
         Math.round((area.height - gap * 3) / 2),
         '下半屏'
       ],
+      'top-left': [area.x + gap, area.y + gap, Math.round((area.width - gap * 3) / 2), Math.round((area.height - gap * 3) / 2), '左上角'],
+      'top-right': [area.x + gap * 2 + Math.round((area.width - gap * 3) / 2), area.y + gap, Math.round((area.width - gap * 3) / 2), Math.round((area.height - gap * 3) / 2), '右上角'],
+      'bottom-left': [area.x + gap, area.y + gap * 2 + Math.round((area.height - gap * 3) / 2), Math.round((area.width - gap * 3) / 2), Math.round((area.height - gap * 3) / 2), '左下角'],
+      'bottom-right': [area.x + gap * 2 + Math.round((area.width - gap * 3) / 2), area.y + gap * 2 + Math.round((area.height - gap * 3) / 2), Math.round((area.width - gap * 3) / 2), Math.round((area.height - gap * 3) / 2), '右下角'],
       maximize: [area.x + gap, area.y + gap, area.width - gap * 2, area.height - gap * 2, '工作区最大化'],
       center: [
         Math.round(area.x + area.width * 0.12),
@@ -442,6 +536,7 @@ export class NotchIsland {
 
   completeTask(taskId: string) {
     this.dismissedAlertKeys.add(taskId);
+    this.persistDismissedAlerts();
     this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'complete-task', taskId }));
     this.nookTasks = this.nookTasks.filter(t => t.id !== taskId);
     this.alerts = this.alerts.filter(a => a.id !== taskId && a.target !== taskId);
@@ -460,13 +555,7 @@ export class NotchIsland {
 
   snoozeAlert(alertId: string, minutes = 10) {
     const target = this.alerts.find(a => a.id === alertId);
-    if (target) {
-      if (target.id) this.dismissedAlertKeys.add(target.id);
-      this.dismissedAlertKeys.add(`${target.kind}:${target.target || ''}:${target.title}`);
-    } else {
-      this.dismissedAlertKeys.add(alertId);
-    }
-    this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'snooze', id: alertId, minutes }));
+    this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'snooze', id: alertId, minutes, ...(target ? { title: target.title, subtitle: target.subtitle, kind: target.kind, target: target.target } : {}) }));
     this.alerts = this.alerts.filter(a => a.id !== alertId);
     if (this.alerts.length === 0) this.setGlow(false);
     this.mode = this.resolveBaseMode();
@@ -479,12 +568,13 @@ export class NotchIsland {
   dismissAlert(alertId?: string) {
     const dismissAll = !alertId || alertId === '*';
     if (dismissAll) {
+      const ids = this.alerts.map(alert => alert.id);
       for (const a of this.alerts) {
         if (a.id) this.dismissedAlertKeys.add(a.id);
         this.dismissedAlertKeys.add(`${a.kind}:${a.target || ''}:${a.title}`);
       }
       this.alerts = [];
-      this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'dismiss', id: '*' }));
+      this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'dismiss', ids }));
     } else {
       const target = this.alerts.find(a => a.id === alertId);
       if (target) {
@@ -496,6 +586,7 @@ export class NotchIsland {
       this.alerts = this.alerts.filter(a => a.id !== alertId);
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'dismiss', id: alertId }));
     }
+    this.persistDismissedAlerts();
     if (this.alerts.length === 0 && this.pomodoro?.kind !== 'slacking') this.setGlow(false);
     this.mode = this.resolveBaseMode();
     if (this.mode === 'idle' || this.mode === 'focus') {
@@ -506,6 +597,7 @@ export class NotchIsland {
 
   restartService(label: string) {
     this.dismissedAlertKeys.add(label);
+    this.persistDismissedAlerts();
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
     execFile('launchctl', ['kickstart', '-k', `gui/${uid}/${label}`], () => {
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'restart-launchd', label }));
@@ -520,6 +612,16 @@ export class NotchIsland {
   }
 
   private handleBridgeNotification(name: string, payload: string) {
+    if (name === 'com.lasso.island.prefs') {
+      try {
+        const prefs = JSON.parse(payload) as NookReminderPrefs;
+        if (Object.keys(this.nookPrefs).every(key => typeof prefs[key as keyof NookReminderPrefs] === 'boolean')) {
+          this.nookPrefs = { enabled: prefs.enabled, gitWaiting: prefs.gitWaiting, prFeedback: prefs.prFeedback, prBlocked: prefs.prBlocked };
+          this.publish();
+        }
+      } catch { /* Ignore malformed bridge data. */ }
+      return;
+    }
     if (name === 'com.lasso.island.dismiss') {
       try {
         const parsed = payload ? (JSON.parse(payload) as { id?: string }) : {};
@@ -536,6 +638,7 @@ export class NotchIsland {
       } catch {
         this.alerts = [];
       }
+      this.persistDismissedAlerts();
       if (this.alerts.length === 0) this.setGlow(false);
       this.mode = this.resolveBaseMode();
       if (this.mode === 'idle' || this.mode === 'focus') {
@@ -562,7 +665,7 @@ export class NotchIsland {
         }
 
         const isDismissed = (item: { id?: string; kind?: string; target?: string; title?: string }) => {
-          if (item.id && this.dismissedAlertKeys.has(item.id)) return true;
+          if (item.id) return this.dismissedAlertKeys.has(item.id);
           const key = `${item.kind || 'custom'}:${item.target || ''}:${item.title || ''}`;
           return this.dismissedAlertKeys.has(key);
         };
@@ -603,10 +706,15 @@ export class NotchIsland {
     screen.off('display-metrics-changed', this.onDisplayMetricsChanged);
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
+    if (this.copyTimer) clearTimeout(this.copyTimer);
     this.ax.setGlow?.(false);
     this.ax.stopFinderTrigger?.();
+    this.ax.stopCopyWatch?.();
+    this.ax.setWindowDragSnapEnabled?.(false);
     if (!this.window.isDestroyed()) this.window.destroy();
     this.notes.destroy();
     this.finder.destroy();
+    this.translator.destroy();
+    this.clipboardHistory.destroy();
   }
 }

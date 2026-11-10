@@ -4,17 +4,22 @@ import { join } from 'node:path';
 import { migrateScreenshotSettings, screenshotDefaults } from '../shared/screenshot-settings';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { defaultFonts, type GeneralSettings, type Settings } from '../shared/contracts';
+import { defaultFonts, type GeneralSettings, type Preset, type Settings } from '../shared/contracts';
 import { memoryDefaults, validMemorySettings } from '../shared/memory';
 import { captureModes } from '../shared/capture';
 import { defaultEditorShortcuts } from '../shared/shortcuts';
 import { normalizeVisionConfig, visionDefaults } from '../shared/intelligence';
+import { normalizeTranslationSettings, translationDefaults } from '../shared/media';
+import type { MediaService } from './media-service';
+import { writePresets } from './presets';
 import { writeFileAtomic } from './files';
 
 /** New action entries win; absent entries migrate from their legacy aliases. */
 function syncActionShortcuts(settings: Settings): Settings {
   const actionShortcuts = { ...settings.actionShortcuts };
   actionShortcuts['open-launcher'] ??= settings.shortcut;
+  actionShortcuts['open-clipboard-history'] ??= 'Alt+V';
+  actionShortcuts['open-translator'] ??= '';
   for (const mode of captureModes) actionShortcuts[mode] ??= settings.captureShortcuts[mode];
   settings.actionShortcuts = actionShortcuts;
   settings.shortcut = actionShortcuts['open-launcher'];
@@ -23,7 +28,7 @@ function syncActionShortcuts(settings: Settings): Settings {
 }
 export function defaultSettings(): Settings {
   const executable = (name: string) => ['/opt/homebrew/bin/', '/usr/local/bin/'].map(p => p + name).find(existsSync) || '';
-  return syncActionShortcuts({ launchAtLogin:false, themeMode:'paper', toolbarTools:[], mouseActions:{doubleClick:'copy',rightClick:'cancel',middleClick:'pin'}, scriptActions:[], autoCheckUpdates:true, memory: memoryDefaults(), vision:visionDefaults(), screenshot: screenshotDefaults(join(app.getPath('pictures'), 'Lasso')), shortcut: '', captureShortcuts: { rect: '', area: '', window: '', screen: '', front: '' }, actionShortcuts: {}, editorShortcuts: defaultEditorShortcuts(), ignoredApps: [], lastTarget: 'chatgpt', selectionEnabled: true, clipboardFallback: false, appPrompts: [], local: {
+  return syncActionShortcuts({ launchAtLogin:false, themeMode:'paper', toolbarTools:[], mouseActions:{doubleClick:'copy',rightClick:'cancel',middleClick:'pin'}, scriptActions:[], autoCheckUpdates:true, memory: memoryDefaults(), vision:visionDefaults(), translation:translationDefaults(), windowDragSnap:true, screenshot: screenshotDefaults(join(app.getPath('pictures'), 'Lasso')), shortcut: '', captureShortcuts: { rect: '', area: '', window: '', screen: '', front: '' }, actionShortcuts: {}, editorShortcuts: defaultEditorShortcuts(), ignoredApps: [], lastTarget: 'chatgpt', selectionEnabled: true, clipboardFallback: false, appPrompts: [], local: {
     codex: { executable: executable('codex'), cwd: homedir() }, pi: { executable: executable('pi'), cwd: homedir() }
   }, fonts: { ...defaultFonts }, importedFonts: [] });
 }
@@ -36,6 +41,8 @@ export function migrateSettings(value: Partial<Settings> & { screenshotShortcut?
     ...defaults, ...settings,
     mouseActions: { ...defaults.mouseActions, ...settings.mouseActions },
     vision: normalizeVisionConfig(settings.vision??defaults.vision),
+    translation: normalizeTranslationSettings(settings.translation ?? defaults.translation),
+    windowDragSnap: typeof settings.windowDragSnap === 'boolean' ? settings.windowDragSnap : defaults.windowDragSnap,
     screenshot: migrateScreenshotSettings(settings.screenshot, defaults.screenshot.directory),
     captureShortcuts: { ...defaults.captureShortcuts, ...(typeof screenshotShortcut === 'string' ? { area: screenshotShortcut } : {}), ...settings.captureShortcuts },
     // Do not copy the defaults' alias entries before migrating a legacy file.
@@ -51,6 +58,16 @@ export function readSettings(path: string): Settings {
 }
 export function writeSettings(path: string, settings: Settings) {
   writeFileAtomic(path, JSON.stringify(syncActionShortcuts(settings), null, 2) + '\n');
+}
+
+/** Pool writes happen before settings/presets acquire a connection binding; interrupted migrations can be retried. */
+export function migrateApiConnectionSettings(service: MediaService, settingsPath: string, presetsPath: string, settings: Settings, presets: Preset[], visionDirectory: string): { settings: Settings; presets: Preset[] } {
+  const visionPath = join(visionDirectory, 'config.json');
+  const legacyVision = existsSync(visionPath) ? JSON.parse(readFileSync(visionPath, 'utf8')) : {};
+  const next = service.migrateLegacyBindings(settings, presets, legacyVision);
+  if (JSON.stringify(next.settings) !== JSON.stringify(settings)) writeSettings(settingsPath, next.settings);
+  if (JSON.stringify(next.presets) !== JSON.stringify(presets)) writePresets(presetsPath, next.presets, service.connections());
+  return next;
 }
 
 export function validateGeneralSettings(value: GeneralSettings): void {

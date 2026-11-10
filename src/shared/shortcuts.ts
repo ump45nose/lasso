@@ -1,11 +1,11 @@
 import { captureModeLabels, captureModes, type CaptureMode } from './capture';
 
-export type GlobalActionId = CaptureMode | 'repeat-last' | 'custom-capture' | 'scroll-capture' | 'delay-3s' | 'delay-5s' | 'delay-10s' | 'pin-clipboard' | 'open-launcher';
-export const globalActionIds: GlobalActionId[] = [...captureModes, 'repeat-last', 'custom-capture', 'scroll-capture', 'delay-3s', 'delay-5s', 'delay-10s', 'pin-clipboard', 'open-launcher'];
+export type GlobalActionId = CaptureMode | 'repeat-last' | 'custom-capture' | 'scroll-capture' | 'delay-3s' | 'delay-5s' | 'delay-10s' | 'pin-clipboard' | 'open-launcher' | 'open-clipboard-history' | 'open-translator';
+export const globalActionIds: GlobalActionId[] = [...captureModes, 'repeat-last', 'custom-capture', 'scroll-capture', 'delay-3s', 'delay-5s', 'delay-10s', 'pin-clipboard', 'open-launcher', 'open-clipboard-history', 'open-translator'];
 export const globalActionLabels: Record<GlobalActionId, string> = {
   ...captureModeLabels, 'repeat-last': '重复上次截图', 'custom-capture': '自定义截图', 'scroll-capture': '滚动截图',
   'delay-3s': '延时 3 秒截图', 'delay-5s': '延时 5 秒截图', 'delay-10s': '延时 10 秒截图',
-  'pin-clipboard': '贴出剪贴板图片', 'open-launcher': '唤起小窗'
+  'pin-clipboard': '贴出剪贴板图片', 'open-launcher': '唤起小窗', 'open-clipboard-history': '剪贴板历史', 'open-translator': '输入翻译'
 };
 export type EditorActionId = 'text-select' | 'select' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'pen' | 'highlight' | 'text' | 'number' | 'redact' | 'mosaic' | 'blur' | 'crop' | 'picker' | 'copy' | 'save' | 'quick-save' | 'pin';
 export const editorActionIds: EditorActionId[] = ['text-select', 'select', 'arrow', 'line', 'rectangle', 'ellipse', 'pen', 'highlight', 'text', 'number', 'redact', 'mosaic', 'blur', 'crop', 'picker', 'copy', 'save', 'quick-save', 'pin'];

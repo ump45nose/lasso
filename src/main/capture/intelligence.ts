@@ -4,11 +4,13 @@ import { join } from 'node:path';
 import type { CaptureRect } from '../../shared/capture';
 import { normalizeVisionConfig, validateVisionConfig, visionDefaults, type IntelligenceRequest, type IntelligenceResult, type TranslationBlock, type VisionServiceConfig, type VisionServiceInput } from '../../shared/intelligence';
 import { writeFileAtomic } from '../files';
+import type { MediaService } from '../media-service';
 
 export interface IntelligenceServiceAdapters {
   secrets: { available(): boolean; encrypt(value: string): Buffer; decrypt(value: Buffer): string };
   mediaConnection(): { baseURL: string; hasCredential: boolean };
   mediaCredential: () => string | undefined;
+  mediaService?: MediaService;
   pinFormula: (latex: string, svg: string, current: () => boolean) => Promise<void>;
 }
 type SavedConfig = Omit<VisionServiceConfig, 'hasCredential'> & { credential?: string };
@@ -28,11 +30,22 @@ export class IntelligenceService {
   }
   connection(): VisionServiceConfig {
     const { credential, ...config } = this.config;
+    if (config.connectionId && this.adapters.mediaService) {
+      const connection = this.adapters.mediaService.connections().find(connection => connection.id === config.connectionId);
+      if (!connection) throw Error('视觉服务绑定的 API 连接不存在，请重新选择连接');
+      return { ...config, baseURL: connection.baseURL, hasCredential: connection.hasCredential };
+    }
     return { ...config, hasCredential: config.useMediaCredential ? this.adapters.mediaConnection().hasCredential : Boolean(credential) };
   }
   configure(input: VisionServiceInput): VisionServiceConfig {
     validateVisionConfig(input);
-    const config: SavedConfig = { ...normalizeVisionConfig({ ...input, useMediaCredential: input.useMediaCredential ?? this.config.useMediaCredential }), credential: this.config.credential };
+    const config: SavedConfig = { ...normalizeVisionConfig({ ...input, connectionId: input.connectionId ?? this.config.connectionId, useMediaCredential: input.useMediaCredential ?? this.config.useMediaCredential }), credential: this.config.credential };
+    const connection = input.connectionId ? this.adapters.mediaService?.connections().find(connection => connection.id === input.connectionId) : undefined;
+    if (input.connectionId && this.adapters.mediaService && !connection) throw Error('视觉服务绑定的 API 连接不存在，请重新选择连接');
+    // The legacy form echoes its current binding while editing its own endpoint/key; a different binding only selects it.
+    const endpointChanged = config.baseURL !== this.config.baseURL && config.baseURL !== (connection?.baseURL.replace(/\/+$/, '') ?? '');
+    const legacyEdit = input.connectionId === undefined || input.connectionId === this.config.connectionId &&
+      (endpointChanged || config.useMediaCredential !== this.config.useMediaCredential || input.credential !== undefined);
     if (input.credential !== undefined) {
       if (!input.credential.trim()) delete config.credential;
       else {
@@ -41,6 +54,8 @@ export class IntelligenceService {
         catch { throw Error('系统安全存储未能加密凭据，未保存配置'); }
       }
     }
+    if (legacyEdit && this.adapters.mediaService) config.connectionId = this.adapters.mediaService.saveLegacyVisionConnection(config);
+    else if (connection) config.baseURL = connection.baseURL;
     writeFileAtomic(join(this.directory, 'config.json'), JSON.stringify(config, null, 2) + '\n'); this.config = config;
     return this.connection();
   }
@@ -49,9 +64,10 @@ export class IntelligenceService {
       !(input.png instanceof Uint8Array) || input.png.byteLength > 64 * 1024 * 1024 || input.png.byteLength < 24 ||
       !Buffer.from(input.png.subarray(0, 8)).equals(pngSignature)) throw Error('智能识别需要有效的截图和处理类型');
     const config = { ...this.config }, media = this.adapters.mediaConnection();
-    const baseURL = config.baseURL || (config.useMediaCredential ? media.baseURL : '');
+    const pool = config.connectionId && this.adapters.mediaService ? this.adapters.mediaService.connection(config.connectionId) : null;
+    const baseURL = pool ? pool.baseURL : config.baseURL || (config.useMediaCredential ? media.baseURL : '');
     if (!baseURL || !config.model) throw Error('请先配置智能识别服务地址和模型');
-    const credential = config.useMediaCredential ? this.adapters.mediaCredential() : this.credential(config);
+    const credential = pool ? this.adapters.mediaService!.credential(config.connectionId) : config.useMediaCredential ? this.adapters.mediaCredential() : this.credential(config);
     const targetLanguage = input.targetLanguage ?? config.targetLanguage;
     if (typeof targetLanguage !== 'string' || !targetLanguage.trim() || targetLanguage.length > 100) throw Error('目标语言无效');
     const lines = input.lines ?? [];

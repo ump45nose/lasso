@@ -2,7 +2,7 @@ import type { RecordingAction, RecordingSessionState } from './recording';
 import type { CustomCaptureRequest, RegionConfiguration, RegionPreset } from './capture-regions';
 import type { ScreenshotSettings } from './screenshot-settings';
 import type { MemorySettings } from './memory';
-import type { ImageOptions, MediaConfig, MediaConfigInput } from './media';
+import type { ApiConnection, ApiConnectionInput, ImageOptions, MediaConfig, MediaConfigInput, TranslationLang, TranslationSettings } from './media';
 import type { CaptureMode } from './capture';
 import type { VisionServiceConfig, VisionServiceInput } from './intelligence';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
@@ -41,6 +41,8 @@ export interface Settings {
   scriptActions: ScriptAction[];
   autoCheckUpdates: boolean;
   vision: Omit<VisionServiceConfig, 'hasCredential'>;
+  translation: TranslationSettings;
+  windowDragSnap: boolean;
   memory: MemorySettings;
   screenshot: ScreenshotSettings;
   /** Empty means no global shortcut. */
@@ -67,6 +69,7 @@ export interface Preset extends ExecutionProfile {
   name: string;
   template: string;
   target: PresetTarget;
+  connectionId?: string;
   mode: 'edit' | 'send';
   /** Web presets can start a temporary chat in the same signed-in account. */
   temporaryChat?: boolean;
@@ -167,6 +170,12 @@ export interface DesktopAPI {
   saveVisionConfig(input: VisionServiceInput): Promise<VisionServiceConfig>;
   saveMediaConfig(input: MediaConfigInput): Promise<MediaConfig>;
   mediaModels(): Promise<string[]>;
+  apiConnections(): Promise<ApiConnection[]>;
+  saveApiConnection(input: ApiConnectionInput): Promise<{ connections: ApiConnection[]; connection?: ApiConnection; error: string | null }>;
+  deleteApiConnection(id: string): Promise<{ connections: ApiConnection[]; error: string | null }>;
+  fetchApiConnectionModels(id: string): Promise<{ models: string[]; error: string | null }>;
+  saveTranslationSettings(input: TranslationSettings): Promise<{ error: string | null }>;
+  saveWindowDragSnap(enabled: boolean): Promise<{ error: string | null }>;
   attachImage(prompt?: string): Promise<{ error: string | null }>;
   openLink(url: string): Promise<void>;
   getState(): Promise<ShellState>;
@@ -284,7 +293,9 @@ export type IslandCliTask = {
 export interface IslandState {
   mode: IslandMode;
   glow: boolean;
-  notch?: { hasNotch: boolean; width: number; height: number };
+  notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
+  nookPrefs: NookReminderPrefs;
+  copyTranslateEnabled: boolean;
   pomodoro: {
     active: boolean;
     paused: boolean;
@@ -305,12 +316,52 @@ export type SnapSlot =
   | 'right-half'
   | 'top-half'
   | 'bottom-half'
+  | 'top-left'
+  | 'top-right'
+  | 'bottom-left'
+  | 'bottom-right'
   | 'maximize'
   | 'center'
   | 'prev-display'
   | 'next-display'
   | 'coding-ai'
   | 'equal-split';
+
+export interface NookReminderPrefs { enabled: boolean; gitWaiting: boolean; prFeedback: boolean; prBlocked: boolean }
+export type IslandQuickAction = 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel' | 'open-translator' | 'open-clipboard';
+export interface TranslatorWindowState {
+  open: boolean;
+  pinnedOnTop: boolean;
+  sourceText: string;
+  translatedText: string;
+  status: 'idle' | 'streaming' | 'done' | 'error';
+  error: string | null;
+  targetLang: TranslationLang;
+  connectionName: string;
+  model: string;
+  firstTokenMs: number | null;
+  canReplace: boolean;
+  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+}
+export interface ClipboardEntry {
+  id: string;
+  kind: 'text' | 'image' | 'files';
+  text: string;
+  preview: string;
+  charCount: number;
+  lineCount: number;
+  imageThumbnail?: string;
+  imagePath?: string;
+  imageWidth?: number;
+  imageHeight?: number;
+  files?: string[];
+  sourceBundleId: string;
+  sourceAppName: string;
+  sourceAppIcon: string | null;
+  createdAt: number;
+  favorite: boolean;
+}
+export interface ClipboardWindowState { entries: ClipboardEntry[]; pinnedOnTop: boolean; fonts: Pick<Settings, 'fonts' | 'importedFonts'> }
 
 export interface EdgeNoteItem {
   fileName: string;
@@ -368,8 +419,22 @@ export interface IslandAPI {
   snoozeAlert(alertId: string, minutes?: number): Promise<void>;
   dismissAlert(alertId?: string): Promise<void>;
   restartService(label: string): Promise<void>;
-  quickAction(action: 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel'): Promise<void>;
+  quickAction(action: IslandQuickAction): Promise<void>;
   setGlow(enabled: boolean): Promise<void>;
+  setNookReminderPrefs(patch: Partial<NookReminderPrefs>): Promise<void>;
+  setCopyTranslate(enabled: boolean): Promise<void>;
+  getTranslatorState(): Promise<TranslatorWindowState>;
+  translateInput(req: { text: string; targetLang: TranslationLang }): Promise<{ error: string | null }>;
+  cancelTranslation(): void;
+  setTranslatorLang(lang: TranslationLang): Promise<void>;
+  setTranslatorPinned(pinned: boolean): Promise<void>;
+  translatorAct(action: 'copy' | 'replace' | 'pin' | 'note', text: string): Promise<{ error: string | null }>;
+  closeTranslator(): void;
+  onTranslatorState(callback: (state: TranslatorWindowState) => void): () => void;
+  getClipboardState(): Promise<ClipboardWindowState>;
+  clipboardAct(req: { action: 'paste' | 'copy' | 'toggle-fav' | 'pin' | 'note' | 'delete' | 'clear-all'; id?: string }): Promise<{ error: string | null }>;
+  closeClipboard(): void;
+  onClipboardState(callback: (state: ClipboardWindowState) => void): () => void;
   snapWindow(slot: SnapSlot): Promise<void>;
   focusTask(taskId: string): Promise<void>;
   onState(callback: (state: IslandState) => void): () => void;

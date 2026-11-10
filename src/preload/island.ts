@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { EdgeNotesState, FinderPanelState, IslandAPI, IslandState } from '../shared/contracts';
+import type { ClipboardWindowState, EdgeNotesState, FinderPanelState, IslandAPI, IslandState, TranslatorWindowState } from '../shared/contracts';
 import { on } from './bridge';
 
 const api: IslandAPI = {
@@ -15,6 +15,20 @@ const api: IslandAPI = {
   restartService: label => ipcRenderer.invoke('island:restart-service', label),
   quickAction: action => ipcRenderer.invoke('island:quick', action),
   setGlow: enabled => ipcRenderer.invoke('island:glow', enabled),
+  setNookReminderPrefs: patch => ipcRenderer.invoke('island:nook-prefs', patch),
+  setCopyTranslate: enabled => ipcRenderer.invoke('island:copy-translate', enabled),
+  getTranslatorState: () => ipcRenderer.invoke('translator:state'),
+  translateInput: req => ipcRenderer.invoke('translator:translate', req),
+  cancelTranslation: () => ipcRenderer.send('translator:cancel'),
+  setTranslatorLang: lang => ipcRenderer.invoke('translator:lang', lang),
+  setTranslatorPinned: pinned => ipcRenderer.invoke('translator:pinned', pinned),
+  translatorAct: (action, text) => ipcRenderer.invoke('translator:act', action, text),
+  closeTranslator: () => ipcRenderer.send('translator:close'),
+  onTranslatorState: callback => on<TranslatorWindowState>('translator:changed', callback),
+  getClipboardState: () => ipcRenderer.invoke('clipboard-history:state'),
+  clipboardAct: req => ipcRenderer.invoke('clipboard-history:act', req),
+  closeClipboard: () => ipcRenderer.send('clipboard-history:close'),
+  onClipboardState: callback => on<ClipboardWindowState>('clipboard-history:changed', callback),
   snapWindow: slot => ipcRenderer.invoke('island:snap-window', slot),
   focusTask: taskId => ipcRenderer.invoke('island:focus-task', taskId),
   onState: callback => on<IslandState>('island:changed', callback),

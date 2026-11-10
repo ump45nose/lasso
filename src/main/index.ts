@@ -17,7 +17,8 @@ import { readLocalImage } from './capture/local-images';
 import { Images, type ImageInput } from './images';
 import { applicationIcon } from './app-icons';
 import { MediaWindow } from './media-window';
-import { readSettings, writeSettings, validateGeneralSettings, runControlledScript } from './settings';
+import { readSettings, writeSettings, validateGeneralSettings, runControlledScript, migrateApiConnectionSettings } from './settings';
+import { normalizeTranslationSettings, type ApiConnectionInput, type TranslationSettings } from '../shared/media';
 import { WebDavSyncService } from './sync-webdav';
 import type { WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
@@ -259,6 +260,12 @@ function updateTray() {
     { label: '贴出剪贴板内容', accelerator: state.settings.actionShortcuts['pin-clipboard'] || undefined, click: () => { void runGlobalAction('pin-clipboard').catch(error => { state.notice = error.message; publish(); }); } },
     { label: '使用剪贴板图片', click: () => { void readImage().catch(() => {}); } },
     { label: '运行预设…', click: () => void openPalette('all') },
+    { label: '输入翻译', accelerator: state.settings.actionShortcuts['open-translator'] || undefined, click: () => island?.translator.open() },
+    { label: '复制即译', type: 'checkbox', checked: state.settings.translation.copyTranslateEnabled, click: () => {
+      try { saveTranslation({ ...state.settings.translation, copyTranslateEnabled: !state.settings.translation.copyTranslateEnabled }); }
+      catch (error) { state.notice = (error as Error).message; publish(); }
+    } },
+    { label: '剪贴板历史', accelerator: state.settings.actionShortcuts['open-clipboard-history'] || undefined, click: () => island?.clipboardHistory.open() },
     { label: '浮动便签', accelerator: 'Alt+N', click: () => island?.notes.toggleDrawer(true) },
     { label: 'Finder 超级动作面板…', accelerator: 'Control+Option+F', click: () => void island?.finder.summon() },
     { label: '窗口分屏与工作区', submenu: [
@@ -287,6 +294,8 @@ async function runGlobalAction(action: GlobalActionId) {
   else if (action === 'scroll-capture') await startScreenshot('area', 0, true);
   else if (action.startsWith('delay-')) await startScreenshot('area', Number(action.slice(6, -1)) as CaptureDelay);
   else if (action === 'pin-clipboard') { capture.suppress(); await screenshots.pins.pinClipboard(); }
+  else if (action === 'open-translator') island.translator.open();
+  else if (action === 'open-clipboard-history') island.clipboardHistory.open();
 }
 function persistSettings(next: Settings) {
   const changed=JSON.stringify(next)!==JSON.stringify(state.settings);
@@ -297,7 +306,13 @@ function persistSettings(next: Settings) {
 }
 function persistPresets(next: Preset[]) {
   const changed=JSON.stringify(next)!==JSON.stringify(state.presets);
-  writePresets(presetsPath,next);state.presets=next;if(changed)webdav?.scheduleAutoSync();tasks.warmPreferred();publish();
+  writePresets(presetsPath,next,media.service.connections());state.presets=next;if(changed)webdav?.scheduleAutoSync();tasks.warmPreferred();publish();
+}
+function saveTranslation(input: TranslationSettings) {
+  const translation = normalizeTranslationSettings(input);
+  if (translation.connectionId && !media.service.connections().some(connection => connection.id === translation.connectionId)) throw Error('翻译服务绑定的 API 连接不存在，请重新选择连接');
+  persistSettings({ ...state.settings, translation });
+  updateTray(); publish();
 }
 function applyImportedSettings(next: Settings) {
   validateScreenshotSettings(next.screenshot,screenshots.supportedLanguages());
@@ -340,13 +355,9 @@ function saveCaptureSettings(options: Pick<Settings, 'selectionEnabled' | 'clipb
 }
 async function triggerFastText(text: string, anchorRect?: CaptureRect) {
   if (anchorRect && (![anchorRect.x, anchorRect.y, anchorRect.width, anchorRect.height].every(Number.isFinite) || anchorRect.width <= 0 || anchorRect.height <= 0)) throw Error('无效的文字位置');
-  const anchor = anchorRect ?? { ...screen.getCursorScreenPoint(), width: 12, height: 18 };
-  const preset = state.presets.find(preset => preset.enabled && preset.target === 'api' && preset.kind !== 'image') ?? {
-    id: '__builtin_ocr_fast__', name: '翻译/解释', target: 'api', kind: 'chat', mode: 'send', enabled: true, needsSelection: true,
-    template: '请直接给出以下内容的中英互译或核心要点速解：\n\n{text}'
-  } satisfies Preset;
   capture.suppress();
-  await actionBar.startFastCard(preset, { text, sourceApp: '', anchor }, 'auto', true);
+  actionBar.hide();
+  island.translator.open(text, 0);
 }
 function appendNoteText(text: string) { island?.notes.appendScratchpad(text); }
 
@@ -412,7 +423,7 @@ async function runScriptAction(id: string, source?: { text: string; sourceApp?: 
   if (text.length > 1000000) throw Error('脚本输入文字过长');
   const image = state.inputImage;
   const output = await runControlledScript(action.code, { text, width: image?.width ?? 0, height: image?.height ?? 0, app: selection?.sourceApp ?? '' });
-  await clipboard.writeText(output);
+  await island.clipboardHistory.writeText(output);
   island.toast(`已复制「${action.name}」的结果`, 'JS');
   return output;
 }
@@ -475,6 +486,30 @@ function installIPC() {
   ipcMain.handle('shell:vision-config-save', (event,input:VisionServiceInput) => { assertLocal(event); const config=intelligence.configure(input);persistSettings({...state.settings,vision:normalizeVisionConfig(config)});publish();return config; });
   ipcMain.handle('shell:media-config-save', (event, input) => { assertLocal(event); return media.service.configure(input); });
   ipcMain.handle('shell:media-models', event => { assertLocal(event); return media.service.models(); });
+  ipcMain.handle('shell:api-connections', event => { assertLocal(event); return media.service.connections(); });
+  ipcMain.handle('shell:api-connection-save', (event, input: ApiConnectionInput) => {
+    assertLocal(event);
+    try { const connection = media.service.saveConnection(input); publish(); return { connections: media.service.connections(), connection, error: null }; }
+    catch (error) { return { connections: media.service.connections(), error: (error as Error).message }; }
+  });
+  ipcMain.handle('shell:api-connection-delete', (event, id: string) => {
+    assertLocal(event);
+    try { const connections = media.service.deleteConnection(id); publish(); return { connections, error: null }; }
+    catch (error) { return { connections: media.service.connections(), error: (error as Error).message }; }
+  });
+  ipcMain.handle('shell:api-connection-models', async (event, id: string) => {
+    assertLocal(event);
+    try { if (typeof id !== 'string' || !id) throw Error('请选择 API 连接'); return { models: await media.service.models(id), error: null }; }
+    catch (error) { return { models: [], error: (error as Error).message }; }
+  });
+  ipcMain.handle('shell:translation-settings', (event, input: TranslationSettings) => { assertLocal(event); return result(() => saveTranslation(input)); });
+  ipcMain.handle('shell:window-drag-snap', (event, enabled: boolean) => {
+    assertLocal(event);
+    return result(() => {
+      if (typeof enabled !== 'boolean') throw Error('拖拽分屏开关无效');
+      persistSettings({ ...state.settings, windowDragSnap: enabled }); publish();
+    });
+  });
   ipcMain.handle('shell:attach-image', async (event, prompt?: string) => {
     assertLocal(event);
     if (prompt !== undefined && (typeof prompt !== 'string' || prompt.length > 24000)) return { error: '生图描述无效' };
@@ -756,6 +791,15 @@ async function boot() {
     const size = image.getSize();
     await screenshots.pins.put({ source: image, image, annotations: { objects: [], crop: { x: 0, y: 0, ...size }, privacy: [], nextNumber: 1 } });
   };
+  const mediaDirectory = join(app.getPath('userData'), 'generated-media');
+  mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
+  state.presets = migrateImagePresets(presetsPath, mediaDirectory);
+  media = new MediaWindow(mediaDirectory, image => screenshots.openImage(image), pinImage, () => state.settings, () => openPalette('images'));
+  const visionDirectory = join(app.getPath('userData'), 'vision-service');
+  const migrated = migrateApiConnectionSettings(media.service, settingsPath, presetsPath, state.settings, state.presets, visionDirectory);
+  state.settings = migrated.settings;
+  state.presets = migrated.presets;
+  media.service.setReferenceProvider(() => ({ presets: state.presets, translation: state.settings.translation, vision: state.settings.vision }));
   island = new NotchIsland({
     onQuickAction: action => {
       if (action === 'screenshot-area') void startScreenshot('area');
@@ -763,7 +807,10 @@ async function boot() {
     },
     onPinImage: pinImage,
     onPinText: async text => { await screenshots.pins.create({ kind: 'text', text }); },
-    onFocusTask: selectTask
+    onFocusTask: selectTask,
+    mediaService: media.service,
+    settings: () => state.settings,
+    saveTranslation
   });
   island.updateSettings(state.settings);
   actionBar = new ActionBar(
@@ -772,6 +819,7 @@ async function boot() {
     openSettings,
     {
       stream: (input, onDelta) => media.service.streamChat(input, onDelta),
+      writeText: text => island.clipboardHistory.writeText(text),
       paste: () => island.pasteSelection(),
       pin: pinImage,
       toast: (text, badge) => island.toast(text, badge),
@@ -812,14 +860,11 @@ async function boot() {
       if(trayState!==recordingTrayState){recordingTrayState=trayState;if(tray&&!quitting)updateTray();}
     }
   });
-  const mediaDirectory = join(app.getPath('userData'), 'generated-media');
-  mkdirSync(mediaDirectory, { recursive: true, mode: 0o700 });
-  state.presets = migrateImagePresets(presetsPath, mediaDirectory);
-  media = new MediaWindow(mediaDirectory, image => screenshots.openImage(image), pinImage, () => state.settings, () => openPalette('images'));
-  intelligence=new IntelligenceService(join(app.getPath('userData'),'vision-service'),{
+  intelligence=new IntelligenceService(visionDirectory,{
     secrets:{available:()=>safeStorage.isEncryptionAvailable(),encrypt:value=>safeStorage.encryptString(value),decrypt:value=>safeStorage.decryptString(value)},
     mediaConnection:()=>media.service.connection(),
     mediaCredential:()=>media.service.credential(),
+    mediaService:media.service,
     pinFormula:(latex,svg,current)=>screenshots.pins.pinFormula(latex,svg,current)
   });
   intelligence.configure(state.settings.vision);

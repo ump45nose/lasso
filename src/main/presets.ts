@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { defaultImageOptions, validImageOptions, imagePromptOptions } from '../shared/media';
+import { defaultImageOptions, validImageOptions, imagePromptOptions, type ApiConnection } from '../shared/media';
 import { questionTemplate, questionWithoutContext, explanationTemplate, summaryTemplate } from '../shared/prompt-templates';
 import { existsSync, readFileSync } from 'node:fs';
 import type { Preset, SelectionContext, AppPrompt } from '../shared/contracts';
@@ -38,7 +38,7 @@ export const defaultPresets: Preset[] = [
   { id: 'translate', name: '翻译', template: translationTemplate, target: 'chatgpt', mode: 'send', needsSelection: true, enabled: true },
   { id: 'today', name: '整理今天待办', template: '请使用你已连接的工具，整理我今天的待办和日程，按优先级列出，并注明信息来源。无法访问的信息请直接说明，不要猜测。', target: 'chatgpt', mode: 'edit', needsSelection: false, enabled: true }
 ];
-export function validatePresets(value: unknown): asserts value is Preset[] {
+export function validatePresets(value: unknown, connections?: readonly ApiConnection[]): asserts value is Preset[] {
   if (!Array.isArray(value)) throw new Error('预设必须是一个列表');
   const ids = new Set<string>();
   for (const p of value) {
@@ -47,6 +47,8 @@ export function validatePresets(value: unknown): asserts value is Preset[] {
       throw new Error('请填写名称和提示词，并选择有效的发送方式');
     }
     if ((p.model !== undefined && typeof p.model !== 'string') || (p.effort !== undefined && typeof p.effort !== 'string')) throw new Error('模型与思考强度必须是有效选项');
+    if (p.connectionId !== undefined && (typeof p.connectionId !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(p.connectionId))) throw Error('预设 API 连接标识无效');
+    if (p.target === 'api' && connections && !connections.some(connection => connection.id === p.connectionId)) throw Error(`预设「${p.name}」的 API 连接不存在，请重新选择连接`);
     if (p.temporaryChat !== undefined && typeof p.temporaryChat !== 'boolean') throw new Error('网页会话方式无效');
     if (p.kind !== undefined && !['chat', 'image'].includes(p.kind)) throw Error('预设类型无效');
     if (p.kind === 'image' ? !['chatgpt', 'gemini', 'api'].includes(p.target) || !validImageOptions(p.image) : p.image !== undefined) throw Error('生图预设配置无效');
@@ -71,8 +73,8 @@ export function readPresets(path: string): Preset[] {
     return p;
   });
 }
-export function writePresets(path: string, presets: Preset[]) {
-  validatePresets(presets);
+export function writePresets(path: string, presets: Preset[], connections?: readonly ApiConnection[]) {
+  validatePresets(presets, connections);
   writeFileAtomic(path, JSON.stringify(presets, null, 2) + '\n');
 }
 export function renderPrompt(preset: Preset, selection: string, appPrompt = '') {
@@ -106,7 +108,7 @@ export function composePrompt(preset: Preset, selection: SelectionContext | null
 export function migrateImagePresets(path: string, directory: string): Preset[] {
   const presets = readPresets(path), configPath = join(directory, 'config.json');
   const legacy = existsSync(configPath) ? JSON.parse(readFileSync(configPath, 'utf8')) : {};
-  if (legacy.schemaVersion === 2) return presets;
+  if (legacy.schemaVersion === 2 || legacy.schemaVersion === 3) return presets;
   const defaults = [
     { id: 'draw', name: '自由作图', template: '请直接生成一张图片，宽高比 {{aspect}}。有参考图时结合参考图完成。\n\n{{prompt}}' },
     { id: 'illustration', name: '内容配图', template: '请根据以下内容生成一张清晰、重点突出的配图，宽高比 {{aspect}}。避免添加无关文字。\n\n{{prompt}}' },

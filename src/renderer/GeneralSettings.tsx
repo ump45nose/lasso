@@ -18,7 +18,8 @@ const subTabs: readonly (readonly [GeneralSubTab, string])[] = [
 
 const actionHelp: Record<GlobalActionId, string> = {
   rect: '直接拖动框选，不自动吸附窗口或识别区域', area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口',
-  'repeat-last': '按上次截图的区域再次截取', 'custom-capture': '打开自定义尺寸与区域预设', 'scroll-capture': '选择窗口中的滚动区域', 'delay-3s': '倒计时 3 秒后框选截图', 'delay-5s': '倒计时 5 秒后框选截图', 'delay-10s': '倒计时 10 秒后框选截图', 'pin-clipboard': '将剪贴板中的图片贴到屏幕上', 'open-launcher': '有选区时同时打开指令面板；不绑定也可从菜单栏打开'
+  'repeat-last': '按上次截图的区域再次截取', 'custom-capture': '打开自定义尺寸与区域预设', 'scroll-capture': '选择窗口中的滚动区域', 'delay-3s': '倒计时 3 秒后框选截图', 'delay-5s': '倒计时 5 秒后框选截图', 'delay-10s': '倒计时 10 秒后框选截图', 'pin-clipboard': '将剪贴板中的图片贴到屏幕上', 'open-launcher': '有选区时同时打开指令面板；不绑定也可从菜单栏打开',
+  'open-clipboard-history': '查看剪贴板历史，选择内容复制或粘贴回原应用', 'open-translator': '打开翻译浮窗，输入文字并选择目标语言'
 };
 const ignoredScopes: readonly (readonly [IgnoredAppScope, string])[] = [['selection', '划词'], ['shortcuts', '快捷键'], ['capture-candidates', '窗口候选']];
 const toolbarOptions = [['text-select', '选字'], ['select', '选择'], ['arrow', '箭头'], ['line', '直线'], ['rectangle', '矩形'], ['ellipse', '椭圆'], ['pen', '画笔'], ['highlight', '高亮'], ['text', '文字'], ['number', '序号'], ['redact', '遮挡'], ['mosaic', '马赛克'], ['blur', '模糊'], ['crop', '裁剪'], ['picker', '取色'], ['spotlight', '聚光灯'], ['magnifier', '放大镜'], ['watermark', '水印'], ['auto-mosaic', '联动马赛克'], ['inpaint', '智能消除'], ['image-adjust', '画面变换']] as const;

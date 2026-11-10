@@ -64,6 +64,32 @@ export interface MediaConfigInput {
   /** Omit to preserve the saved credential; an empty string explicitly clears it. */
   credential?: string;
 }
+export interface ApiConnection { id: string; name: string; baseURL: string; hasCredential: boolean; models: string[] }
+export interface ApiConnectionInput {
+  id?: string;
+  name: string;
+  baseURL: string;
+  /** Omit to preserve the saved credential; an empty string explicitly clears it. */
+  credential?: string;
+  models?: string[];
+}
+export type TranslationLang = 'auto' | 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de';
+export interface TranslationSettings {
+  connectionId: string;
+  model: string;
+  targetLang: TranslationLang;
+  copyTranslateEnabled: boolean;
+  copyTranslateTrigger: 'double-cmd-c' | 'every-copy';
+}
+export const translationDefaults = (): TranslationSettings => ({ connectionId: '', model: '', targetLang: 'auto', copyTranslateEnabled: false, copyTranslateTrigger: 'double-cmd-c' });
+export function normalizeTranslationSettings(value: unknown): TranslationSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('翻译设置无效');
+  const input = { ...translationDefaults(), ...value };
+  if (typeof input.connectionId !== 'string' || (input.connectionId && !/^[a-zA-Z0-9_-]{1,128}$/.test(input.connectionId)) ||
+    typeof input.model !== 'string' || input.model.length > 512 || !['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de'].includes(input.targetLang) ||
+    typeof input.copyTranslateEnabled !== 'boolean' || !['double-cmd-c', 'every-copy'].includes(input.copyTranslateTrigger)) throw Error('翻译设置无效');
+  return { connectionId: input.connectionId, model: input.model.trim(), targetLang: input.targetLang, copyTranslateEnabled: input.copyTranslateEnabled, copyTranslateTrigger: input.copyTranslateTrigger };
+}
 export interface MediaReference { id: string; width: number; height: number; thumbnail: string }
 export type MediaJobStatus = 'running' | 'succeeded' | 'handed-off' | 'failed' | 'interrupted';
 export interface MediaJob extends ImageSizeOptions {
@@ -72,6 +98,7 @@ export interface MediaJob extends ImageSizeOptions {
   prompt: string;
   /** Historical web deliveries remain readable; new jobs are API-only. */
   destination?: MediaDestination;
+  connectionId?: string;
   presetId?: string;
   presetName?: string;
   renderedPrompt?: string;
@@ -91,6 +118,7 @@ export interface MediaDraft {
   id: string;
   presetId: string;
   presetName: string;
+  connectionId?: string;
   prompt: string;
   options: ImageOptions;
 }

@@ -10,8 +10,14 @@ export interface NativeAx {
   requestScreen(): Promise<boolean>;
   frontmostApp(): { bundleId: string; name: string; pid: number };
   paste(): void;
+  pasteboardMeta(): { changeCount: number; concealed: boolean };
+  pasteToProcess(pid: number): boolean;
+  startCopyWatch(cb: (event: { doubleCopy: boolean; timestamp: number }) => void): void;
+  stopCopyWatch(): void;
+  setWindowDragSnapEnabled(enabled: boolean): void;
   setGlow(enabled: boolean): void;
   startBridge(cb: (event: { name: string; payload: string }) => void): void;
+  stopBridge(): void;
   postBridge(name: string, payload: string): void;
   snapWindow(x: number, y: number, w: number, h: number): boolean;
   focusedWindowFrame(): CaptureRect | null;

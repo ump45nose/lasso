@@ -12,7 +12,8 @@ import { BAR_MENU, barMenuHeight, type ActionBarLayout, type ActionBarState, typ
 const BAR = 40, TIP = 36, SIDE = 16, GAP = 10, HEIGHT = TIP * 2 + BAR, VISIBLE = 4, MENU_EDGE = 6, FAST_WIDTH = 412;
 
 export interface ActionBarFastCallbacks {
-  stream(input: { model?: string; prompt: string; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
+  stream(input: { connectionId?: string; model?: string; prompt: string; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
+  writeText(text: string): Promise<void>;
   paste(): void;
   pin(image: NativeImage): Promise<void>;
   toast(text: string, badge?: string): void;
@@ -117,7 +118,7 @@ export class ActionBar {
     ipcMain.handle('bar:fast-copy', async (event, text: string) => {
       check(event);
       if (typeof text === 'string' && text.trim()) {
-        clipboard.writeText(text);
+        await this.fast.writeText(text);
         const ms = this.fastCard?.firstTokenMs;
         this.hide();
         this.fast.toast('已复制结果到剪贴板', ms ? `${ms}ms` : undefined);
@@ -127,14 +128,14 @@ export class ActionBar {
       check(event);
       if (typeof text === 'string' && text.trim()) {
         const previous = await Promise.resolve(clipboard.readText());
-        await Promise.resolve(clipboard.writeText(text));
+        await this.fast.writeText(text);
         this.hide(true);
         setTimeout(() => {
           this.fast.paste();
           this.fast.toast('已替换选中文本', '↵');
           setTimeout(() => {
             void Promise.resolve(clipboard.readText()).then(current => {
-              if (current === text) void Promise.resolve(clipboard.writeText(previous));
+              if (current === text) void this.fast.writeText(previous);
             });
           }, 280);
         }, 60);
@@ -223,7 +224,7 @@ export class ActionBar {
     this.fastAbort = controller;
     try {
       const result = await this.fast.stream(
-        { model, prompt, signal: controller.signal },
+        { connectionId: preset.connectionId, model, prompt, signal: controller.signal },
         (text, firstTokenMs) => {
           if (this.fastAbort !== controller || !this.fastCard) return;
           this.fastCard = { ...this.fastCard, text, firstTokenMs };
