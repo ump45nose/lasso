@@ -84,7 +84,7 @@ export class NotchIsland {
   private alertBridgeMeta = new Map<string, { route?: string; rule?: string; rules?: string[] }>();
   private dismissedAlertKeys = new Set<string>();
   private readonly dismissedAlertsPath = join(app.getPath('userData'), 'island-dismissed-alerts.json');
-  private nookPrefs: NookReminderPrefs = { enabled: true, gitWaiting: true, prFeedback: true, prBlocked: false };
+  private nookPrefs: NookReminderPrefs = { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true };
   private copyTranslateEnabled = false;
   private dragSnapEnabled: boolean | undefined;
   private lastCopy: ClipboardCopyEvent | null = null;
@@ -306,8 +306,15 @@ export class NotchIsland {
       mode: this.mode,
       glow: this.glow,
       notch: geo
-        ? { hasNotch: geo.hasNotch, width: Math.round(geo.width), height: Math.round(geo.height), menuBarHeight: Math.round(geo.menuBarHeight) }
-        : { hasNotch: true, width: 156, height: 28, menuBarHeight: 28 },
+        ? {
+            hasNotch: geo.hasNotch,
+            width: Math.round(geo.width),
+            height: Math.round(geo.height),
+            menuBarHeight: Math.round(geo.menuBarHeight),
+            leftSafeWidth: geo.leftSafeWidth ? Math.round(geo.leftSafeWidth) : 148,
+            rightSafeWidth: geo.rightSafeWidth ? Math.round(geo.rightSafeWidth) : 148
+          }
+        : { hasNotch: true, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 148, rightSafeWidth: 148 },
       nookPrefs: { ...this.nookPrefs },
       copyTranslateEnabled: this.copyTranslateEnabled,
       pomodoro: this.pomodoro,
@@ -622,9 +629,15 @@ export class NotchIsland {
   private handleBridgeNotification(name: string, payload: string) {
     if (name === 'com.lasso.island.prefs') {
       try {
-        const prefs = JSON.parse(payload) as NookReminderPrefs;
-        if (Object.keys(this.nookPrefs).every(key => typeof prefs[key as keyof NookReminderPrefs] === 'boolean')) {
-          this.nookPrefs = { enabled: prefs.enabled, gitWaiting: prefs.gitWaiting, prFeedback: prefs.prFeedback, prBlocked: prefs.prBlocked };
+        const prefs = JSON.parse(payload) as Partial<NookReminderPrefs>;
+        if (prefs && typeof prefs === 'object') {
+          this.nookPrefs = {
+            enabled: typeof prefs.enabled === 'boolean' ? prefs.enabled : this.nookPrefs.enabled,
+            tasks: typeof prefs.tasks === 'boolean' ? prefs.tasks : this.nookPrefs.tasks,
+            hubAttention: typeof prefs.hubAttention === 'boolean' ? prefs.hubAttention : this.nookPrefs.hubAttention,
+            aiResets: typeof prefs.aiResets === 'boolean' ? prefs.aiResets : this.nookPrefs.aiResets,
+            localAndCustom: typeof prefs.localAndCustom === 'boolean' ? prefs.localAndCustom : this.nookPrefs.localAndCustom
+          };
           this.publish();
         }
       } catch { /* Ignore malformed bridge data. */ }
@@ -671,9 +684,20 @@ export class NotchIsland {
           items?: (IslandAlertItem & { route?: string; rule?: string; rules?: string[] })[];
         };
         if (data.kind === 'slacking') {
+          if (!this.nookPrefs.enabled || !this.nookPrefs.localAndCustom) return;
           this.startPomodoro({ id: null, title: data.title || '休息提醒 · 站起来喝口水' }, 5, 'slacking');
           return;
         }
+        if (!this.nookPrefs.enabled) return;
+
+        const isAllowedByPrefs = (item: { kind?: string; route?: string }) => {
+          const kind = item.kind || 'custom';
+          if (kind === 'task') return this.nookPrefs.tasks;
+          if (kind === 'reset') return this.nookPrefs.aiResets;
+          if (kind === 'launchd') return this.nookPrefs.localAndCustom;
+          if (item.route && item.route !== 'reminders') return this.nookPrefs.hubAttention;
+          return this.nookPrefs.hubAttention || this.nookPrefs.localAndCustom;
+        };
 
         const recordMeta = (id: string, item: { route?: string; rule?: string; rules?: string[] }) => {
           const rules = Array.isArray(item.rules) ? item.rules.filter((r): r is string => typeof r === 'string' && r.length > 0) : undefined;
@@ -691,7 +715,7 @@ export class NotchIsland {
         };
 
         if (Array.isArray(data.items) && data.items.length > 0) {
-          const fresh = data.items.filter(item => !isDismissed(item));
+          const fresh = data.items.filter(item => !isDismissed(item) && isAllowedByPrefs(item));
           if (fresh.length === 0) {
             return;
           }
@@ -700,7 +724,7 @@ export class NotchIsland {
           }
           this.alerts = fresh.map(({ id, kind, title, subtitle, target }) => ({ id, kind, title, subtitle, target }));
         } else if (data.title) {
-          if (isDismissed(data)) {
+          if (isDismissed(data) || !isAllowedByPrefs(data)) {
             return;
           }
           const item: IslandAlertItem = {

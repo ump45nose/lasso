@@ -53,9 +53,16 @@ export function decodeFrameImage(frame: Pick<CaptureFrame, 'crop' | 'png' | 'pix
   return image;
 }
 
+let copyPngListener: ((png: Buffer) => void) | null = null;
+export function setCopyPngListener(listener: ((png: Buffer) => void) | null) {
+  copyPngListener = listener;
+}
+
 /** Write PNG bytes that are already encoded. Callers with a NativeImage use copyImage. */
 export async function copyPng(bytes: Uint8Array | Buffer) {
-  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(bytes)], { type: 'image/png' }) })]);
+  const buf = Buffer.from(bytes);
+  await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(buf)], { type: 'image/png' }) })]);
+  copyPngListener?.(buf);
 }
 export async function copyImage(image: NativeImage) {
   await copyPng(image.toPNG());

@@ -329,15 +329,19 @@ static bool setAxWindowRect(AXUIElementRef win, double x, double y, double w, do
 static AXUIElementRef copyFrontWindow() {
   if (!AXIsProcessTrusted()) return nullptr;
   NSRunningApplication* app = NSWorkspace.sharedWorkspace.frontmostApplication;
-  if (!app || app.processIdentifier <= 0) return nullptr;
+  if (!app || app.processIdentifier <= 0 || app.processIdentifier == getpid()) return nullptr;
   AXUIElementRef appRef = AXUIElementCreateApplication(app.processIdentifier);
   AXUIElementSetMessagingTimeout(appRef, 0.2);
   CFTypeRef win = nullptr;
   AXError error = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute, &win);
+  if ((error != kAXErrorSuccess || !win) &&
+      AXUIElementCopyAttributeValue(appRef, kAXMainWindowAttribute, &win) != kAXErrorSuccess) {
+    win = nullptr;
+  }
   CFRelease(appRef);
-  if (error != kAXErrorSuccess || !win) return nullptr;
+  if (!win) return nullptr;
   if (CFGetTypeID(win) != AXUIElementGetTypeID()) { CFRelease(win); return nullptr; }
-  AXUIElementSetMessagingTimeout((AXUIElementRef)win, 0.2);
+  AXUIElementSetMessagingTimeout((AXUIElementRef)win, 0.15);
   return (AXUIElementRef)win;
 }
 
@@ -515,13 +519,17 @@ static bool snapTargetAtPoint(NSPoint point, NSRect* target) {
     NSRect visible = screen.visibleFrame;
     double left = point.x - NSMinX(frame), right = NSMaxX(frame) - point.x;
     double bottom = point.y - NSMinY(frame), top = NSMaxY(frame) - point.y;
+    double visibleTop = NSMaxY(visible) - point.y;
+    double visibleBottom = point.y - NSMinY(visible);
     double halfW = visible.size.width / 2, halfH = visible.size.height / 2;
-    if ((left <= 36 || right <= 36) && (top <= 36 || bottom <= 36)) {
-      *target = NSMakeRect(visible.origin.x + (right <= 36 ? halfW : 0),
-        visible.origin.y + (top <= 36 ? halfH : 0), halfW, halfH);
-    } else if (left <= 8 || right <= 8) {
-      *target = NSMakeRect(visible.origin.x + (right <= 8 ? halfW : 0), visible.origin.y, halfW, visible.size.height);
-    } else if (top <= 10 && left >= frame.size.width * 0.25 && left <= frame.size.width * 0.75) {
+    bool nearTop = top <= 48 || (visibleTop >= -8 && visibleTop <= 28);
+    bool nearBottom = bottom <= 48 || (visibleBottom >= -8 && visibleBottom <= 32);
+    if ((left <= 48 || right <= 48) && (nearTop || nearBottom)) {
+      *target = NSMakeRect(visible.origin.x + (right <= 48 ? halfW : 0),
+        visible.origin.y + (nearTop ? halfH : 0), halfW, halfH);
+    } else if (left <= 24 || right <= 24) {
+      *target = NSMakeRect(visible.origin.x + (right <= 24 ? halfW : 0), visible.origin.y, halfW, visible.size.height);
+    } else if (nearTop && left > 48 && right > 48) {
       *target = visible;
     } else return false;
     return true;
@@ -529,49 +537,74 @@ static bool snapTargetAtPoint(NSPoint point, NSRect* target) {
   return false;
 }
 
+static void recordSnappedWindow(AXUIElementRef win, NSRect original, NSRect target) {
+  NSRect actual = target;
+  axWindowRect(win, &actual);
+  auto origin = std::find_if(g_snapped_origins.begin(), g_snapped_origins.end(),
+    [win](const SnappedOrigin& item) { return CFEqual(item.window, win); });
+  if (origin != g_snapped_origins.end()) {
+    origin->original = original;
+    origin->snapped = actual;
+  } else {
+    g_snapped_origins.push_back({(AXUIElementRef)CFRetain(win), original, actual});
+  }
+}
+
+static void bindDragSnapWindow(NSPoint point) {
+  AXUIElementRef window = copyFrontWindow();
+  NSRect rect;
+  if (!window) return;
+  AXUIElementSetMessagingTimeout(window, 0.12);
+  if (!axWindowRect(window, &rect)) { CFRelease(window); return; }
+  g_drag_snap.window = window;
+  g_drag_snap.initial = g_drag_snap.original = rect;
+  g_drag_snap.down = point;
+  g_drag_snap.grabRatioX = std::clamp((point.x - rect.origin.x) / rect.size.width, 0.0, 1.0);
+  g_drag_snap.grabOffsetY = std::clamp(screenTop() - point.y - rect.origin.y, 0.0, rect.size.height);
+  for (auto it = g_snapped_origins.begin(); it != g_snapped_origins.end(); ++it) {
+    if (!CFEqual(it->window, window)) continue;
+    if (std::abs(rect.size.width - it->snapped.size.width) <= 16 &&
+        std::abs(rect.size.height - it->snapped.size.height) <= 16) {
+      g_drag_snap.original = it->original;
+      g_drag_snap.canRestore = true;
+    } else {
+      CFRelease(it->window);
+      g_snapped_origins.erase(it);
+    }
+    break;
+  }
+}
+
 static void handleDragSnap(NSEvent* event) {
   NSPoint point = NSEvent.mouseLocation;
   if (event.type == NSEventTypeLeftMouseDown) {
     resetDragSnap();
-    AXUIElementRef window = copyFrontWindow();
-    NSRect rect;
-    if (!window) return;
-    AXUIElementSetMessagingTimeout(window, 0.04);
-    if (!axWindowRect(window, &rect)) { CFRelease(window); return; }
-    g_drag_snap.window = window;
-    g_drag_snap.initial = g_drag_snap.original = rect;
-    g_drag_snap.down = point;
-    g_drag_snap.grabRatioX = std::clamp((point.x - rect.origin.x) / rect.size.width, 0.0, 1.0);
-    g_drag_snap.grabOffsetY = std::clamp(screenTop() - point.y - rect.origin.y, 0.0, rect.size.height);
-    for (auto it = g_snapped_origins.begin(); it != g_snapped_origins.end(); ++it) {
-      if (!CFEqual(it->window, window)) continue;
-      if (std::abs(rect.size.width - it->snapped.size.width) <= 12 &&
-          std::abs(rect.size.height - it->snapped.size.height) <= 12) {
-        g_drag_snap.original = it->original;
-        g_drag_snap.canRestore = true;
-      } else {
-        CFRelease(it->window);
-        g_snapped_origins.erase(it);
-      }
-      break;
-    }
+    bindDragSnapWindow(point);
     return;
+  }
+  if (!g_drag_snap.window && event.type == NSEventTypeLeftMouseDragged) {
+    bindDragSnapWindow(point);
   }
   if (!g_drag_snap.window) return;
   if (event.type == NSEventTypeLeftMouseUp) {
     [g_snap_preview orderOut:nil];
     if (g_drag_snap.active && g_drag_snap.hasTarget) {
+      AXUIElementRef win = (AXUIElementRef)CFRetain(g_drag_snap.window);
+      NSRect original = g_drag_snap.original;
       NSRect target = axRectFromScreenRect(g_drag_snap.target);
-      if (setAxWindowRect(g_drag_snap.window, target.origin.x, target.origin.y, target.size.width, target.size.height)) {
-        auto origin = std::find_if(g_snapped_origins.begin(), g_snapped_origins.end(),
-          [](const SnappedOrigin& item) { return CFEqual(item.window, g_drag_snap.window); });
-        axWindowRect(g_drag_snap.window, &target);
-        if (origin != g_snapped_origins.end()) {
-          origin->original = g_drag_snap.original;
-          origin->snapped = target;
-        }
-        else g_snapped_origins.push_back({(AXUIElementRef)CFRetain(g_drag_snap.window), g_drag_snap.original, target});
+      if (setAxWindowRect(win, target.origin.x, target.origin.y, target.size.width, target.size.height)) {
+        recordSnappedWindow(win, original, target);
       }
+      dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 35 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+        if (setAxWindowRect(win, target.origin.x, target.origin.y, target.size.width, target.size.height)) {
+          recordSnappedWindow(win, original, target);
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 65 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+          setAxWindowRect(win, target.origin.x, target.origin.y, target.size.width, target.size.height);
+          recordSnappedWindow(win, original, target);
+          CFRelease(win);
+        });
+      });
     }
     resetDragSnap();
     return;
@@ -844,22 +877,52 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
   double notchWidth = 156.0;
   double notchHeight = 28.0;
   double menuBarHeight = 28.0;
+  double leftSafeWidth = 148.0;
+  double rightSafeWidth = 148.0;
   @autoreleasepool {
     NSScreen* screen = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
     if (screen) {
       NSRect frame = screen.frame;
       NSRect visible = screen.visibleFrame;
       menuBarHeight = std::max(24.0, (double)(NSMaxY(frame) - NSMaxY(visible)));
+      double notchLeftX = frame.origin.x + (frame.size.width - notchWidth) / 2.0;
+      double notchRightX = notchLeftX + notchWidth;
       if (@available(macOS 12.0, *)) {
         NSEdgeInsets insets = screen.safeAreaInsets;
         NSRect leftAux = screen.auxiliaryTopLeftArea;
         NSRect rightAux = screen.auxiliaryTopRightArea;
         if (insets.top > 0.0 && leftAux.size.width > 0.0 && rightAux.size.width > 0.0) {
           hasNotch = true;
-          notchWidth = std::max(120.0, (double)(rightAux.origin.x - NSMaxX(leftAux)));
+          notchLeftX = NSMaxX(leftAux);
+          notchRightX = rightAux.origin.x;
+          notchWidth = std::max(120.0, notchRightX - notchLeftX);
           notchHeight = (double)insets.top;
           menuBarHeight = std::max(menuBarHeight, notchHeight);
+          leftSafeWidth = std::clamp((double)leftAux.size.width - 310.0, 64.0, 168.0);
+          rightSafeWidth = std::clamp((double)rightAux.size.width - 260.0, 64.0, 168.0);
         }
+      }
+      CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
+      if (list) {
+        pid_t selfPid = getpid();
+        double minRightStatusX = NSMaxX(frame) - 180.0;
+        for (NSDictionary* w in (__bridge NSArray*)list) {
+          pid_t pid = [w[(id)kCGWindowOwnerPID] intValue];
+          if (pid <= 0 || pid == selfPid) continue;
+          int layer = [w[(id)kCGWindowLayer] intValue];
+          if (layer < kCGStatusWindowLevel - 1) continue;
+          NSDictionary* b = w[(id)kCGWindowBounds];
+          if (!b) continue;
+          double wx = [b[@"X"] doubleValue], wy = [b[@"Y"] doubleValue];
+          double ww = [b[@"Width"] doubleValue], wh = [b[@"Height"] doubleValue];
+          if (wy >= -2.0 && wy <= menuBarHeight + 4.0 && wh <= menuBarHeight + 16.0 && ww > 4.0 && ww < frame.size.width * 0.6) {
+            if (wx >= notchRightX - 2.0) {
+              minRightStatusX = std::min(minRightStatusX, wx);
+            }
+          }
+        }
+        CFRelease(list);
+        rightSafeWidth = std::clamp(minRightStatusX - notchRightX - 10.0, 64.0, 168.0);
       }
     }
   }
@@ -869,6 +932,8 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
   prop(e, obj, "width", notchWidth);
   prop(e, obj, "height", notchHeight);
   prop(e, obj, "menuBarHeight", menuBarHeight);
+  prop(e, obj, "leftSafeWidth", leftSafeWidth);
+  prop(e, obj, "rightSafeWidth", rightSafeWidth);
   return obj;
 }
 

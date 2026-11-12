@@ -749,19 +749,20 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       isl.setOpacity(1); isl.showInactive();
       const baseIsl = await page(isl, 'window.island.getState()');
       const islFixtures = await page(isl, 'window.island.getState().then(base => window.__uiShotsFixtures.islandStates(base))');
-      const menuBottom = (baseIsl.menuBarHeight || 28) + 3.5;
+      const menuH = (baseIsl.notch?.menuBarHeight || 28) + 1;
+      const menuBottom = (baseIsl.notch?.menuBarHeight || 28) + 3.5;
 
       isl.webContents.send('island:changed', islFixtures.idle);
       await wait(350);
-      if (!await page(isl, `(() => { const r = document.querySelector('.isl-notch-anchor')?.getBoundingClientRect(); return Boolean(r && r.top === 0 && r.bottom <= ${(baseIsl.menuBarHeight || 28) + 1} && !document.querySelector('.isl-drop-card')); })()`)) {
-        throw Error('Idle NotchIsland leaked a dropped card or exceeded menu bar height');
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-notch-anchor')?.getBoundingClientRect(); return Boolean(r && r.top === 0 && r.bottom <= ${menuH} && !document.querySelector('.isl-drop-card') && !document.querySelector('.isl-menubar-wings')); })()`)) {
+        throw Error('Idle NotchIsland leaked a dropped card or wings');
       }
       names.push(await save(isl, 'island-idle'));
 
       isl.webContents.send('island:changed', islFixtures.focusCapsule);
       await wait(450);
-      if (!await page(isl, `(() => { const r = document.querySelector('.isl-drop-card.mode-focus.is-capsule')?.getBoundingClientRect(); return Boolean(r && r.top >= ${menuBottom} && r.width <= 320 && r.bottom <= innerHeight); })()`)) {
-        throw Error('Focus capsule did not drop below menu bar or exceeded capsule width');
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-menubar-wings.mode-focus.is-capsule')?.getBoundingClientRect(); return Boolean(r && r.top === 0 && r.bottom <= ${menuH} && r.width <= 420 && !document.querySelector('.isl-drop-card')); })()`)) {
+        throw Error('Focus capsule wings did not stay inside menu bar');
       }
       names.push(await save(isl, 'island-focus-capsule'));
 
@@ -788,8 +789,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
       isl.webContents.send('island:changed', islFixtures.cliCapsule);
       await wait(450);
-      if (!await page(isl, `(() => { const r = document.querySelector('.isl-drop-card.mode-cli.is-capsule')?.getBoundingClientRect(); return Boolean(r && r.top >= ${menuBottom} && r.width <= 320 && document.querySelector('.isl-drop-card.mode-cli .ni-pill')); })()`)) {
-        throw Error('CLI capsule did not drop below menu bar or missing CLI pill');
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-menubar-wings.mode-cli.is-capsule')?.getBoundingClientRect(); return Boolean(r && r.top === 0 && r.bottom <= ${menuH} && !document.querySelector('.isl-drop-card') && document.querySelector('.isl-menubar-wings.mode-cli .ni-pill')); })()`)) {
+        throw Error('CLI capsule wings did not stay inside menu bar or missing CLI pill');
       }
       names.push(await save(isl, 'island-cli'));
 
@@ -798,8 +799,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
       if (!await page(isl, `Boolean(document.querySelector('.isl-cli-row')) && [...document.querySelectorAll('.isl-snap-grid button')].some(b => b.textContent.includes('移至左屏'))`)) {
         throw Error('Island board missing CLI task rows or cross-display snap buttons');
       }
-      if (!await page(isl, `['提醒总开关','等待我回复','PR 新反馈','PR 阻塞'].every(t => [...document.querySelectorAll('[aria-label="Nook 提醒与 PR 跟进"] .isl-toggle-chip')].some(b => b.textContent.includes(t))) && ['复制即译','输入翻译','剪贴板历史'].every(t => [...document.querySelectorAll('.isl-quick-tools button')].some(b => b.textContent.includes(t)))`)) {
-        throw Error('Island board missing Nook/PR three-category toggles or suite tool entry buttons');
+      if (!await page(isl, `['日程与待办','Hub 状态告警','AI 额度重置','本机守护与定时'].every(t => [...document.querySelectorAll('[aria-label="Nook 提醒来源控制"] .isl-toggle-chip')].some(b => b.textContent.includes(t))) && ['复制即译','输入翻译','剪贴板历史'].every(t => [...document.querySelectorAll('.isl-quick-tools button')].some(b => b.textContent.includes(t)))`)) {
+        throw Error('Island board missing Nook 4-category toggles or suite tool entry buttons');
       }
       if (!await page(isl, `(() => { const card = document.querySelector('.isl-drop-card.mode-board')?.getBoundingClientRect(); return Boolean(card && card.top >= ${menuBottom} && Math.round(card.width) === 416) && [...document.querySelectorAll('.isl-snap-grid button, .isl-quick-tools button, .isl-quick-row button')].every(button=>{const r=button.getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight&&r.left>=0&&r.right<=innerWidth;}); })()`)) throw Error('Production IslandBoard clips window actions or violates dropped layout');
       names.push(await save(isl, 'island-board'));

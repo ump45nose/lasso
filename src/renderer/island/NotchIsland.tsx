@@ -60,13 +60,26 @@ export function NotchIsland() {
 
   if (!state) return null;
   const { mode, pomodoro, toast, alerts, nookTasks, cliTasks = [], glow, notch } = state;
-  const nookPrefs = state.nookPrefs ?? { enabled: true, gitWaiting: true, prFeedback: true, prBlocked: false };
+  const nookPrefs = state.nookPrefs ?? { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true };
   const copyTranslateEnabled = Boolean(state.copyTranslateEnabled);
   const firstCli = cliTasks[0] ?? null;
   const hasNotch = notch?.hasNotch !== false;
   const notchW = hasNotch ? (notch?.width ?? 156) : 120;
   const notchH = hasNotch ? (notch?.height ?? 28) : 5;
   const menuH = notch?.menuBarHeight ?? (hasNotch ? (notch?.height ?? 28) : 24);
+  const leftSafeW = Math.min(148, Math.max(84, notch?.leftSafeWidth ?? 136));
+  const rightSafeW = Math.min(124, Math.max(72, notch?.rightSafeWidth ?? 108));
+
+  const wingKind =
+    mode === 'toast' && toast
+      ? 'toast'
+      : mode === 'nook-alert' && alerts.length > 0
+        ? 'nook-alert'
+        : (mode === 'focus' || mode === 'focus-hover' || mode === 'slacking') && pomodoro?.active
+          ? 'focus'
+          : firstCli
+            ? 'cli'
+            : null;
 
   const dropKind =
     mode === 'board'
@@ -77,14 +90,7 @@ export function NotchIsland() {
           ? 'slacking'
           : mode === 'focus-hover' && pomodoro
             ? 'focus-hover'
-            : mode === 'toast' && toast
-              ? 'toast'
-              : mode === 'focus' && pomodoro
-                ? 'focus'
-                : firstCli
-                  ? 'cli'
-                  : null;
-  const isCapsule = dropKind === 'focus' || dropKind === 'cli' || dropKind === 'toast';
+            : null;
 
   function resolveCollapsedMode() {
     return pomodoro?.active ? (pomodoro.kind === 'slacking' ? 'slacking' : 'focus') : alerts.length ? 'nook-alert' : 'idle';
@@ -115,7 +121,15 @@ export function NotchIsland() {
       }}
     >
       <div
-        style={{ '--notch-w': `${notchW}px`, '--notch-h': `${notchH}px`, '--menu-h': `${menuH}px` } as React.CSSProperties}
+        style={
+          {
+            '--notch-w': `${notchW}px`,
+            '--notch-h': `${notchH}px`,
+            '--menu-h': `${menuH}px`,
+            '--left-safe-w': `${leftSafeW}px`,
+            '--right-safe-w': `${rightSafeW}px`
+          } as React.CSSProperties
+        }
         className={`isl-shell mode-${mode}${glow ? ' glow-on' : ''}${!hasNotch ? ' no-notch' : ''}`}
         role="region"
         aria-label="Lasso 刘海岛"
@@ -133,6 +147,89 @@ export function NotchIsland() {
           {hasNotch && <span className="isl-cam-lens" aria-hidden="true" />}
         </button>
 
+        {wingKind && (
+          <div
+            className={`isl-menubar-wings mode-${wingKind} is-capsule${glow ? ' glow-on' : ''}`}
+            onPointerEnter={enterCard}
+            onPointerLeave={leaveCard}
+          >
+            {wingKind === 'focus' && pomodoro && (
+              <button
+                type="button"
+                className="isl-wing-hit"
+                aria-label={`番茄钟 ${pomodoro.taskTitle}`}
+                onClick={() => window.island.setMode('board')}
+              >
+                <span className="isl-wing isl-wing-left">
+                  <span className="dot running" />
+                  <span className="isl-focus-task">{pomodoro.taskTitle}</span>
+                </span>
+                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                <span className="isl-wing isl-wing-right">
+                  <span className="isl-clock mono">{formatClock(pomodoro.remainingSeconds)}</span>
+                </span>
+              </button>
+            )}
+
+            {wingKind === 'cli' && firstCli && (
+              <button
+                type="button"
+                className={`isl-wing-hit ni-pill ${firstCli.activity}`}
+                aria-label={`切换到 CLI 任务 ${firstCli.title}`}
+                onClick={() => void window.island.focusTask(firstCli.id)}
+              >
+                <span className="isl-wing isl-wing-left">
+                  <span className={`dot ${firstCli.activity}`} />
+                  <span className="ni-pill-title">{firstCli.target === 'codex' ? 'Codex' : 'Pi'} · {firstCli.title}</span>
+                </span>
+                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                <span className="isl-wing isl-wing-right">
+                  <span className="ni-pill-state mono">{firstCli.activity === 'waiting' ? '待审批' : '运行中'}</span>
+                </span>
+              </button>
+            )}
+
+            {wingKind === 'toast' && toast && (
+              <div className="isl-wing-hit">
+                <span className="isl-wing isl-wing-left">
+                  <span className="dot complete" />
+                  <span className="isl-toast-text">{toast.text}</span>
+                </span>
+                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                <span className="isl-wing isl-wing-right">
+                  {toast.badge && <kbd className="isl-kbd mono">{toast.badge}</kbd>}
+                  <button
+                    type="button"
+                    className="isl-icon isl-toast-close"
+                    aria-label="关闭提示"
+                    onClick={() => window.island.setMode(resolveCollapsedMode())}
+                  >
+                    <X size={11} />
+                  </button>
+                </span>
+              </div>
+            )}
+
+            {wingKind === 'nook-alert' && (
+              <button
+                type="button"
+                className="isl-wing-hit"
+                aria-label="Nook 提醒中心"
+                onClick={() => window.island.setMode('board')}
+              >
+                <span className="isl-wing isl-wing-left">
+                  <Bell size={12} className="isl-clay-icon" />
+                  <span className="isl-focus-task">{alerts[0]?.title || 'Nook 紧迫提醒'}</span>
+                </span>
+                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                <span className="isl-wing isl-wing-right">
+                  <span className="isl-tag mono">{alerts.length} 条待办</span>
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="isl-drop-wrap">
           <AnimatePresence mode="popLayout" initial={false}>
             {dropKind && (
@@ -142,51 +239,10 @@ export function NotchIsland() {
                 initial={{ opacity: 0, y: -4, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.96 }}
-                className={`isl-drop-card mode-${dropKind}${isCapsule ? ' is-capsule' : ''}${glow ? ' glow-on' : ''}`}
+                className={`isl-drop-card mode-${dropKind}${glow ? ' glow-on' : ''}`}
                 onPointerEnter={enterCard}
                 onPointerLeave={leaveCard}
               >
-                {dropKind === 'focus' && pomodoro && (
-                  <button
-                    type="button"
-                    className="isl-capsule-btn"
-                    onClick={() => window.island.setMode('board')}
-                  >
-                    <span className="dot running" />
-                    <span className="isl-focus-task">{pomodoro.taskTitle}</span>
-                    <span className="isl-clock mono">{formatClock(pomodoro.remainingSeconds)}</span>
-                  </button>
-                )}
-
-                {dropKind === 'cli' && firstCli && (
-                  <button
-                    type="button"
-                    className={`isl-capsule-btn ni-pill ${firstCli.activity}`}
-                    aria-label={`切换到 CLI 任务 ${firstCli.title}`}
-                    onClick={() => void window.island.focusTask(firstCli.id)}
-                  >
-                    <span className={`dot ${firstCli.activity}`} />
-                    <span className="ni-pill-title">{firstCli.target === 'codex' ? 'Codex' : 'Pi'} · {firstCli.title}</span>
-                    <span className="ni-pill-state mono">{firstCli.activity === 'waiting' ? '待审批' : '运行中'}</span>
-                  </button>
-                )}
-
-                {dropKind === 'toast' && toast && (
-                  <div className="isl-row">
-                    <span className="dot complete" />
-                    <span className="isl-toast-text">{toast.text}</span>
-                    {toast.badge && <kbd className="isl-kbd mono">{toast.badge}</kbd>}
-                    <button
-                      type="button"
-                      className="isl-icon isl-toast-close"
-                      aria-label="关闭提示"
-                      onClick={() => window.island.setMode(resolveCollapsedMode())}
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                )}
-
                 {dropKind === 'focus-hover' && pomodoro && (
                   <div className="isl-focus-card">
                     <div className="isl-focus-main">
@@ -401,45 +457,53 @@ export function NotchIsland() {
                     </div>
 
                     <div className="isl-sec-head">
-                      <span>Nook 提醒与 PR 跟进</span>
-                      <span className="mono">{nookPrefs.enabled ? 'NOOK ON' : 'MUTED'}</span>
-                    </div>
-                    <div className="isl-toggle-grid" role="group" aria-label="Nook 提醒与 PR 跟进">
+                      <span>Nook 提醒来源控制</span>
                       <button
                         type="button"
-                        className={`isl-toggle-chip${nookPrefs.enabled ? ' on' : ''}`}
+                        className={`isl-chip${nookPrefs.enabled ? ' active' : ''}`}
                         aria-pressed={nookPrefs.enabled}
                         onClick={() => void window.island.setNookReminderPrefs({ enabled: !nookPrefs.enabled })}
                       >
                         <span>提醒总开关</span>
-                        <span className="mono">{nookPrefs.enabled ? '开启' : '关闭'}</span>
+                        <span className="mono">{nookPrefs.enabled ? '开启' : '静音'}</span>
+                      </button>
+                    </div>
+                    <div className="isl-toggle-grid" role="group" aria-label="Nook 提醒来源控制">
+                      <button
+                        type="button"
+                        className={`isl-toggle-chip${nookPrefs.tasks ? ' on' : ''}`}
+                        aria-pressed={nookPrefs.tasks}
+                        onClick={() => void window.island.setNookReminderPrefs({ tasks: !nookPrefs.tasks })}
+                      >
+                        <span>日程与待办</span>
+                        <span className="mono">{nookPrefs.tasks ? '开启' : '关闭'}</span>
                       </button>
                       <button
                         type="button"
-                        className={`isl-toggle-chip${nookPrefs.gitWaiting ? ' on' : ''}`}
-                        aria-pressed={nookPrefs.gitWaiting}
-                        onClick={() => void window.island.setNookReminderPrefs({ gitWaiting: !nookPrefs.gitWaiting })}
+                        className={`isl-toggle-chip${nookPrefs.hubAttention ? ' on' : ''}`}
+                        aria-pressed={nookPrefs.hubAttention}
+                        onClick={() => void window.island.setNookReminderPrefs({ hubAttention: !nookPrefs.hubAttention })}
                       >
-                        <span>等待我回复</span>
-                        <span className="mono">{nookPrefs.gitWaiting ? '开启' : '关闭'}</span>
+                        <span>Hub 状态告警</span>
+                        <span className="mono">{nookPrefs.hubAttention ? '开启' : '关闭'}</span>
                       </button>
                       <button
                         type="button"
-                        className={`isl-toggle-chip${nookPrefs.prFeedback ? ' on' : ''}`}
-                        aria-pressed={nookPrefs.prFeedback}
-                        onClick={() => void window.island.setNookReminderPrefs({ prFeedback: !nookPrefs.prFeedback })}
+                        className={`isl-toggle-chip${nookPrefs.aiResets ? ' on' : ''}`}
+                        aria-pressed={nookPrefs.aiResets}
+                        onClick={() => void window.island.setNookReminderPrefs({ aiResets: !nookPrefs.aiResets })}
                       >
-                        <span>PR 新反馈</span>
-                        <span className="mono">{nookPrefs.prFeedback ? '开启' : '关闭'}</span>
+                        <span>AI 额度重置</span>
+                        <span className="mono">{nookPrefs.aiResets ? '开启' : '关闭'}</span>
                       </button>
                       <button
                         type="button"
-                        className={`isl-toggle-chip${nookPrefs.prBlocked ? ' on' : ''}`}
-                        aria-pressed={nookPrefs.prBlocked}
-                        onClick={() => void window.island.setNookReminderPrefs({ prBlocked: !nookPrefs.prBlocked })}
+                        className={`isl-toggle-chip${nookPrefs.localAndCustom ? ' on' : ''}`}
+                        aria-pressed={nookPrefs.localAndCustom}
+                        onClick={() => void window.island.setNookReminderPrefs({ localAndCustom: !nookPrefs.localAndCustom })}
                       >
-                        <span>PR 阻塞</span>
-                        <span className="mono">{nookPrefs.prBlocked ? '开启' : '关闭'}</span>
+                        <span>本机守护与定时</span>
+                        <span className="mono">{nookPrefs.localAndCustom ? '开启' : '关闭'}</span>
                       </button>
                     </div>
 
@@ -479,7 +543,7 @@ export function NotchIsland() {
                           <Languages size={12} />复制即译 <span className="mono">{copyTranslateEnabled ? '开' : '关'}</span>
                         </button>
                         <button type="button" className="isl-btn" onClick={() => void window.island.quickAction('open-translator')}>
-                          <Languages size={12} />输入翻译
+                          <Languages size={12} />输入翻译 <kbd className="isl-kbd mono">⌥T</kbd>
                         </button>
                         <button type="button" className="isl-btn" onClick={() => void window.island.quickAction('open-clipboard')}>
                           <ClipboardList size={12} />剪贴板历史 <kbd className="isl-kbd mono">⌥V</kbd>

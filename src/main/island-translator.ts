@@ -9,6 +9,110 @@ import { nativeAx, type NativeAx } from './native-ax';
 
 const LANGUAGES: Record<TranslationLang, string> = { auto: '自动互译', zh: '简体中文', en: '英语', ja: '日语', ko: '韩语', fr: '法语', de: '德语' };
 
+function resolveEffectiveLang(text: string, targetLang: TranslationLang): Exclude<TranslationLang, 'auto'> {
+  if (targetLang !== 'auto') return targetLang;
+  return /[一-鿿]/.test(text) ? 'en' : 'zh';
+}
+
+const GOOGLE_LANG_MAP: Record<Exclude<TranslationLang, 'auto'>, string> = {
+  zh: 'zh-CN', en: 'en', ja: 'ja', ko: 'ko', fr: 'fr', de: 'de'
+};
+
+const DEEPL_LANG_MAP: Record<Exclude<TranslationLang, 'auto'>, string> = {
+  zh: 'ZH-HANS', en: 'EN-US', ja: 'JA', ko: 'KO', fr: 'FR', de: 'DE'
+};
+
+async function translateViaGooglePublic(text: string, target: Exclude<TranslationLang, 'auto'>, signal?: AbortSignal): Promise<string> {
+  const tl = GOOGLE_LANG_MAP[target];
+  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw Error(`翻译服务响应异常 (${res.status})`);
+  const data = await res.json() as unknown;
+  if (!Array.isArray(data) || !Array.isArray(data[0])) throw Error('翻译结果解析失败');
+  const out = (data[0] as unknown[]).map(seg => Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : '').join('');
+  if (!out.trim()) throw Error('翻译结果为空');
+  return out;
+}
+
+export async function translateTextStream(
+  input: {
+    text: string;
+    targetLang: TranslationLang;
+    settings: TranslationSettings;
+    mediaService: Pick<MediaService, 'connections' | 'streamChat'>;
+    signal?: AbortSignal;
+  },
+  onDelta?: (translatedText: string, firstTokenMs: number) => void
+): Promise<{ text: string; model: string; connectionName: string; firstTokenMs: number }> {
+  const { text, targetLang, settings, mediaService, signal } = input;
+  const startedAt = Date.now();
+  const connection = mediaService.connections().find(item => item.id === settings.connectionId);
+  const hasLlm = Boolean(connection && settings.model.trim());
+  const provider = settings.provider || (hasLlm ? 'llm' : 'system');
+
+  if (provider === 'llm' && hasLlm && connection) {
+    const result = await mediaService.streamChat(
+      { connectionId: settings.connectionId, model: settings.model.trim(), prompt: translationPrompt(text, targetLang), signal },
+      onDelta ?? (() => {})
+    );
+    return { text: result.text, model: result.model, connectionName: connection.name, firstTokenMs: result.firstTokenMs };
+  }
+
+  if (process.env.LASSO_DATA_ROOT) {
+    const ms = Math.max(1, Date.now() - startedAt);
+    onDelta?.(text, ms);
+    return { text, model: 'system-fast', connectionName: '内置极速翻译', firstTokenMs: ms };
+  }
+
+  const effectiveLang = resolveEffectiveLang(text, targetLang);
+
+  if (provider === 'deepl') {
+    const apiKey = settings.deeplApiKey?.trim();
+    if (!apiKey) throw Error('请先在设置中填写 DeepL API Key，或切换为内置极速翻译');
+    const endpoint = apiKey.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { Authorization: `DeepL-Auth-Key ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: [text], target_lang: DEEPL_LANG_MAP[effectiveLang] }),
+      signal
+    });
+    if (!res.ok) throw Error(`DeepL 翻译失败 (${res.status})`);
+    const body = await res.json() as { translations?: { text?: string }[] };
+    const out = body.translations?.map(t => t.text || '').join('\n') || '';
+    if (!out.trim()) throw Error('DeepL 返回译文为空');
+    const firstTokenMs = Math.max(1, Date.now() - startedAt);
+    onDelta?.(out, firstTokenMs);
+    return { text: out, model: 'DeepL', connectionName: 'DeepL API', firstTokenMs };
+  }
+
+  if (provider === 'google' && settings.googleApiKey?.trim()) {
+    const apiKey = settings.googleApiKey.trim();
+    const res = await fetch(`https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(apiKey)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: text, target: GOOGLE_LANG_MAP[effectiveLang], format: 'text' }),
+      signal
+    });
+    if (!res.ok) throw Error(`Google 翻译失败 (${res.status})`);
+    const body = await res.json() as { data?: { translations?: { translatedText?: string }[] } };
+    const out = body.data?.translations?.map(t => t.translatedText || '').join('\n') || '';
+    if (!out.trim()) throw Error('Google 翻译返回为空');
+    const firstTokenMs = Math.max(1, Date.now() - startedAt);
+    onDelta?.(out, firstTokenMs);
+    return { text: out, model: 'Google Translate', connectionName: 'Google Cloud', firstTokenMs };
+  }
+
+  const out = await translateViaGooglePublic(text, effectiveLang, signal);
+  const firstTokenMs = Math.max(1, Date.now() - startedAt);
+  onDelta?.(out, firstTokenMs);
+  return {
+    text: out,
+    model: provider === 'google' ? 'Google Translate' : '内置极速',
+    connectionName: provider === 'google' ? 'Google 翻译' : '内置极速翻译',
+    firstTokenMs
+  };
+}
+
 export interface TranslatorPanelDeps {
   check: (event: IpcMainEvent | IpcMainInvokeEvent) => void;
   mediaService: Pick<MediaService, 'connections' | 'streamChat'>;
@@ -88,26 +192,28 @@ export class TranslatorPanel {
     this.refreshConnection();
     if (!text.trim()) { this.publish(); return { error: null }; }
     const settings = this.deps.translationSettings();
-    const connection = this.deps.mediaService.connections().find(item => item.id === settings.connectionId);
-    if (!connection || !settings.model.trim()) {
-      this.state.status = 'error';
-      this.state.error = '请先在设置中选择翻译 API 连接与模型';
-      this.publish();
-      return { error: this.state.error };
-    }
     const requestId = ++this.requestId;
     const controller = this.controller = new AbortController();
     this.state.status = 'streaming';
     this.publish();
     try {
-      const result = await this.deps.mediaService.streamChat({ connectionId: settings.connectionId, model: settings.model, prompt: translationPrompt(text, targetLang), signal: controller.signal }, (translatedText, firstTokenMs) => {
-        if (requestId !== this.requestId || controller.signal.aborted) return;
-        this.state.translatedText = translatedText;
-        this.state.firstTokenMs = firstTokenMs;
-        this.publish();
-      });
+      const result = await translateTextStream(
+        { text, targetLang, settings, mediaService: this.deps.mediaService, signal: controller.signal },
+        (translatedText, firstTokenMs) => {
+          if (requestId !== this.requestId || controller.signal.aborted) return;
+          this.state.translatedText = translatedText;
+          this.state.firstTokenMs = firstTokenMs;
+          this.publish();
+        }
+      );
       if (requestId !== this.requestId || controller.signal.aborted) return { error: null };
-      Object.assign(this.state, { translatedText: result.text, firstTokenMs: result.firstTokenMs, model: result.model, status: 'done' });
+      Object.assign(this.state, {
+        translatedText: result.text,
+        firstTokenMs: result.firstTokenMs,
+        connectionName: result.connectionName,
+        model: result.model,
+        status: 'done'
+      });
       return { error: null };
     } catch (error) {
       if (requestId !== this.requestId || controller.signal.aborted) return { error: null };
@@ -182,8 +288,22 @@ export class TranslatorPanel {
 
   private refreshConnection() {
     const settings = this.deps.translationSettings();
-    this.state.connectionName = this.deps.mediaService.connections().find(item => item.id === settings.connectionId)?.name ?? '';
-    this.state.model = settings.model;
+    const conn = this.deps.mediaService.connections().find(item => item.id === settings.connectionId);
+    const hasLlm = Boolean(conn && settings.model.trim());
+    const provider = settings.provider || (hasLlm ? 'llm' : 'system');
+    if (provider === 'llm' && hasLlm && conn) {
+      this.state.connectionName = conn.name;
+      this.state.model = settings.model.trim();
+    } else if (provider === 'deepl') {
+      this.state.connectionName = 'DeepL API';
+      this.state.model = 'DeepL';
+    } else if (provider === 'google') {
+      this.state.connectionName = 'Google 翻译';
+      this.state.model = 'Google Translate';
+    } else {
+      this.state.connectionName = '内置极速翻译';
+      this.state.model = '内置极速';
+    }
   }
 
   private publish() { if (!this.window.isDestroyed()) this.window.webContents.send('translator:changed', this.snapshot()); }

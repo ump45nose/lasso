@@ -19,7 +19,7 @@ function syncActionShortcuts(settings: Settings): Settings {
   const actionShortcuts = { ...settings.actionShortcuts };
   actionShortcuts['open-launcher'] ??= settings.shortcut;
   actionShortcuts['open-clipboard-history'] ??= 'Alt+V';
-  actionShortcuts['open-translator'] ??= '';
+  actionShortcuts['open-translator'] = actionShortcuts['open-translator'] || 'Alt+T';
   for (const mode of captureModes) actionShortcuts[mode] ??= settings.captureShortcuts[mode];
   settings.actionShortcuts = actionShortcuts;
   settings.shortcut = actionShortcuts['open-launcher'];

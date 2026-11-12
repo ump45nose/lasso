@@ -293,7 +293,7 @@ export type IslandCliTask = {
 export interface IslandState {
   mode: IslandMode;
   glow: boolean;
-  notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number };
+  notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number };
   nookPrefs: NookReminderPrefs;
   copyTranslateEnabled: boolean;
   pomodoro: {
@@ -327,7 +327,13 @@ export type SnapSlot =
   | 'coding-ai'
   | 'equal-split';
 
-export interface NookReminderPrefs { enabled: boolean; gitWaiting: boolean; prFeedback: boolean; prBlocked: boolean }
+export interface NookReminderPrefs {
+  enabled: boolean;
+  tasks: boolean;
+  hubAttention: boolean;
+  aiResets: boolean;
+  localAndCustom: boolean;
+}
 export type IslandQuickAction = 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel' | 'open-translator' | 'open-clipboard';
 export interface TranslatorWindowState {
   open: boolean;

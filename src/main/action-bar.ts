@@ -13,7 +13,8 @@ const BAR = 40, TIP = 36, SIDE = 16, GAP = 10, HEIGHT = TIP * 2 + BAR, VISIBLE =
 
 export interface ActionBarFastCallbacks {
   stream(input: { connectionId?: string; model?: string; prompt: string; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
-  writeText(text: string): Promise<void>;
+  translateStream?(input: { text: string; targetLang: 'auto' | 'zh' | 'en'; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
+  writeText(text: string, options?: { transient?: boolean }): Promise<void>;
   paste(): void;
   pin(image: NativeImage): Promise<void>;
   toast(text: string, badge?: string): void;
@@ -138,7 +139,7 @@ export class ActionBar {
           this.fast.toast('已替换选中文本', '↵');
           setTimeout(() => {
             void Promise.resolve(clipboard.readText()).then(current => {
-              if (current === text) void this.fast.writeText(previous);
+              if (current === text) void this.fast.writeText(previous, { transient: true });
             });
           }, 280);
         }, 60);
@@ -163,10 +164,19 @@ export class ActionBar {
   private resolveFastPreset(preset: Preset): { preset: Preset; targetLang: 'auto' | 'zh' | 'en' } | null {
     if (preset.kind === 'image') return null;
     const translation = this.fast.translation?.() ?? this.translation;
-    if (preset.id === 'translate' && translation.connectionId.trim() && translation.model.trim()) {
+    if (preset.id === 'translate') {
       const targetLang = translation.targetLang === 'zh' || translation.targetLang === 'en' ? translation.targetLang : 'auto';
+      const hasLlm = Boolean(translation.connectionId.trim() && translation.model.trim());
+      const provider = translation.provider || (hasLlm ? 'llm' : 'system');
+      const modelLabel = provider === 'llm' && hasLlm
+        ? translation.model.trim()
+        : provider === 'deepl'
+          ? 'DeepL'
+          : provider === 'google'
+            ? 'Google Translate'
+            : '内置极速';
       return {
-        preset: { ...preset, target: 'api', connectionId: translation.connectionId.trim(), model: translation.model.trim() },
+        preset: { ...preset, target: 'api', connectionId: translation.connectionId.trim(), model: modelLabel },
         targetLang
       };
     }
@@ -248,14 +258,14 @@ export class ActionBar {
     const controller = new AbortController();
     this.fastAbort = controller;
     try {
-      const result = await this.fast.stream(
-        { connectionId: activePreset.connectionId, model, prompt, signal: controller.signal },
-        (text, firstTokenMs) => {
-          if (this.fastAbort !== controller || !this.fastCard) return;
-          this.fastCard = { ...this.fastCard, text, firstTokenMs };
-          this.publish();
-        }
-      );
+      const onDelta = (text: string, firstTokenMs: number) => {
+        if (this.fastAbort !== controller || !this.fastCard) return;
+        this.fastCard = { ...this.fastCard, text, firstTokenMs };
+        this.publish();
+      };
+      const result = activePreset.id === 'translate' && this.fast.translateStream
+        ? await this.fast.translateStream({ text: selection.text, targetLang, signal: controller.signal }, onDelta)
+        : await this.fast.stream({ connectionId: activePreset.connectionId, model, prompt, signal: controller.signal }, onDelta);
       if (this.fastAbort !== controller || !this.fastCard) return;
       this.fastCard = { ...this.fastCard, status: 'done', text: result.text, model: result.model, firstTokenMs: result.firstTokenMs };
       this.publish();

@@ -11,7 +11,7 @@ import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
 
-const SENSITIVE_APPS = /^(?:com\.agilebits\.onepassword(?:[0-9]|\.|$)|com\.1password(?:\.|$)|com\.bitwarden(?:\.|$)|com\.apple\.Passwords$|org\.keepassxc\.keepassxc$|com\.lastpass(?:\.|$)|com\.keepassx(?:\.|$)|local\.mac-ai-prompt$|com\.lasso(?:\.|$))/i;
+const SENSITIVE_APPS = /^(?:com\.agilebits\.onepassword(?:[0-9]|\.|$)|com\.1password(?:\.|$)|com\.bitwarden(?:\.|$)|com\.apple\.Passwords$|com\.apple\.keychainaccess$|org\.keepassxc\.keepassxc$|com\.lastpass(?:\.|$)|com\.keepassx(?:\.|$))/i;
 
 /** Both copy translation and history must apply this before reading clipboard payloads. */
 export function isSensitiveCopy(bundleId: string, concealed: boolean): boolean { return concealed || SENSITIVE_APPS.test(bundleId); }
@@ -82,10 +82,71 @@ export class ClipboardHistoryPanel {
   /** Use for all Lasso writes so history and copy translation ignore the same changeCount. */
   ignoreCurrentCopy() { this.changeCount = this.ax.pasteboardMeta?.().changeCount ?? this.changeCount; }
 
-  async writeText(text: string) {
+  private pushEntry(entry: ClipboardEntry) {
+    const head = this.state.entries[0];
+    if (head && head.kind === entry.kind && Math.abs(entry.createdAt - head.createdAt) < 1000) {
+      if ((entry.kind === 'text' && head.text === entry.text) || (entry.kind === 'image' && head.imageWidth === entry.imageWidth && head.imageHeight === entry.imageHeight)) {
+        return;
+      }
+    }
+    this.state.entries.unshift(entry);
+    const removed = this.state.entries.splice(200);
+    this.persist();
+    this.removeImages(removed);
+    this.publish();
+  }
+
+  recordImage(png: Buffer, previewTitle?: string): ClipboardEntry | null {
+    const image = nativeImage.createFromBuffer(png);
+    if (image.isEmpty()) return null;
+    const size = image.getSize(), id = randomUUID(), imagePath = join(this.directory, `${id}.png`);
+    writeFileSync(imagePath, png, { mode: 0o600 });
+    const entry: ClipboardEntry = {
+      id,
+      kind: 'image',
+      text: '',
+      preview: previewTitle || `图片 ${size.width} × ${size.height}`,
+      charCount: 0,
+      lineCount: 0,
+      imagePath,
+      imageWidth: size.width,
+      imageHeight: size.height,
+      imageThumbnail: image.resize({ width: Math.min(160, size.width) }).toDataURL(),
+      sourceBundleId: 'local.mac-ai-prompt',
+      sourceAppName: 'Lasso',
+      sourceAppIcon: applicationIcon('local.mac-ai-prompt'),
+      createdAt: Date.now(),
+      favorite: false
+    };
+    this.ignoreCurrentCopy();
+    this.pushEntry(entry);
+    return entry;
+  }
+
+  recordText(text: string): ClipboardEntry | null {
+    if (!text.trim()) return null;
+    const entry: ClipboardEntry = {
+      id: randomUUID(),
+      kind: 'text',
+      text,
+      preview: text.replace(/\s+/g, ' ').slice(0, 240),
+      charCount: Array.from(text).length,
+      lineCount: text.split(/\r\n|\r|\n/).length,
+      sourceBundleId: 'local.mac-ai-prompt',
+      sourceAppName: 'Lasso',
+      sourceAppIcon: applicationIcon('local.mac-ai-prompt'),
+      createdAt: Date.now(),
+      favorite: false
+    };
+    this.pushEntry(entry);
+    return entry;
+  }
+
+  async writeText(text: string, options?: { transient?: boolean }) {
     ++this.writing;
     try { await clipboard.writeText(text); }
     finally { this.ignoreCurrentCopy(); --this.writing; }
+    if (!options?.transient) this.recordText(text);
   }
 
   async poll(): Promise<ClipboardEntry | null> {
@@ -94,12 +155,15 @@ export class ClipboardHistoryPanel {
     if (!meta || meta.changeCount === this.changeCount) return null;
     this.changeCount = meta.changeCount;
     const source = this.ax.frontmostApp?.();
-    if (!source || source.pid === process.pid || isSensitiveCopy(source.bundleId, meta.concealed)) return null;
+    const isSelf = source?.pid === process.pid;
+    if (!source || meta.concealed || (!isSelf && isSensitiveCopy(source.bundleId, meta.concealed))) return null;
     this.polling = true;
     try {
       const timestamp = Date.now(), id = randomUUID();
-      const common = { id, text: '', preview: '', charCount: 0, lineCount: 0, sourceBundleId: source.bundleId,
-        sourceAppName: source.name, sourceAppIcon: applicationIcon(source.bundleId), createdAt: timestamp, favorite: false };
+      const bundleId = isSelf ? 'local.mac-ai-prompt' : source.bundleId;
+      const appName = isSelf ? 'Lasso' : source.name;
+      const common = { id, text: '', preview: '', charCount: 0, lineCount: 0, sourceBundleId: bundleId,
+        sourceAppName: appName, sourceAppIcon: applicationIcon(bundleId), createdAt: timestamp, favorite: false };
       const items = await clipboard.read();
       if (!this.copyStillCurrent(meta.changeCount)) return null;
       const files = await this.readFiles(items);
@@ -123,12 +187,10 @@ export class ClipboardHistoryPanel {
         entry = { ...common, kind: 'text', text, preview: text.replace(/\s+/g, ' ').slice(0, 240), charCount: Array.from(text).length, lineCount: text.split(/\r\n|\r|\n/).length };
       }
       if (!this.copyStillCurrent(meta.changeCount)) return null;
-      this.state.entries.unshift(entry);
-      const removed = this.state.entries.splice(200);
-      this.persist();
-      this.removeImages(removed);
-      this.publish();
-      this.deps.onCopy?.({ entry: structuredClone(entry), pid: source.pid, changeCount: meta.changeCount, timestamp });
+      this.pushEntry(entry);
+      if (!isSelf) {
+        this.deps.onCopy?.({ entry: structuredClone(entry), pid: source.pid, changeCount: meta.changeCount, timestamp });
+      }
       return entry;
     } finally { this.polling = false; }
   }

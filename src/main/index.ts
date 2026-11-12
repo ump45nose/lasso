@@ -1,5 +1,5 @@
 import { RecordingManager } from './capture/recording';
-import { saveRecordingOutput } from './capture/output';
+import { saveRecordingOutput, setCopyPngListener } from './capture/output';
 import type { CustomCaptureRequest,RegionPreset } from '../shared/capture-regions';
 import { validateScreenshotSettings, type ScreenshotSettings } from '../shared/screenshot-settings';
 import { app, BrowserWindow, Menu, Tray, nativeImage, globalShortcut, ipcMain, screen, session, dialog, shell, systemPreferences, safeStorage, nativeTheme, clipboard } from 'electron';
@@ -29,6 +29,8 @@ import { initializeWindowPresence, setWindowPresence } from './window-presence';
 import { validMemorySettings, type MemorySettings } from '../shared/memory';
 import { ActionBar } from './action-bar';
 import { NotchIsland } from './island';
+import { translateTextStream } from './island-translator';
+import { nativeAx } from './native-ax';
 import { TaskManager } from './tasks';
 import { defaultPresets, readPresets, writePresets, composePrompt, migrateImagePresets } from './presets';
 import { targetLabels, HEADER_HEIGHT, FOOTER_ROW } from '../shared/contracts';
@@ -294,7 +296,13 @@ async function runGlobalAction(action: GlobalActionId) {
   else if (action === 'scroll-capture') await startScreenshot('area', 0, true);
   else if (action.startsWith('delay-')) await startScreenshot('area', Number(action.slice(6, -1)) as CaptureDelay);
   else if (action === 'pin-clipboard') { capture.suppress(); await screenshots.pins.pinClipboard(); }
-  else if (action === 'open-translator') island.translator.open();
+  else if (action === 'open-translator') {
+    capture?.current();
+    const selText = lastSelection?.text?.trim();
+    const frontPid = nativeAx().frontmostApp?.().pid ?? 0;
+    if (selText) actionBar?.hide();
+    island.translator.open(selText || undefined, frontPid);
+  }
   else if (action === 'open-clipboard-history') island.clipboardHistory.open();
 }
 function persistSettings(next: Settings) {
@@ -384,8 +392,7 @@ async function executePreset(preset: Preset, selection: SelectionContext | null,
   if (preset.needsSelection && !selection?.text && !options.imageId) return { error: '请先选中文字' };
   const text = composePrompt(preset, selection, state.settings.appPrompts);
   const translation = state.settings.translation;
-  const useBuiltinTranslation = preset.id === 'translate' && preset.kind !== 'image' && !options.target && !options.imageId
-    && Boolean(translation.connectionId.trim() && translation.model.trim());
+  const useBuiltinTranslation = preset.id === 'translate' && preset.kind !== 'image' && !options.target && !options.imageId;
   const target = useBuiltinTranslation ? 'api' : (options.target || preset.target);
   if (target === 'api') {
     if (preset.kind !== 'image') {
@@ -820,13 +827,15 @@ async function boot() {
     saveTranslation
   });
   island.updateSettings(state.settings);
+  setCopyPngListener(png => { island?.clipboardHistory.recordImage(png); });
   actionBar = new ActionBar(
     async (id, selection, openInWindow) => { if (openInWindow) await openFastInWindow(id, selection); else await runPreset(id, selection); },
     async (id, selection) => { await runScriptAction(id, selection); },
     openSettings,
     {
       stream: (input, onDelta) => media.service.streamChat(input, onDelta),
-      writeText: text => island.clipboardHistory.writeText(text),
+      translateStream: (input, onDelta) => translateTextStream({ text: input.text, targetLang: input.targetLang, settings: state.settings.translation, mediaService: media.service, signal: input.signal }, onDelta),
+      writeText: (text, opts) => island.clipboardHistory.writeText(text, opts),
       paste: () => island.pasteSelection(),
       pin: pinImage,
       toast: (text, badge) => island.toast(text, badge),

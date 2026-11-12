@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Check, Copy, Download, Pin, Play, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
 import type { GeneralSettings as Preferences, ScriptAction, ShellState } from '../shared/contracts';
-import type { TranslationLang, TranslationSettings } from '../shared/media';
+import type { TranslationLang, TranslationProvider, TranslationSettings } from '../shared/media';
 import type { WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { shortcutLabel } from './targets';
 import { editorActionIds, editorActionLabels, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type EditorActionId, type GlobalActionId, type IgnoredAppRule, type IgnoredAppScope } from '../shared/shortcuts';
@@ -21,7 +21,7 @@ const subTabs: readonly (readonly [GeneralSubTab, string])[] = [
 const actionHelp: Record<GlobalActionId, string> = {
   rect: '直接拖动框选，不自动吸附窗口或识别区域', area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口',
   'repeat-last': '按上次截图的区域再次截取', 'custom-capture': '打开自定义尺寸与区域预设', 'scroll-capture': '选择窗口中的滚动区域', 'delay-3s': '倒计时 3 秒后框选截图', 'delay-5s': '倒计时 5 秒后框选截图', 'delay-10s': '倒计时 10 秒后框选截图', 'pin-clipboard': '将剪贴板中的图片贴到屏幕上', 'open-launcher': '有选区时同时打开指令面板；不绑定也可从菜单栏打开',
-  'open-clipboard-history': '查看剪贴板历史（默认 Option+V），选择内容复制或按 Enter 粘贴回原应用', 'open-translator': '打开独立输入翻译浮窗，输入文字并选择目标语言流式翻译'
+  'open-clipboard-history': '查看剪贴板历史（默认 Option+V），选择内容复制或按 Enter 粘贴回原应用', 'open-translator': '划词即译或打开独立输入翻译浮窗（默认 Option+T），支持多引擎与流式替换原选区'
 };
 const ignoredScopes: readonly (readonly [IgnoredAppScope, string])[] = [['selection', '划词'], ['shortcuts', '快捷键'], ['capture-candidates', '窗口候选']];
 const toolbarOptions = [['text-select', '选字'], ['select', '选择'], ['arrow', '箭头'], ['line', '直线'], ['rectangle', '矩形'], ['ellipse', '椭圆'], ['pen', '画笔'], ['highlight', '高亮'], ['text', '文字'], ['number', '序号'], ['redact', '遮挡'], ['mosaic', '马赛克'], ['blur', '模糊'], ['crop', '裁剪'], ['picker', '取色'], ['spotlight', '聚光灯'], ['magnifier', '放大镜'], ['watermark', '水印'], ['auto-mosaic', '联动马赛克'], ['inpaint', '智能消除'], ['image-adjust', '画面变换']] as const;
@@ -213,30 +213,73 @@ function ConfigSyncSettings() {
 const translationLanguages: readonly (readonly [TranslationLang, string])[] = [
   ['auto', '中 ⇄ 英自动'], ['zh', '简体中文'], ['en', 'English'], ['ja', '日本語'], ['ko', '한국어'], ['fr', 'Français'], ['de', 'Deutsch']
 ];
+const translationProviders: readonly (readonly [TranslationProvider, string])[] = [
+  ['system', '内置极速'], ['deepl', 'DeepL'], ['google', 'Google'], ['llm', 'LLM 模型']
+];
 
 function TranslationServiceSettings({ translation }: { translation: TranslationSettings }) {
   const [draft, setDraft] = useState(translation), [showPool, setShowPool] = useState(false);
   const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
   useEffect(() => { setDraft(translation); }, [translation]);
+  const activeProvider: TranslationProvider = draft.provider || (draft.connectionId && draft.model.trim() ? 'llm' : 'system');
   const dirty = JSON.stringify(draft) !== JSON.stringify(translation);
   async function commit(next: TranslationSettings, requireBinding = false) {
-    if (requireBinding && (!next.connectionId || !next.model.trim())) { setError('请选择内置翻译绑定的 API 连接并填写模型名称'); return; }
+    const provider = next.provider || (next.connectionId && next.model.trim() ? 'llm' : 'system');
+    if (requireBinding && provider === 'llm' && (!next.connectionId || !next.model.trim())) { setError('请选择内置翻译绑定的 API 连接并填写模型名称'); return; }
+    if (requireBinding && provider === 'deepl' && !next.deeplApiKey?.trim()) { setError('请填写 DeepL API Key'); return; }
     setDraft(next); setBusy(true); setError(''); setNotice('');
     try {
-      const result = await window.desktop.saveTranslationSettings({ ...next, model: next.model.trim() });
+      const result = await window.desktop.saveTranslationSettings({ ...next, provider, model: next.model.trim() });
       if (result.error) { setError(result.error); return; }
       setNotice('内置翻译与复制即译设置已保存');
     } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
   }
   return <section id="translation-settings" className="l-set-section">
-    <div className="l-set-row-head l-gap"><h3>内置 LLM 翻译与复制即译</h3><button type="button" className="l-text-btn" aria-expanded={showPool} onClick={() => setShowPool(!showPool)}>{showPool ? '收起连接池' : '管理 API 连接池'}</button></div>
+    <div className="l-set-row-head l-gap"><h3>快速翻译引擎与复制即译</h3><button type="button" className="l-text-btn" aria-expanded={showPool} onClick={() => setShowPool(!showPool)}>{showPool ? '收起连接池' : '管理 API 连接池'}</button></div>
     <ul className="l-group">
+      <li className="l-shot-option">
+        <span>翻译引擎</span>
+        <Segmented
+          label="翻译引擎"
+          value={activeProvider}
+          onChange={provider => {
+            const next = { ...draft, provider };
+            setDraft(next); setError(''); setNotice('');
+            if (provider === 'system' || provider === 'google' || (provider === 'llm' && draft.connectionId && draft.model.trim())) {
+              void commit(next);
+            }
+          }}
+          options={translationProviders}
+        />
+      </li>
+      {activeProvider === 'deepl' && (
+        <li className="col">
+          <div className="l-field">
+            <label htmlFor="translation-deepl-key">DeepL API Key</label>
+            <input id="translation-deepl-key" className="l-input mono" type="password" autoComplete="off" placeholder="输入 DeepL API Key（Free 密钥以 :fx 结尾）"
+              value={draft.deeplApiKey || ''} disabled={busy} onChange={e => { setDraft({ ...draft, provider: 'deepl', deeplApiKey: e.target.value }); setError(''); setNotice(''); }} />
+          </div>
+        </li>
+      )}
+      {activeProvider === 'google' && (
+        <li className="col">
+          <div className="l-field">
+            <label htmlFor="translation-google-key">Google Cloud API Key（可选，留空使用免配置极速通道）</label>
+            <input id="translation-google-key" className="l-input mono" type="password" autoComplete="off" placeholder="留空即用内置 Google 极速通道，或填入 Cloud Translation Key"
+              value={draft.googleApiKey || ''} disabled={busy} onChange={e => { setDraft({ ...draft, provider: 'google', googleApiKey: e.target.value }); setError(''); setNotice(''); }} />
+          </div>
+        </li>
+      )}
       <li className="col">
-        <ApiConnectionBindingFields connectionId={draft.connectionId} model={draft.model} modelId="translation-model" modelPlaceholder="deepseek-chat / gpt-4.1-mini" label="翻译模型（必选）"
-          help="与普通「解释」预设解耦，供划词翻译、截图/贴图 OCR 快速翻译、独立输入翻译浮窗与复制即译共用。"
-          onChange={next => { const updated = { ...draft, ...next }; setDraft(updated); setError(''); setNotice(''); if (next.connectionId !== draft.connectionId) void commit(updated); }} />
+        <ApiConnectionBindingFields connectionId={draft.connectionId} model={draft.model} modelId="translation-model" modelPlaceholder="deepseek-chat / gpt-4.1-mini" label="LLM 翻译模型（可选，绑定后走流式大模型）"
+          help="支持内置极速翻译（免配置开箱即用）、DeepL、Google 与自定义 LLM 连接池，供 ⌥T 划词翻译、动作条「翻译」与复制即译共用。"
+          onChange={next => {
+            const updated: TranslationSettings = { ...draft, ...next, ...(next.connectionId || next.model ? { provider: 'llm' } : {}) };
+            setDraft(updated); setError(''); setNotice('');
+            if (next.connectionId !== draft.connectionId) void commit(updated);
+          }} />
         <div className="l-workspace-actions">
-          <span className="l-field-help">{draft.connectionId && draft.model.trim() ? '已绑定 API 连接与翻译模型' : '请选择 API 连接并填写翻译模型'}</span>
+          <span className="l-field-help">{activeProvider === 'llm' && draft.connectionId && draft.model.trim() ? '当前使用 LLM 流式翻译模型' : activeProvider === 'deepl' ? '当前使用 DeepL 翻译引擎' : activeProvider === 'google' ? '当前使用 Google 翻译引擎' : '当前使用内置免配置极速翻译'}</span>
           <span className="push" />
           {dirty && <button type="button" className="l-btn small" disabled={busy} onClick={() => { setDraft(translation); setError(''); setNotice(''); }}>放弃更改</button>}
           <button type="button" className="l-btn small primary" disabled={busy || !dirty} onClick={() => void commit(draft, true)}>{busy ? '保存中…' : '保存翻译设置'}</button>
@@ -246,7 +289,7 @@ function TranslationServiceSettings({ translation }: { translation: TranslationS
       <li><div className="l-row-label"><span>复制即译</span><span>在 PDF、终端等不便直接划词的应用中复制文本后，在鼠标旁弹出内置翻译流式卡片（自动跳过密码管理器）。</span></div><Switch label="复制即译" value={draft.copyTranslateEnabled} disabled={busy} change={() => void commit({ ...draft, copyTranslateEnabled: !draft.copyTranslateEnabled })} /></li>
       <li className="l-shot-option"><span>复制即译触发方式</span><Segmented label="复制即译触发方式" value={draft.copyTranslateTrigger} onChange={copyTranslateTrigger => void commit({ ...draft, copyTranslateTrigger })} options={[['double-cmd-c', '双击 ⌘C'], ['every-copy', '单次复制']]} /></li>
     </ul>
-    {showPool && <ApiConnectionPoolManager idPrefix="translation-" onSelect={id => { if (!draft.connectionId) void commit({ ...draft, connectionId: id }); }} />}
+    {showPool && <ApiConnectionPoolManager idPrefix="translation-" onSelect={id => { if (!draft.connectionId) void commit({ ...draft, provider: 'llm', connectionId: id }); }} />}
     {error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
   </section>;
 }
@@ -318,7 +361,7 @@ export function GeneralSettings({ state, initialSub = 'system' }: { state: Shell
             <button className="l-btn small" onClick={() => void window.desktop.act('open-island-board')}>展开看板</button>
           </li>
           <li><div className="l-row-label"><span>剪贴板历史</span><span>默认 Option+V（⌥V）唤起浮窗，列表左侧显示来源应用图标，支持搜索、筛选与按 ↵ 直接回贴到原窗口。</span></div><span className="l-kbd">{shortcutLabel(settings.actionShortcuts['open-clipboard-history'] || 'Alt+V')}</span><button className="l-btn small" onClick={() => setSub('shortcuts')}>配置快捷键</button></li>
-          <li><div className="l-row-label"><span>独立输入翻译浮窗</span><span>支持中 ⇄ 英自动互译、多语种切换、流式译文复制、替换原选区、钉为贴图与入便签。可在快捷键设置中绑定全局热键。</span></div><span className="l-kbd">{settings.actionShortcuts['open-translator'] ? shortcutLabel(settings.actionShortcuts['open-translator']) : '可绑定热键'}</span><button className="l-btn small" onClick={() => setSub('shortcuts')}>配置快捷键</button></li>
+          <li><div className="l-row-label"><span>独立输入翻译浮窗</span><span>默认 Option+T（⌥T）划词即译或唤起翻译浮窗，支持中 ⇄ 英自动互译、多语种切换、替换原选区、钉为贴图与入便签。</span></div><span className="l-kbd">{shortcutLabel(settings.actionShortcuts['open-translator'] || 'Alt+T')}</span><button className="l-btn small" onClick={() => setSub('shortcuts')}>配置快捷键</button></li>
           <li>
             <div className="l-row-label"><span>浮动便签</span><span>在当前屏幕打开便签，自动保存到 ~/Documents/LassoNotes/*.md，支持 Markdown 预览与钉为贴图。</span></div>
             <span className="l-kbd">⌥N</span>

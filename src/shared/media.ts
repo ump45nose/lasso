@@ -74,21 +74,51 @@ export interface ApiConnectionInput {
   models?: string[];
 }
 export type TranslationLang = 'auto' | 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'de';
+export type TranslationProvider = 'system' | 'deepl' | 'google' | 'llm';
 export interface TranslationSettings {
+  provider?: TranslationProvider;
   connectionId: string;
   model: string;
+  deeplApiKey?: string;
+  googleApiKey?: string;
   targetLang: TranslationLang;
   copyTranslateEnabled: boolean;
   copyTranslateTrigger: 'double-cmd-c' | 'every-copy';
 }
-export const translationDefaults = (): TranslationSettings => ({ connectionId: '', model: '', targetLang: 'auto', copyTranslateEnabled: false, copyTranslateTrigger: 'double-cmd-c' });
+export const translationDefaults = (): TranslationSettings => ({
+  provider: 'system',
+  connectionId: '',
+  model: '',
+  deeplApiKey: '',
+  googleApiKey: '',
+  targetLang: 'auto',
+  copyTranslateEnabled: false,
+  copyTranslateTrigger: 'double-cmd-c'
+});
 export function normalizeTranslationSettings(value: unknown): TranslationSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error('翻译设置无效');
-  const input = { ...translationDefaults(), ...value };
-  if (typeof input.connectionId !== 'string' || (input.connectionId && !/^[a-zA-Z0-9_-]{1,128}$/.test(input.connectionId)) ||
-    typeof input.model !== 'string' || input.model.length > 512 || !['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de'].includes(input.targetLang) ||
+  const raw = value as Partial<TranslationSettings>;
+  const input = { ...translationDefaults(), ...raw };
+  const provider: TranslationProvider = raw.provider
+    ? raw.provider
+    : (input.connectionId && input.model.trim()) ? 'llm' : 'system';
+  if (!['system', 'deepl', 'google', 'llm'].includes(provider) ||
+    typeof input.connectionId !== 'string' || (input.connectionId && !/^[a-zA-Z0-9_-]{1,128}$/.test(input.connectionId)) ||
+    typeof input.model !== 'string' || input.model.length > 512 ||
+    typeof (input.deeplApiKey ?? '') !== 'string' || (input.deeplApiKey ?? '').length > 512 ||
+    typeof (input.googleApiKey ?? '') !== 'string' || (input.googleApiKey ?? '').length > 512 ||
+    !['auto', 'zh', 'en', 'ja', 'ko', 'fr', 'de'].includes(input.targetLang) ||
     typeof input.copyTranslateEnabled !== 'boolean' || !['double-cmd-c', 'every-copy'].includes(input.copyTranslateTrigger)) throw Error('翻译设置无效');
-  return { connectionId: input.connectionId, model: input.model.trim(), targetLang: input.targetLang, copyTranslateEnabled: input.copyTranslateEnabled, copyTranslateTrigger: input.copyTranslateTrigger };
+  return {
+    provider,
+    connectionId: input.connectionId,
+    model: input.model.trim(),
+    deeplApiKey: (input.deeplApiKey ?? '').trim(),
+    googleApiKey: (input.googleApiKey ?? '').trim(),
+    targetLang: input.targetLang,
+    copyTranslateEnabled: input.copyTranslateEnabled,
+    copyTranslateTrigger: input.copyTranslateTrigger
+  };
 }
 export interface MediaReference { id: string; width: number; height: number; thumbnail: string }
 export type MediaJobStatus = 'running' | 'succeeded' | 'handed-off' | 'failed' | 'interrupted';

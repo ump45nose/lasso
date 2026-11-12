@@ -57,7 +57,7 @@ contextBridge.executeInMainWorld({ func: () => {
             glow: true,
             cliTasks,
             nookTasks: (base.nookTasks || []).slice(0, 1),
-            nookPrefs: { enabled: true, gitWaiting: true, prFeedback: true, prBlocked: false },
+            nookPrefs: { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true },
             copyTranslateEnabled: true
           }
         };
