@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +47,8 @@ if (dryRun) {
   console.log(JSON.stringify({ action: 'install', dryRun: true, destination, identity, launch, sourceCommit: manifest.sourceCommit, version: manifest.version }));
   process.exit(0);
 }
-mkdirSync(dirname(destination), { recursive: true });
+mkdirSync(dirname(destination), { recursive: true, mode: 0o755 });
+try { chmodSync(dirname(destination), 0o755); } catch {}
 const scratch = mkdtempSync(join(dirname(destination), '.lasso-install-'));
 const staged = join(scratch, 'Lasso.app');
 try {
@@ -69,4 +70,8 @@ try {
   const installerArgs = [join(root, 'support/app-install.py'), staged, destination, '--force-exit'];
   if (!launch) installerArgs.push('--no-launch');
   execFileSync('/usr/bin/python3', installerArgs, { stdio: 'inherit' });
+  try {
+    execFileSync('/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister', ['-f', destination], { stdio: 'ignore' });
+    execFileSync('/usr/bin/mdimport', [destination], { stdio: 'ignore' });
+  } catch {}
 } finally { rmSync(scratch, { recursive: true, force: true }); }

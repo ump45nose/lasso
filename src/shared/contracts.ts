@@ -293,7 +293,7 @@ export type IslandCliTask = {
 export interface IslandState {
   mode: IslandMode;
   glow: boolean;
-  notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number };
+  notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
   nookPrefs: NookReminderPrefs;
   copyTranslateEnabled: boolean;
   pomodoro: {

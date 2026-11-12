@@ -96,6 +96,8 @@ export class NotchIsland {
   private fonts: IslandState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
+  private layoutTimer: ReturnType<typeof setInterval> | null = null;
+  private lastAnchorX = -1;
 
   private readonly onDisplayMetricsChanged = () => this.placeWindows();
 
@@ -250,8 +252,15 @@ export class NotchIsland {
       this.copyTimer = setTimeout(() => {
         this.copyTimer = null;
         void this.clipboardHistory.poll().then(() => this.translateCopy()).catch(error => console.error('复制即译采集失败', error));
-      }, 100);
+      }, 25);
     });
+
+    if (!process.env.LASSO_DATA_ROOT) {
+      this.layoutTimer = setInterval(() => {
+        this.nookTasks = readNookTasks();
+        this.placeWindows();
+      }, 4000);
+    }
 
     this.window.once('ready-to-show', () => {
       if (!process.env.LASSO_DATA_ROOT) this.window.showInactive();
@@ -284,24 +293,31 @@ export class NotchIsland {
     }
   }
 
-  private placeWindows() {
+  private placeWindows(anchorX?: number) {
     const primary = screen.getPrimaryDisplay();
     if (!this.window.isDestroyed()) {
-      const x = Math.round(primary.bounds.x + (primary.bounds.width - WIN_W) / 2);
+      const geoAnchor = anchorX ?? this.ax.notchGeometry?.()?.anchorX;
+      const targetCenter = typeof geoAnchor === 'number' && geoAnchor > 0
+        ? primary.bounds.x + geoAnchor
+        : primary.bounds.x + primary.bounds.width / 2;
+      const x = Math.round(Math.max(primary.bounds.x, Math.min(targetCenter - WIN_W / 2, primary.bounds.x + primary.bounds.width - WIN_W)));
       const y = primary.bounds.y;
-      this.window.setBounds({ x, y, width: WIN_W, height: WIN_H });
+      if (Math.abs(x - this.lastAnchorX) >= 2) {
+        this.lastAnchorX = x;
+        this.window.setBounds({ x, y, width: WIN_W, height: WIN_H });
+      }
     }
     this.notes.place();
   }
 
   private resolveBaseMode(): IslandMode {
-    if (this.alerts.length > 0) return 'nook-alert';
     if (this.pomodoro?.active) return this.pomodoro.kind === 'slacking' ? 'slacking' : 'focus';
     return 'idle';
   }
 
   private snapshot(): IslandState {
     const geo = this.ax.notchGeometry?.();
+    if (geo?.anchorX) this.placeWindows(geo.anchorX);
     return {
       mode: this.mode,
       glow: this.glow,
@@ -312,9 +328,10 @@ export class NotchIsland {
             height: Math.round(geo.height),
             menuBarHeight: Math.round(geo.menuBarHeight),
             leftSafeWidth: geo.leftSafeWidth ? Math.round(geo.leftSafeWidth) : 148,
-            rightSafeWidth: geo.rightSafeWidth ? Math.round(geo.rightSafeWidth) : 148
+            rightSafeWidth: geo.rightSafeWidth ? Math.round(geo.rightSafeWidth) : 108,
+            anchorX: geo.anchorX ? Math.round(geo.anchorX) : undefined
           }
-        : { hasNotch: true, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 148, rightSafeWidth: 148 },
+        : { hasNotch: false, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 164, rightSafeWidth: 104 },
       nookPrefs: { ...this.nookPrefs },
       copyTranslateEnabled: this.copyTranslateEnabled,
       pomodoro: this.pomodoro,
@@ -740,9 +757,13 @@ export class NotchIsland {
           return;
         }
 
+        this.nookTasks = readNookTasks();
         if (this.alerts.length === 0) return;
         if (data.glow !== false) this.setGlow(true);
-        this.mode = 'nook-alert';
+        if (this.mode !== 'board' && this.mode !== 'focus-hover' && this.mode !== 'slacking' && this.mode !== 'nook-alert') {
+          this.mode = this.resolveBaseMode();
+          this.window.setIgnoreMouseEvents(true, { forward: true });
+        }
         this.publish();
       } catch {
         // ignore invalid payload
@@ -755,6 +776,7 @@ export class NotchIsland {
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
     if (this.copyTimer) clearTimeout(this.copyTimer);
+    if (this.layoutTimer) clearInterval(this.layoutTimer);
     this.ax.setGlow?.(false);
     this.ax.stopFinderTrigger?.();
     this.ax.stopCopyWatch?.();

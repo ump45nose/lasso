@@ -870,6 +870,12 @@ static napi_value frontmostApp(napi_env e, napi_callback_info) {
   return obj;
 }
 
+static pid_t g_cached_front_pid = 0;
+static double g_cached_menu_time = 0.0;
+static double g_cached_left_menu_right = 320.0;
+static double g_cached_extras_time = 0.0;
+static double g_cached_right_status_left = 0.0;
+
 static napi_value notchGeometry(napi_env e, napi_callback_info) {
   napi_value obj;
   napi_create_object(e, &obj);
@@ -877,52 +883,154 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
   double notchWidth = 156.0;
   double notchHeight = 28.0;
   double menuBarHeight = 28.0;
-  double leftSafeWidth = 148.0;
-  double rightSafeWidth = 148.0;
+  double leftSafeWidth = 136.0;
+  double rightSafeWidth = 108.0;
+  double anchorX = 0.0;
   @autoreleasepool {
     NSScreen* screen = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
     if (screen) {
       NSRect frame = screen.frame;
       NSRect visible = screen.visibleFrame;
       menuBarHeight = std::max(24.0, (double)(NSMaxY(frame) - NSMaxY(visible)));
-      double notchLeftX = frame.origin.x + (frame.size.width - notchWidth) / 2.0;
+      double screenWidth = frame.size.width;
+      anchorX = frame.origin.x + screenWidth / 2.0;
+
+      bool physicalNotch = false;
+      double notchLeftX = frame.origin.x + (screenWidth - notchWidth) / 2.0;
       double notchRightX = notchLeftX + notchWidth;
       if (@available(macOS 12.0, *)) {
         NSEdgeInsets insets = screen.safeAreaInsets;
         NSRect leftAux = screen.auxiliaryTopLeftArea;
         NSRect rightAux = screen.auxiliaryTopRightArea;
         if (insets.top > 0.0 && leftAux.size.width > 0.0 && rightAux.size.width > 0.0) {
-          hasNotch = true;
+          physicalNotch = true;
           notchLeftX = NSMaxX(leftAux);
           notchRightX = rightAux.origin.x;
           notchWidth = std::max(120.0, notchRightX - notchLeftX);
           notchHeight = (double)insets.top;
           menuBarHeight = std::max(menuBarHeight, notchHeight);
-          leftSafeWidth = std::clamp((double)leftAux.size.width - 310.0, 64.0, 168.0);
-          rightSafeWidth = std::clamp((double)rightAux.size.width - 260.0, 64.0, 168.0);
         }
       }
-      CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID);
-      if (list) {
-        pid_t selfPid = getpid();
-        double minRightStatusX = NSMaxX(frame) - 180.0;
-        for (NSDictionary* w in (__bridge NSArray*)list) {
-          pid_t pid = [w[(id)kCGWindowOwnerPID] intValue];
-          if (pid <= 0 || pid == selfPid) continue;
-          int layer = [w[(id)kCGWindowLayer] intValue];
-          if (layer < kCGStatusWindowLevel - 1) continue;
-          NSDictionary* b = w[(id)kCGWindowBounds];
-          if (!b) continue;
-          double wx = [b[@"X"] doubleValue], wy = [b[@"Y"] doubleValue];
-          double ww = [b[@"Width"] doubleValue], wh = [b[@"Height"] doubleValue];
-          if (wy >= -2.0 && wy <= menuBarHeight + 4.0 && wh <= menuBarHeight + 16.0 && ww > 4.0 && ww < frame.size.width * 0.6) {
-            if (wx >= notchRightX - 2.0) {
-              minRightStatusX = std::min(minRightStatusX, wx);
+
+      double now = CFAbsoluteTimeGetCurrent();
+      double leftMenuRightX = frame.origin.x + 310.0;
+      double minRightStatusX = NSMaxX(frame) - 240.0;
+
+      if (AXIsProcessTrusted()) {
+        NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
+        pid_t frontPid = front ? front.processIdentifier : 0;
+        if (frontPid > 0 && frontPid == g_cached_front_pid && (now - g_cached_menu_time) < 2.5) {
+          leftMenuRightX = g_cached_left_menu_right;
+        } else if (frontPid > 0) {
+          AXUIElementRef appRef = AXUIElementCreateApplication(frontPid);
+          AXUIElementSetMessagingTimeout(appRef, 0.04f);
+          CFTypeRef menuBarRef = nullptr;
+          if (AXUIElementCopyAttributeValue(appRef, kAXMenuBarAttribute, &menuBarRef) == kAXErrorSuccess && menuBarRef) {
+            CFTypeRef childrenRef = nullptr;
+            if (AXUIElementCopyAttributeValue((AXUIElementRef)menuBarRef, kAXChildrenAttribute, &childrenRef) == kAXErrorSuccess && childrenRef) {
+              double maxRight = 0.0;
+              for (id child in (__bridge NSArray*)childrenRef) {
+                AXUIElementRef item = (__bridge AXUIElementRef)child;
+                CFTypeRef posRef = nullptr, sizeRef = nullptr;
+                CGPoint p = CGPointZero;
+                CGSize s = CGSizeZero;
+                if (AXUIElementCopyAttributeValue(item, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) {
+                  AXValueGetValue((AXValueRef)posRef, kAXValueTypeCGPoint, &p);
+                  CFRelease(posRef);
+                }
+                if (AXUIElementCopyAttributeValue(item, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) {
+                  AXValueGetValue((AXValueRef)sizeRef, kAXValueTypeCGSize, &s);
+                  CFRelease(sizeRef);
+                }
+                if (p.x >= frame.origin.x && p.x < frame.origin.x + screenWidth * 0.65 && s.width > 4.0) {
+                  maxRight = std::max(maxRight, (double)(p.x + s.width));
+                }
+              }
+              if (maxRight > frame.origin.x + 40.0) leftMenuRightX = maxRight;
+              CFRelease(childrenRef);
             }
+            CFRelease(menuBarRef);
+          }
+          CFRelease(appRef);
+          g_cached_front_pid = frontPid;
+          g_cached_menu_time = now;
+          g_cached_left_menu_right = leftMenuRightX;
+        }
+
+        if (g_cached_right_status_left > 0.0 && (now - g_cached_extras_time) < 4.0) {
+          minRightStatusX = g_cached_right_status_left;
+        } else {
+          double detectedMinX = NSMaxX(frame);
+          bool foundExtras = false;
+          for (NSRunningApplication* app in [[NSWorkspace sharedWorkspace] runningApplications]) {
+            if (app.activationPolicy == NSApplicationActivationPolicyProhibited) continue;
+            pid_t pid = app.processIdentifier;
+            if (pid <= 0) continue;
+            AXUIElementRef appRef = AXUIElementCreateApplication(pid);
+            AXUIElementSetMessagingTimeout(appRef, 0.03f);
+            CFTypeRef extrasRef = nullptr;
+            if (AXUIElementCopyAttributeValue(appRef, CFSTR("AXExtrasMenuBar"), &extrasRef) == kAXErrorSuccess && extrasRef) {
+              CFTypeRef childrenRef = nullptr;
+              if (AXUIElementCopyAttributeValue((AXUIElementRef)extrasRef, kAXChildrenAttribute, &childrenRef) == kAXErrorSuccess && childrenRef) {
+                for (id child in (__bridge NSArray*)childrenRef) {
+                  AXUIElementRef item = (__bridge AXUIElementRef)child;
+                  CFTypeRef posRef = nullptr, sizeRef = nullptr;
+                  CGPoint p = CGPointZero;
+                  CGSize s = CGSizeZero;
+                  if (AXUIElementCopyAttributeValue(item, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) {
+                    AXValueGetValue((AXValueRef)posRef, kAXValueTypeCGPoint, &p);
+                    CFRelease(posRef);
+                  }
+                  if (AXUIElementCopyAttributeValue(item, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) {
+                    AXValueGetValue((AXValueRef)sizeRef, kAXValueTypeCGSize, &s);
+                    CFRelease(sizeRef);
+                  }
+                  if (p.y >= -4.0 && p.y <= menuBarHeight + 8.0 && p.x > leftMenuRightX + 20.0 && p.x < NSMaxX(frame) && s.width > 4.0) {
+                    detectedMinX = std::min(detectedMinX, (double)p.x);
+                    foundExtras = true;
+                  }
+                }
+                CFRelease(childrenRef);
+              }
+              CFRelease(extrasRef);
+            }
+            CFRelease(appRef);
+          }
+          if (foundExtras) {
+            minRightStatusX = detectedMinX;
+            g_cached_right_status_left = minRightStatusX;
+            g_cached_extras_time = now;
           }
         }
-        CFRelease(list);
-        rightSafeWidth = std::clamp(minRightStatusX - notchRightX - 10.0, 64.0, 168.0);
+      }
+
+      if (physicalNotch) {
+        double leftFree = (notchLeftX - 8.0) - (leftMenuRightX + 12.0);
+        double rightFree = (minRightStatusX - 12.0) - (notchRightX + 8.0);
+        if (leftFree >= 88.0 && rightFree >= 72.0) {
+          hasNotch = true;
+          leftSafeWidth = std::clamp(leftFree, 88.0, 164.0);
+          rightSafeWidth = std::clamp(rightFree, 72.0, 136.0);
+          anchorX = (notchLeftX + notchRightX) / 2.0;
+        } else {
+          // Right side of the physical notch is occupied by status items: place unified capsule in the free gap on the left of the notch.
+          hasNotch = false;
+          double gapLeft = leftMenuRightX + 12.0;
+          double gapRight = std::min(notchLeftX - 10.0, minRightStatusX - 12.0);
+          double avail = std::clamp(gapRight - gapLeft, 168.0, 296.0);
+          leftSafeWidth = std::round(avail * 0.62);
+          rightSafeWidth = std::round(avail * 0.38);
+          anchorX = std::clamp(notchLeftX - 10.0 - avail / 2.0, gapLeft + avail / 2.0, std::max(gapLeft + avail / 2.0, gapRight - avail / 2.0));
+        }
+      } else {
+        hasNotch = false;
+        double gapLeft = leftMenuRightX + 12.0;
+        double gapRight = std::max(gapLeft + 168.0, minRightStatusX - 12.0);
+        double avail = std::clamp(gapRight - gapLeft, 168.0, 304.0);
+        leftSafeWidth = std::round(avail * 0.62);
+        rightSafeWidth = std::round(avail * 0.38);
+        double center = frame.origin.x + screenWidth / 2.0;
+        anchorX = std::clamp(center, gapLeft + avail / 2.0, std::max(gapLeft + avail / 2.0, gapRight - avail / 2.0));
       }
     }
   }
@@ -934,6 +1042,7 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
   prop(e, obj, "menuBarHeight", menuBarHeight);
   prop(e, obj, "leftSafeWidth", leftSafeWidth);
   prop(e, obj, "rightSafeWidth", rightSafeWidth);
+  prop(e, obj, "anchorX", anchorX);
   return obj;
 }
 

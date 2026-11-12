@@ -80,8 +80,8 @@ export class SelectionCapture {
         for (const input of this.inputs) input.keystroke({ key: uniKey, modifiers: modifiers.filter(key => key !== uniKey) });
         return;
       }
-      // Copy and modifier keys preserve the selected text for its shortcuts.
-      if ((flags & (1 << 20)) && uniKey.toLowerCase() === 'c') return;
+      // Copy and modifier-chord shortcuts (⌘/⌥/⌃) preserve the selected text for global actions like ⌥T.
+      if (flags & ((1 << 18) | (1 << 19) | (1 << 20))) return;
       if (!['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Fn'].includes(uniKey)) this.onDismiss();
     });
     return hook;

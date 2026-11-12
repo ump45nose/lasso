@@ -22,16 +22,115 @@ const DEEPL_LANG_MAP: Record<Exclude<TranslationLang, 'auto'>, string> = {
   zh: 'ZH-HANS', en: 'EN-US', ja: 'JA', ko: 'KO', fr: 'FR', de: 'DE'
 };
 
+const DEEPLX_LANG_MAP: Record<Exclude<TranslationLang, 'auto'>, string> = {
+  zh: 'ZH', en: 'EN', ja: 'JA', ko: 'KO', fr: 'FR', de: 'DE'
+};
+
+const translationCache = new Map<string, string>();
+
+function getCachedTranslation(key: string): string | undefined {
+  const val = translationCache.get(key);
+  if (val !== undefined) {
+    translationCache.delete(key);
+    translationCache.set(key, val);
+  }
+  return val;
+}
+
+function setCachedTranslation(key: string, val: string) {
+  if (translationCache.size >= 128) {
+    const oldest = translationCache.keys().next().value;
+    if (oldest !== undefined) translationCache.delete(oldest);
+  }
+  translationCache.set(key, val);
+}
+
+async function translateViaYoudaoMobile(text: string, target: Exclude<TranslationLang, 'auto'>, signal?: AbortSignal): Promise<string> {
+  if (text.includes('\n') || target === 'de') throw Error('skip-youdao-mobile');
+  const typeMap: Record<Exclude<TranslationLang, 'auto'>, string> = {
+    zh: 'AUTO', en: 'ZH_CN2EN', ja: 'ZH_CN2JA', ko: 'ZH_CN2KR', fr: 'ZH_CN2FR', de: 'AUTO'
+  };
+  const body = new URLSearchParams({ inputtext: text, type: typeMap[target] });
+  const res = await fetch('https://m.youdao.com/translate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148'
+    },
+    body,
+    signal
+  });
+  if (!res.ok) throw Error(`有道翻译响应异常 (${res.status})`);
+  const html = await res.text();
+  const match = html.match(/id="translateResult">\s*([\s\S]*?)\s*<\/ul>/);
+  const out = match ? [...match[1].matchAll(/<li>([\s\S]*?)<\/li>/g)].map(item => item[1].trim()).join('\n') : '';
+  if (!out.trim()) throw Error('有道翻译结果为空');
+  return out;
+}
+
+async function translateViaTranSmart(text: string, target: Exclude<TranslationLang, 'auto'>, signal?: AbortSignal): Promise<string> {
+  const res = await fetch('https://transmart.qq.com/api/imt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'User-Agent': 'Mozilla/5.0' },
+    body: JSON.stringify({
+      header: { fn: 'auto_translation_block', client_key: 'browser-chrome-110.0.0-Mac OS-df4bd4c5-a65d-44b2-a40f-42f34f3535f2-1677486696487' },
+      type: 'plain',
+      model_category: 'normal',
+      source: { lang: 'auto', text_block: text },
+      target: { lang: target }
+    }),
+    signal
+  });
+  if (!res.ok) throw Error(`腾讯交互翻译异常 (${res.status})`);
+  const body = await res.json() as { auto_translation?: string | string[] };
+  const out = Array.isArray(body.auto_translation) ? body.auto_translation.join('\n') : String(body.auto_translation || '');
+  if (!out.trim()) throw Error('腾讯交互翻译结果为空');
+  return out;
+}
+
 async function translateViaGooglePublic(text: string, target: Exclude<TranslationLang, 'auto'>, signal?: AbortSignal): Promise<string> {
   const tl = GOOGLE_LANG_MAP[target];
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`;
-  const res = await fetch(url, { signal });
+  const url = `https://translate.google.com/translate_a/single?client=dict-chrome-ex&sl=auto&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, signal });
   if (!res.ok) throw Error(`翻译服务响应异常 (${res.status})`);
   const data = await res.json() as unknown;
   if (!Array.isArray(data) || !Array.isArray(data[0])) throw Error('翻译结果解析失败');
   const out = (data[0] as unknown[]).map(seg => Array.isArray(seg) && typeof seg[0] === 'string' ? seg[0] : '').join('');
   if (!out.trim()) throw Error('翻译结果为空');
   return out;
+}
+
+async function translateViaFastPublic(text: string, target: Exclude<TranslationLang, 'auto'>, signal?: AbortSignal): Promise<string> {
+  return Promise.any([
+    translateViaYoudaoMobile(text, target, signal),
+    translateViaTranSmart(text, target, signal),
+    translateViaGooglePublic(text, target, signal)
+  ]);
+}
+
+async function translateViaDeepLX(apiKeyOrUrl: string, text: string, target: Exclude<TranslationLang, 'auto'>, signal?: AbortSignal): Promise<string> {
+  const endpoint = /^https?:\/\//i.test(apiKeyOrUrl)
+    ? apiKeyOrUrl
+    : `https://api.deeplx.org/${encodeURIComponent(apiKeyOrUrl)}/translate`;
+  const sourceLang = /[一-鿿]/.test(text) ? 'ZH' : 'EN';
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, source_lang: sourceLang, target_lang: DEEPLX_LANG_MAP[target] }),
+    signal
+  });
+  if (!res.ok) throw Error(`DeepLX 翻译失败 (${res.status})`);
+  const body = await res.json() as { code?: number; data?: string };
+  const out = typeof body.data === 'string' ? body.data.trim() : '';
+  if (!out || /^https?:\/\/linux\.do/i.test(out)) throw Error('DeepLX 返回译文无效');
+  return out;
+}
+
+if (!process.env.LASSO_DATA_ROOT) {
+  setTimeout(() => {
+    void translateViaYoudaoMobile('hello', 'zh').catch(() => {});
+    void translateViaTranSmart('hello', 'zh').catch(() => {});
+  }, 800);
 }
 
 export async function translateTextStream(
@@ -65,24 +164,69 @@ export async function translateTextStream(
   }
 
   const effectiveLang = resolveEffectiveLang(text, targetLang);
+  const cacheKey = `${provider}:${effectiveLang}:${text}`;
+  const cached = getCachedTranslation(cacheKey);
+  if (cached) {
+    const firstTokenMs = Math.max(1, Date.now() - startedAt);
+    onDelta?.(cached, firstTokenMs);
+    return {
+      text: cached,
+      model: provider === 'deepl' ? 'DeepLX' : provider === 'google' ? 'Google Translate' : '内置极速',
+      connectionName: provider === 'deepl' ? 'DeepL / DeepLX' : provider === 'google' ? 'Google 翻译' : '内置极速翻译',
+      firstTokenMs
+    };
+  }
 
   if (provider === 'deepl') {
     const apiKey = settings.deeplApiKey?.trim();
-    if (!apiKey) throw Error('请先在设置中填写 DeepL API Key，或切换为内置极速翻译');
-    const endpoint = apiKey.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: { Authorization: `DeepL-Auth-Key ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: [text], target_lang: DEEPL_LANG_MAP[effectiveLang] }),
-      signal
+    if (!apiKey) throw Error('请先在设置中填写 DeepL / DeepLX Key，或切换为内置极速翻译');
+    const isOfficialDeepL = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}(:fx)?$/.test(apiKey);
+    if (isOfficialDeepL) {
+      const endpoint = apiKey.endsWith(':fx') ? 'https://api-free.deepl.com/v2/translate' : 'https://api.deepl.com/v2/translate';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { Authorization: `DeepL-Auth-Key ${apiKey}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: [text], target_lang: DEEPL_LANG_MAP[effectiveLang] }),
+        signal
+      });
+      if (!res.ok) throw Error(`DeepL 翻译失败 (${res.status})`);
+      const body = await res.json() as { translations?: { text?: string }[] };
+      const out = body.translations?.map(t => t.text || '').join('\n') || '';
+      if (!out.trim()) throw Error('DeepL 返回译文为空');
+      const firstTokenMs = Math.max(1, Date.now() - startedAt);
+      setCachedTranslation(cacheKey, out);
+      onDelta?.(out, firstTokenMs);
+      return { text: out, model: 'DeepL', connectionName: 'DeepL API', firstTokenMs };
+    }
+
+    let firstTokenMs = 0;
+    let fastPreview = '';
+    const fastPromise = translateViaFastPublic(text, effectiveLang, signal).then(out => {
+      if (!firstTokenMs) {
+        firstTokenMs = Math.max(1, Date.now() - startedAt);
+        fastPreview = out;
+        onDelta?.(out, firstTokenMs);
+      }
+      return out;
     });
-    if (!res.ok) throw Error(`DeepL 翻译失败 (${res.status})`);
-    const body = await res.json() as { translations?: { text?: string }[] };
-    const out = body.translations?.map(t => t.text || '').join('\n') || '';
-    if (!out.trim()) throw Error('DeepL 返回译文为空');
-    const firstTokenMs = Math.max(1, Date.now() - startedAt);
-    onDelta?.(out, firstTokenMs);
-    return { text: out, model: 'DeepL', connectionName: 'DeepL API', firstTokenMs };
+
+    try {
+      const out = await translateViaDeepLX(apiKey, text, effectiveLang, signal);
+      if (!firstTokenMs) firstTokenMs = Math.max(1, Date.now() - startedAt);
+      setCachedTranslation(cacheKey, out);
+      onDelta?.(out, firstTokenMs);
+      return { text: out, model: 'DeepLX', connectionName: 'DeepLX API', firstTokenMs };
+    } catch (deeplxError) {
+      try {
+        const fallbackOut = fastPreview || await fastPromise;
+        if (!firstTokenMs) firstTokenMs = Math.max(1, Date.now() - startedAt);
+        setCachedTranslation(cacheKey, fallbackOut);
+        onDelta?.(fallbackOut, firstTokenMs);
+        return { text: fallbackOut, model: 'DeepLX · 极速回退', connectionName: 'DeepLX / 极速双通道', firstTokenMs };
+      } catch {
+        throw deeplxError;
+      }
+    }
   }
 
   if (provider === 'google' && settings.googleApiKey?.trim()) {
@@ -98,12 +242,14 @@ export async function translateTextStream(
     const out = body.data?.translations?.map(t => t.translatedText || '').join('\n') || '';
     if (!out.trim()) throw Error('Google 翻译返回为空');
     const firstTokenMs = Math.max(1, Date.now() - startedAt);
+    setCachedTranslation(cacheKey, out);
     onDelta?.(out, firstTokenMs);
     return { text: out, model: 'Google Translate', connectionName: 'Google Cloud', firstTokenMs };
   }
 
-  const out = await translateViaGooglePublic(text, effectiveLang, signal);
+  const out = await translateViaFastPublic(text, effectiveLang, signal);
   const firstTokenMs = Math.max(1, Date.now() - startedAt);
+  setCachedTranslation(cacheKey, out);
   onDelta?.(out, firstTokenMs);
   return {
     text: out,

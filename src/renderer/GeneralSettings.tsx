@@ -255,8 +255,8 @@ function TranslationServiceSettings({ translation }: { translation: TranslationS
       {activeProvider === 'deepl' && (
         <li className="col">
           <div className="l-field">
-            <label htmlFor="translation-deepl-key">DeepL API Key</label>
-            <input id="translation-deepl-key" className="l-input mono" type="password" autoComplete="off" placeholder="输入 DeepL API Key（Free 密钥以 :fx 结尾）"
+            <label htmlFor="translation-deepl-key">DeepL / DeepLX Key 或接口地址</label>
+            <input id="translation-deepl-key" className="l-input mono" type="password" autoComplete="off" placeholder="输入 DeepLX Token / 完整 translate 地址，或官方 DeepL Key"
               value={draft.deeplApiKey || ''} disabled={busy} onChange={e => { setDraft({ ...draft, provider: 'deepl', deeplApiKey: e.target.value }); setError(''); setNotice(''); }} />
           </div>
         </li>

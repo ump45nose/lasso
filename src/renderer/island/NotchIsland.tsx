@@ -63,23 +63,23 @@ export function NotchIsland() {
   const nookPrefs = state.nookPrefs ?? { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true };
   const copyTranslateEnabled = Boolean(state.copyTranslateEnabled);
   const firstCli = cliTasks[0] ?? null;
-  const hasNotch = notch?.hasNotch !== false;
-  const notchW = hasNotch ? (notch?.width ?? 156) : 120;
-  const notchH = hasNotch ? (notch?.height ?? 28) : 5;
-  const menuH = notch?.menuBarHeight ?? (hasNotch ? (notch?.height ?? 28) : 24);
-  const leftSafeW = Math.min(148, Math.max(84, notch?.leftSafeWidth ?? 136));
-  const rightSafeW = Math.min(124, Math.max(72, notch?.rightSafeWidth ?? 108));
+  const hasNotch = Boolean(notch?.hasNotch);
+  const notchW = hasNotch ? (notch?.width ?? 156) : 0;
+  const notchH = hasNotch ? (notch?.height ?? 28) : (notch?.menuBarHeight ?? 28);
+  const menuH = notch?.menuBarHeight ?? (hasNotch ? (notch?.height ?? 28) : 28);
+  const leftSafeW = Math.min(180, Math.max(88, notch?.leftSafeWidth ?? 152));
+  const rightSafeW = Math.min(136, Math.max(68, notch?.rightSafeWidth ?? 96));
 
   const wingKind =
     mode === 'toast' && toast
       ? 'toast'
-      : mode === 'nook-alert' && alerts.length > 0
+      : alerts.length > 0
         ? 'nook-alert'
         : (mode === 'focus' || mode === 'focus-hover' || mode === 'slacking') && pomodoro?.active
           ? 'focus'
           : firstCli
             ? 'cli'
-            : null;
+            : 'idle';
 
   const dropKind =
     mode === 'board'
@@ -93,16 +93,17 @@ export function NotchIsland() {
             : null;
 
   function resolveCollapsedMode() {
-    return pomodoro?.active ? (pomodoro.kind === 'slacking' ? 'slacking' : 'focus') : alerts.length ? 'nook-alert' : 'idle';
+    return pomodoro?.active ? (pomodoro.kind === 'slacking' ? 'slacking' : 'focus') : 'idle';
   }
 
   function enterCard() {
     window.island.hit(true);
     if (mode === 'focus') window.island.setMode('focus-hover');
+    else if (mode === 'idle' && alerts.length > 0) window.island.setMode('nook-alert');
   }
 
   function leaveCard() {
-    if (mode === 'focus-hover') window.island.setMode('focus');
+    if (mode === 'focus-hover' || mode === 'nook-alert') window.island.setMode(resolveCollapsedMode());
     window.island.hit(false);
   }
 
@@ -149,22 +150,40 @@ export function NotchIsland() {
 
         {wingKind && (
           <div
-            className={`isl-menubar-wings mode-${wingKind} is-capsule${glow ? ' glow-on' : ''}`}
+            className={`isl-menubar-wings mode-${wingKind} is-capsule${!hasNotch ? ' no-notch' : ''}${glow ? ' glow-on' : ''}`}
             onPointerEnter={enterCard}
             onPointerLeave={leaveCard}
           >
+            {wingKind === 'idle' && (
+              <button
+                type="button"
+                className="isl-wing-hit"
+                aria-label="展开或收起 Lasso 刘海岛工作台"
+                onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+              >
+                <span className="isl-wing isl-wing-left">
+                  <span className="dot running" />
+                  <span className="isl-focus-task">{nookTasks[0]?.title || '今日无待办 · 随时专注'}</span>
+                </span>
+                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
+                <span className="isl-wing isl-wing-right">
+                  <span className="isl-tag mono">{nookTasks.length > 0 ? `${nookTasks.length} 待办` : '25m 专注'}</span>
+                </span>
+              </button>
+            )}
+
             {wingKind === 'focus' && pomodoro && (
               <button
                 type="button"
                 className="isl-wing-hit"
                 aria-label={`番茄钟 ${pomodoro.taskTitle}`}
-                onClick={() => window.island.setMode('board')}
+                onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
               >
                 <span className="isl-wing isl-wing-left">
                   <span className="dot running" />
                   <span className="isl-focus-task">{pomodoro.taskTitle}</span>
                 </span>
-                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                 <span className="isl-wing isl-wing-right">
                   <span className="isl-clock mono">{formatClock(pomodoro.remainingSeconds)}</span>
                 </span>
@@ -182,7 +201,7 @@ export function NotchIsland() {
                   <span className={`dot ${firstCli.activity}`} />
                   <span className="ni-pill-title">{firstCli.target === 'codex' ? 'Codex' : 'Pi'} · {firstCli.title}</span>
                 </span>
-                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                 <span className="isl-wing isl-wing-right">
                   <span className="ni-pill-state mono">{firstCli.activity === 'waiting' ? '待审批' : '运行中'}</span>
                 </span>
@@ -195,7 +214,7 @@ export function NotchIsland() {
                   <span className="dot complete" />
                   <span className="isl-toast-text">{toast.text}</span>
                 </span>
-                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                 <span className="isl-wing isl-wing-right">
                   {toast.badge && <kbd className="isl-kbd mono">{toast.badge}</kbd>}
                   <button
@@ -215,15 +234,15 @@ export function NotchIsland() {
                 type="button"
                 className="isl-wing-hit"
                 aria-label="Nook 提醒中心"
-                onClick={() => window.island.setMode('board')}
+                onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
               >
                 <span className="isl-wing isl-wing-left">
                   <Bell size={12} className="isl-clay-icon" />
                   <span className="isl-focus-task">{alerts[0]?.title || 'Nook 紧迫提醒'}</span>
                 </span>
-                <span className="isl-wing-notch-gap" aria-hidden="true" />
+                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                 <span className="isl-wing isl-wing-right">
-                  <span className="isl-tag mono">{alerts.length} 条待办</span>
+                  <span className="isl-tag mono">{alerts.length} 条提醒</span>
                 </span>
               </button>
             )}

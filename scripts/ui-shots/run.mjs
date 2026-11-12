@@ -754,8 +754,8 @@ console.error('ui fixture lock', app.hasSingleInstanceLock(), 'ready', app.isRea
 
       isl.webContents.send('island:changed', islFixtures.idle);
       await wait(350);
-      if (!await page(isl, `(() => { const r = document.querySelector('.isl-notch-anchor')?.getBoundingClientRect(); return Boolean(r && r.top === 0 && r.bottom <= ${menuH} && !document.querySelector('.isl-drop-card') && !document.querySelector('.isl-menubar-wings')); })()`)) {
-        throw Error('Idle NotchIsland leaked a dropped card or wings');
+      if (!await page(isl, `(() => { const r = document.querySelector('.isl-menubar-wings.mode-idle.is-capsule')?.getBoundingClientRect(); return Boolean(r && r.top >= 0 && r.bottom <= ${menuH} && !document.querySelector('.isl-drop-card')); })()`)) {
+        throw Error('Idle NotchIsland daily capsule did not stay inside menu bar or leaked a dropped card');
       }
       names.push(await save(isl, 'island-idle'));
 

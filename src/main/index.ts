@@ -297,7 +297,7 @@ async function runGlobalAction(action: GlobalActionId) {
   else if (action.startsWith('delay-')) await startScreenshot('area', Number(action.slice(6, -1)) as CaptureDelay);
   else if (action === 'pin-clipboard') { capture.suppress(); await screenshots.pins.pinClipboard(); }
   else if (action === 'open-translator') {
-    capture?.current();
+    if (!lastSelection?.text?.trim()) capture?.current();
     const selText = lastSelection?.text?.trim();
     const frontPid = nativeAx().frontmostApp?.().pid ?? 0;
     if (selText) actionBar?.hide();
