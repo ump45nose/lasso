@@ -313,7 +313,8 @@ export class NotchIsland {
         : primary.bounds.x + primary.bounds.width / 2;
       const x = Math.round(Math.max(primary.bounds.x, Math.min(targetCenter - WIN_W / 2, primary.bounds.x + primary.bounds.width - WIN_W)));
       const y = primary.bounds.y;
-      if (Math.abs(x - this.lastAnchorX) >= 2) {
+      const cur = this.window.getBounds();
+      if (Math.abs(x - this.lastAnchorX) >= 2 || Math.abs(cur.x - x) >= 2 || cur.y !== y || cur.width !== WIN_W || cur.height !== WIN_H) {
         this.lastAnchorX = x;
         this.window.setBounds({ x, y, width: WIN_W, height: WIN_H });
       }

@@ -877,9 +877,12 @@ static double g_cached_blocker_center_x = 0.0;
 static bool g_cached_has_blocker = false;
 
 static NSStatusItem* g_island_blocker_item = nil;
+static NSString* g_blocker_current_key = nil;
 static napi_threadsafe_function g_island_click_tsfn = nullptr;
 static double g_blocker_screen_w = 0.0;
-static double g_blocker_pref_pos = 0.0;
+static bool g_blocker_calibrating = false;
+static int g_blocker_seq = 0;
+static int g_blocker_calib_gen = 0;
 
 @interface LassoIslandBlockerTarget : NSObject
 - (void)onBlockerClick:(id)sender;
@@ -903,12 +906,35 @@ static void callIslandClickJS(napi_env env, napi_value cb, void*, void*) {
   }
 }
 
+static void clearBlockerDefaults() {
+  NSUserDefaults* defs = [NSUserDefaults standardUserDefaults];
+  NSDictionary<NSString*, id>* dict = [defs dictionaryRepresentation];
+  for (NSString* key in [dict allKeys]) {
+    if ([key hasPrefix:@"NSStatusItem Preferred Position LassoNotch"]) {
+      [defs removeObjectForKey:key];
+    }
+  }
+  g_blocker_current_key = nil;
+}
+
+static void removeBlockerItemOnMain() {
+  if (g_island_blocker_item) {
+    [[NSStatusBar systemStatusBar] removeStatusItem:g_island_blocker_item];
+    g_island_blocker_item = nil;
+  }
+  if (g_blocker_current_key) {
+    [[NSUserDefaults standardUserDefaults] removeObjectForKey:g_blocker_current_key];
+    g_blocker_current_key = nil;
+  }
+}
+
 static void stopIslandBlocker() {
   onMain(^{
-    if (g_island_blocker_item) {
-      [[NSStatusBar systemStatusBar] removeStatusItem:g_island_blocker_item];
-      g_island_blocker_item = nil;
-    }
+    g_blocker_calib_gen++;
+    g_blocker_calibrating = false;
+    g_blocker_screen_w = 0.0;
+    removeBlockerItemOnMain();
+    clearBlockerDefaults();
     if (g_island_click_tsfn) {
       napi_release_threadsafe_function(g_island_click_tsfn, napi_tsfn_abort);
       g_island_click_tsfn = nullptr;
@@ -916,41 +942,109 @@ static void stopIslandBlocker() {
   });
 }
 
-static void setBlockerSlot(bool enabled, double prefPos, double width) {
-  onMain(^{
-    if (!enabled) {
-      if (g_island_blocker_item) {
-        [[NSStatusBar systemStatusBar] removeStatusItem:g_island_blocker_item];
-        g_island_blocker_item = nil;
+static void createBlockerItemAtPos(double prefPos, double width) {
+  removeBlockerItemOnMain();
+  NSString* autosave = [NSString stringWithFormat:@"LassoNotchSlot_%d", ++g_blocker_seq];
+  NSString* prefKey = [NSString stringWithFormat:@"NSStatusItem Preferred Position %@", autosave];
+  g_blocker_current_key = prefKey;
+  [[NSUserDefaults standardUserDefaults] setDouble:prefPos forKey:prefKey];
+  g_island_blocker_item = [[NSStatusBar systemStatusBar] statusItemWithLength:width];
+  g_island_blocker_item.autosaveName = autosave;
+  if (g_island_blocker_item.button) {
+    g_island_blocker_item.button.title = @"";
+    if (!g_blocker_target) g_blocker_target = [LassoIslandBlockerTarget new];
+    g_island_blocker_item.button.target = g_blocker_target;
+    g_island_blocker_item.button.action = @selector(onBlockerClick:);
+    if ([g_island_blocker_item.button.cell isKindOfClass:[NSButtonCell class]]) {
+      ((NSButtonCell*)g_island_blocker_item.button.cell).highlightsBy = NSNoCellMask;
+    }
+  }
+}
+
+static bool validBlockerWindowFrame(double screenOriginX, double screenTopY, NSRect* outRect) {
+  if (!g_island_blocker_item || !g_island_blocker_item.button || !g_island_blocker_item.button.window) return false;
+  NSRect bf = g_island_blocker_item.button.window.frame;
+  if (bf.size.height <= 0.0 || bf.origin.y < screenTopY - 45.0 || bf.origin.x <= screenOriginX + 180.0) return false;
+  if (outRect) *outRect = bf;
+  return true;
+}
+
+static void pollBlockerFrame(int gen, double screenOriginX, double screenTopY, int attempt, void (^done)(NSRect bf, bool valid)) {
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 45 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+    if (gen != g_blocker_calib_gen) return;
+    NSRect bf = NSZeroRect;
+    if (validBlockerWindowFrame(screenOriginX, screenTopY, &bf)) {
+      done(bf, true);
+    } else if (attempt < 7) {
+      pollBlockerFrame(gen, screenOriginX, screenTopY, attempt + 1, done);
+    } else {
+      done(NSZeroRect, false);
+    }
+  });
+}
+
+static void runBlockerCalibStep(int gen, int step, double lo, double hi, double bestPos, double bestDiff,
+                                double screenOriginX, double screenTopY, double screenCenterX, double width) {
+  if (gen != g_blocker_calib_gen) return;
+  double mid = std::round((lo + hi) * 0.5);
+  createBlockerItemAtPos(mid, width);
+  pollBlockerFrame(gen, screenOriginX, screenTopY, 0, ^(NSRect bf, bool valid) {
+    if (gen != g_blocker_calib_gen) return;
+    if (!valid) {
+      g_blocker_calibrating = false;
+      return;
+    }
+    double center = NSMidX(bf);
+    double diff = center - screenCenterX;
+    double absDiff = std::abs(diff);
+    double nextBestDiff = bestDiff;
+    double nextBestPos = bestPos;
+    if (absDiff <= nextBestDiff + 0.5) {
+      nextBestDiff = absDiff;
+      nextBestPos = mid;
+    }
+    g_cached_blocker_center_x = (bf.origin.x > screenCenterX + 124.0) ? screenCenterX : center;
+    g_cached_has_blocker = true;
+
+    if (absDiff <= 16.0 || step >= 7) {
+      if (std::abs(mid - nextBestPos) >= 1.0) {
+        createBlockerItemAtPos(nextBestPos, width);
+        pollBlockerFrame(gen, screenOriginX, screenTopY, 0, ^(NSRect finalBf, bool finalValid) {
+          if (gen != g_blocker_calib_gen) return;
+          if (finalValid) {
+            double fc = NSMidX(finalBf);
+            g_cached_blocker_center_x = (finalBf.origin.x > screenCenterX + 124.0) ? screenCenterX : fc;
+            g_cached_has_blocker = true;
+          }
+          g_blocker_calibrating = false;
+        });
+      } else {
+        g_blocker_calibrating = false;
       }
       return;
     }
-    NSString* autosave = @"LassoNotchCenterSlot";
-    NSString* prefKey = @"NSStatusItem Preferred Position LassoNotchCenterSlot";
-    bool needRecreate = !g_island_blocker_item || (prefPos > 0.0 && std::abs(prefPos - g_blocker_pref_pos) >= 2.0);
-    if (needRecreate) {
-      if (g_island_blocker_item) {
-        [[NSStatusBar systemStatusBar] removeStatusItem:g_island_blocker_item];
-        g_island_blocker_item = nil;
-      }
-      if (prefPos > 0.0) {
-        [[NSUserDefaults standardUserDefaults] setDouble:prefPos forKey:prefKey];
-        g_blocker_pref_pos = prefPos;
-      }
-      g_island_blocker_item = [[NSStatusBar systemStatusBar] statusItemWithLength:width];
-      g_island_blocker_item.autosaveName = autosave;
-      if (g_island_blocker_item.button) {
-        g_island_blocker_item.button.title = @"";
-        if (!g_blocker_target) g_blocker_target = [LassoIslandBlockerTarget new];
-        g_island_blocker_item.button.target = g_blocker_target;
-        g_island_blocker_item.button.action = @selector(onBlockerClick:);
-        if ([g_island_blocker_item.button.cell isKindOfClass:[NSButtonCell class]]) {
-          ((NSButtonCell*)g_island_blocker_item.button.cell).highlightsBy = NSNoCellMask;
-        }
-      }
-    } else if (std::abs(g_island_blocker_item.length - width) >= 1.0) {
-      g_island_blocker_item.length = width;
-    }
+    double nextLo = diff > 0.0 ? mid : lo;
+    double nextHi = diff > 0.0 ? hi : mid;
+    runBlockerCalibStep(gen, step + 1, nextLo, nextHi, nextBestPos, nextBestDiff, screenOriginX, screenTopY, screenCenterX, width);
+  });
+}
+
+static void startBlockerCalibration(double screenOriginX, double screenTopY, double screenCenterX, double width) {
+  onMain(^{
+    int gen = ++g_blocker_calib_gen;
+    g_blocker_calibrating = true;
+    clearBlockerDefaults();
+    runBlockerCalibStep(gen, 1, 240.0, 1600.0, 700.0, 1e9, screenOriginX, screenTopY, screenCenterX, width);
+  });
+}
+
+static void disableBlockerSlot() {
+  onMain(^{
+    g_blocker_calib_gen++;
+    g_blocker_calibrating = false;
+    g_blocker_screen_w = 0.0;
+    removeBlockerItemOnMain();
+    clearBlockerDefaults();
   });
 }
 
@@ -1062,7 +1156,10 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
 
       if (physicalNotch) {
         // Approach 1 (Hardware Notch Display with active cutout): lock to physical notch center, expand left wing only (0px on right).
-        setBlockerSlot(false, 0.0, 0.0);
+        if (g_island_blocker_item || g_blocker_calibrating) {
+          g_cached_has_blocker = false;
+          disableBlockerSlot();
+        }
         hasNotch = true;
         double leftFree = (notchLeftX - 6.0) - (leftMenuRightX + 12.0);
         leftSafeWidth = std::clamp(leftFree, 140.0, 216.0);
@@ -1075,21 +1172,18 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
         const double blockerItemLength = 232.0; // 232 + 16 system padding = 248pt slot
         leftSafeWidth = 152.0;
         rightSafeWidth = 88.0;
-        double targetCenterPos = std::clamp(std::round(630.0 + (screenWidth - 1728.0) * 0.55), 240.0, 860.0);
 
-        if (!g_island_blocker_item || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
+        if ((!g_island_blocker_item && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
           g_blocker_screen_w = screenWidth;
           g_cached_has_blocker = false;
-          setBlockerSlot(true, targetCenterPos, blockerItemLength);
+          startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenCenterX, blockerItemLength);
         }
 
-        if (g_island_blocker_item && g_island_blocker_item.button && g_island_blocker_item.button.window) {
-          NSWindow* bWin = g_island_blocker_item.button.window;
-          NSRect bf = bWin.frame;
-          if (bf.size.height > 0.0 && bWin.screen == screen && bf.origin.x > leftMenuRightX) {
-            g_cached_blocker_center_x = NSMidX(bf);
-            g_cached_has_blocker = true;
-          }
+        NSRect bf = NSZeroRect;
+        if (!g_blocker_calibrating && validBlockerWindowFrame(frame.origin.x, NSMaxY(frame), &bf)) {
+          double center = NSMidX(bf);
+          g_cached_blocker_center_x = (bf.origin.x > screenCenterX + 124.0) ? screenCenterX : center;
+          g_cached_has_blocker = true;
         }
         anchorX = g_cached_has_blocker ? g_cached_blocker_center_x : screenCenterX;
       }
