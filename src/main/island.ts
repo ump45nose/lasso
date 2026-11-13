@@ -245,6 +245,10 @@ export class NotchIsland {
     this.ax.startBridge?.(({ name, payload }) => this.handleBridgeNotification(name, payload));
     this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'get-reminder-prefs' }));
     this.ax.startFinderTrigger?.(() => void this.finder.summon());
+    this.ax.startIslandStatusClick?.(() => {
+      if (this.mode === 'board') this.closeBoard();
+      else this.openBoard();
+    });
     this.ax.startCopyWatch?.(event => {
       if (!event.doubleCopy || !this.callbacks.settings().translation.copyTranslateEnabled || this.callbacks.settings().translation.copyTranslateTrigger !== 'double-cmd-c') return;
       this.pendingDoubleCopyAt = event.timestamp;
@@ -258,14 +262,21 @@ export class NotchIsland {
     if (!process.env.LASSO_DATA_ROOT) {
       this.layoutTimer = setInterval(() => {
         this.nookTasks = readNookTasks();
-        this.placeWindows();
-      }, 4000);
+        this.publish();
+      }, 2000);
     }
 
     this.window.once('ready-to-show', () => {
       if (!process.env.LASSO_DATA_ROOT) this.window.showInactive();
       this.placeWindows();
       this.publish();
+      if (!process.env.LASSO_DATA_ROOT) {
+        for (const delay of [280, 750, 1400]) {
+          setTimeout(() => {
+            if (!this.window.isDestroyed()) this.publish();
+          }, delay);
+        }
+      }
     });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'island' } });
     this.registerSuiteShortcuts();
@@ -327,11 +338,11 @@ export class NotchIsland {
             width: Math.round(geo.width),
             height: Math.round(geo.height),
             menuBarHeight: Math.round(geo.menuBarHeight),
-            leftSafeWidth: geo.leftSafeWidth ? Math.round(geo.leftSafeWidth) : 148,
-            rightSafeWidth: geo.rightSafeWidth ? Math.round(geo.rightSafeWidth) : 108,
+            leftSafeWidth: typeof geo.leftSafeWidth === 'number' ? Math.round(geo.leftSafeWidth) : 152,
+            rightSafeWidth: typeof geo.rightSafeWidth === 'number' ? Math.round(geo.rightSafeWidth) : 88,
             anchorX: geo.anchorX ? Math.round(geo.anchorX) : undefined
           }
-        : { hasNotch: false, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 164, rightSafeWidth: 104 },
+        : { hasNotch: false, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 152, rightSafeWidth: 88 },
       nookPrefs: { ...this.nookPrefs },
       copyTranslateEnabled: this.copyTranslateEnabled,
       pomodoro: this.pomodoro,

@@ -67,8 +67,10 @@ export function NotchIsland() {
   const notchW = hasNotch ? (notch?.width ?? 156) : 0;
   const notchH = hasNotch ? (notch?.height ?? 28) : (notch?.menuBarHeight ?? 28);
   const menuH = notch?.menuBarHeight ?? (hasNotch ? (notch?.height ?? 28) : 28);
-  const leftSafeW = Math.min(180, Math.max(88, notch?.leftSafeWidth ?? 152));
-  const rightSafeW = Math.min(136, Math.max(68, notch?.rightSafeWidth ?? 96));
+  const leftSafeW = hasNotch
+    ? Math.min(216, Math.max(136, notch?.leftSafeWidth ?? 176))
+    : Math.min(180, Math.max(120, notch?.leftSafeWidth ?? 152));
+  const rightSafeW = hasNotch ? 0 : Math.min(120, Math.max(72, notch?.rightSafeWidth ?? 88));
 
   const wingKind =
     mode === 'toast' && toast
@@ -151,7 +153,19 @@ export function NotchIsland() {
         {wingKind && (
           <div
             className={`isl-menubar-wings mode-${wingKind} is-capsule${!hasNotch ? ' no-notch' : ''}${glow ? ' glow-on' : ''}`}
-            onPointerEnter={enterCard}
+            onPointerEnter={event => {
+              if (event.metaKey) {
+                window.island.hit(false);
+                return;
+              }
+              enterCard();
+            }}
+            onPointerMove={event => {
+              if (event.metaKey) window.island.hit(false);
+            }}
+            onPointerDown={event => {
+              if (event.metaKey) window.island.hit(false);
+            }}
             onPointerLeave={leaveCard}
           >
             {wingKind === 'idle' && (

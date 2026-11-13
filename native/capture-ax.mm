@@ -873,8 +873,110 @@ static napi_value frontmostApp(napi_env e, napi_callback_info) {
 static pid_t g_cached_front_pid = 0;
 static double g_cached_menu_time = 0.0;
 static double g_cached_left_menu_right = 320.0;
-static double g_cached_extras_time = 0.0;
-static double g_cached_right_status_left = 0.0;
+static double g_cached_blocker_center_x = 0.0;
+static bool g_cached_has_blocker = false;
+
+static NSStatusItem* g_island_blocker_item = nil;
+static napi_threadsafe_function g_island_click_tsfn = nullptr;
+static double g_blocker_screen_w = 0.0;
+static double g_blocker_pref_pos = 0.0;
+
+@interface LassoIslandBlockerTarget : NSObject
+- (void)onBlockerClick:(id)sender;
+@end
+
+@implementation LassoIslandBlockerTarget
+- (void)onBlockerClick:(id)sender {
+  if (g_island_click_tsfn) {
+    napi_call_threadsafe_function(g_island_click_tsfn, nullptr, napi_tsfn_nonblocking);
+  }
+}
+@end
+
+static LassoIslandBlockerTarget* g_blocker_target = nil;
+
+static void callIslandClickJS(napi_env env, napi_value cb, void*, void*) {
+  if (env && cb) {
+    napi_value recv;
+    napi_get_undefined(env, &recv);
+    napi_call_function(env, recv, cb, 0, nullptr, nullptr);
+  }
+}
+
+static void stopIslandBlocker() {
+  onMain(^{
+    if (g_island_blocker_item) {
+      [[NSStatusBar systemStatusBar] removeStatusItem:g_island_blocker_item];
+      g_island_blocker_item = nil;
+    }
+    if (g_island_click_tsfn) {
+      napi_release_threadsafe_function(g_island_click_tsfn, napi_tsfn_abort);
+      g_island_click_tsfn = nullptr;
+    }
+  });
+}
+
+static void setBlockerSlot(bool enabled, double prefPos, double width) {
+  onMain(^{
+    if (!enabled) {
+      if (g_island_blocker_item) {
+        [[NSStatusBar systemStatusBar] removeStatusItem:g_island_blocker_item];
+        g_island_blocker_item = nil;
+      }
+      return;
+    }
+    NSString* autosave = @"LassoNotchCenterSlot";
+    NSString* prefKey = @"NSStatusItem Preferred Position LassoNotchCenterSlot";
+    bool needRecreate = !g_island_blocker_item || (prefPos > 0.0 && std::abs(prefPos - g_blocker_pref_pos) >= 2.0);
+    if (needRecreate) {
+      if (g_island_blocker_item) {
+        [[NSStatusBar systemStatusBar] removeStatusItem:g_island_blocker_item];
+        g_island_blocker_item = nil;
+      }
+      if (prefPos > 0.0) {
+        [[NSUserDefaults standardUserDefaults] setDouble:prefPos forKey:prefKey];
+        g_blocker_pref_pos = prefPos;
+      }
+      g_island_blocker_item = [[NSStatusBar systemStatusBar] statusItemWithLength:width];
+      g_island_blocker_item.autosaveName = autosave;
+      if (g_island_blocker_item.button) {
+        g_island_blocker_item.button.title = @"";
+        if (!g_blocker_target) g_blocker_target = [LassoIslandBlockerTarget new];
+        g_island_blocker_item.button.target = g_blocker_target;
+        g_island_blocker_item.button.action = @selector(onBlockerClick:);
+        if ([g_island_blocker_item.button.cell isKindOfClass:[NSButtonCell class]]) {
+          ((NSButtonCell*)g_island_blocker_item.button.cell).highlightsBy = NSNoCellMask;
+        }
+      }
+    } else if (std::abs(g_island_blocker_item.length - width) >= 1.0) {
+      g_island_blocker_item.length = width;
+    }
+  });
+}
+
+static napi_value startIslandStatusClick(napi_env e, napi_callback_info info) {
+  size_t n = 1;
+  napi_value args[1];
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  napi_valuetype type;
+  if (n != 1 || napi_typeof(e, args[0], &type) != napi_ok || type != napi_function) {
+    napi_throw_type_error(e, nullptr, "island status click callback required");
+    return nullptr;
+  }
+  if (g_island_click_tsfn) {
+    napi_release_threadsafe_function(g_island_click_tsfn, napi_tsfn_abort);
+    g_island_click_tsfn = nullptr;
+  }
+  napi_value name;
+  napi_create_string_utf8(e, "lasso-island-status-click", NAPI_AUTO_LENGTH, &name);
+  if (napi_create_threadsafe_function(e, args[0], nullptr, name, 0, 1, nullptr, nullptr, nullptr,
+                                      callIslandClickJS, &g_island_click_tsfn) == napi_ok) {
+    napi_unref_threadsafe_function(e, g_island_click_tsfn);
+  }
+  napi_value undefined;
+  napi_get_undefined(e, &undefined);
+  return undefined;
+}
 
 static napi_value notchGeometry(napi_env e, napi_callback_info) {
   napi_value obj;
@@ -883,8 +985,8 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
   double notchWidth = 156.0;
   double notchHeight = 28.0;
   double menuBarHeight = 28.0;
-  double leftSafeWidth = 136.0;
-  double rightSafeWidth = 108.0;
+  double leftSafeWidth = 152.0;
+  double rightSafeWidth = 88.0;
   double anchorX = 0.0;
   @autoreleasepool {
     NSScreen* screen = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
@@ -893,7 +995,8 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
       NSRect visible = screen.visibleFrame;
       menuBarHeight = std::max(24.0, (double)(NSMaxY(frame) - NSMaxY(visible)));
       double screenWidth = frame.size.width;
-      anchorX = frame.origin.x + screenWidth / 2.0;
+      double screenCenterX = frame.origin.x + screenWidth / 2.0;
+      anchorX = screenCenterX;
 
       bool physicalNotch = false;
       double notchLeftX = frame.origin.x + (screenWidth - notchWidth) / 2.0;
@@ -914,7 +1017,6 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
 
       double now = CFAbsoluteTimeGetCurrent();
       double leftMenuRightX = frame.origin.x + 310.0;
-      double minRightStatusX = NSMaxX(frame) - 240.0;
 
       if (AXIsProcessTrusted()) {
         NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
@@ -956,81 +1058,40 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
           g_cached_menu_time = now;
           g_cached_left_menu_right = leftMenuRightX;
         }
-
-        if (g_cached_right_status_left > 0.0 && (now - g_cached_extras_time) < 4.0) {
-          minRightStatusX = g_cached_right_status_left;
-        } else {
-          double detectedMinX = NSMaxX(frame);
-          bool foundExtras = false;
-          for (NSRunningApplication* app in [[NSWorkspace sharedWorkspace] runningApplications]) {
-            if (app.activationPolicy == NSApplicationActivationPolicyProhibited) continue;
-            pid_t pid = app.processIdentifier;
-            if (pid <= 0) continue;
-            AXUIElementRef appRef = AXUIElementCreateApplication(pid);
-            AXUIElementSetMessagingTimeout(appRef, 0.03f);
-            CFTypeRef extrasRef = nullptr;
-            if (AXUIElementCopyAttributeValue(appRef, CFSTR("AXExtrasMenuBar"), &extrasRef) == kAXErrorSuccess && extrasRef) {
-              CFTypeRef childrenRef = nullptr;
-              if (AXUIElementCopyAttributeValue((AXUIElementRef)extrasRef, kAXChildrenAttribute, &childrenRef) == kAXErrorSuccess && childrenRef) {
-                for (id child in (__bridge NSArray*)childrenRef) {
-                  AXUIElementRef item = (__bridge AXUIElementRef)child;
-                  CFTypeRef posRef = nullptr, sizeRef = nullptr;
-                  CGPoint p = CGPointZero;
-                  CGSize s = CGSizeZero;
-                  if (AXUIElementCopyAttributeValue(item, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) {
-                    AXValueGetValue((AXValueRef)posRef, kAXValueTypeCGPoint, &p);
-                    CFRelease(posRef);
-                  }
-                  if (AXUIElementCopyAttributeValue(item, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) {
-                    AXValueGetValue((AXValueRef)sizeRef, kAXValueTypeCGSize, &s);
-                    CFRelease(sizeRef);
-                  }
-                  if (p.y >= -4.0 && p.y <= menuBarHeight + 8.0 && p.x > leftMenuRightX + 20.0 && p.x < NSMaxX(frame) && s.width > 4.0) {
-                    detectedMinX = std::min(detectedMinX, (double)p.x);
-                    foundExtras = true;
-                  }
-                }
-                CFRelease(childrenRef);
-              }
-              CFRelease(extrasRef);
-            }
-            CFRelease(appRef);
-          }
-          if (foundExtras) {
-            minRightStatusX = detectedMinX;
-            g_cached_right_status_left = minRightStatusX;
-            g_cached_extras_time = now;
-          }
-        }
       }
 
       if (physicalNotch) {
-        double leftFree = (notchLeftX - 8.0) - (leftMenuRightX + 12.0);
-        double rightFree = (minRightStatusX - 12.0) - (notchRightX + 8.0);
-        if (leftFree >= 88.0 && rightFree >= 72.0) {
-          hasNotch = true;
-          leftSafeWidth = std::clamp(leftFree, 88.0, 164.0);
-          rightSafeWidth = std::clamp(rightFree, 72.0, 136.0);
-          anchorX = (notchLeftX + notchRightX) / 2.0;
-        } else {
-          // Right side of the physical notch is occupied by status items: place unified capsule in the free gap on the left of the notch.
-          hasNotch = false;
-          double gapLeft = leftMenuRightX + 12.0;
-          double gapRight = std::min(notchLeftX - 10.0, minRightStatusX - 12.0);
-          double avail = std::clamp(gapRight - gapLeft, 168.0, 296.0);
-          leftSafeWidth = std::round(avail * 0.62);
-          rightSafeWidth = std::round(avail * 0.38);
-          anchorX = std::clamp(notchLeftX - 10.0 - avail / 2.0, gapLeft + avail / 2.0, std::max(gapLeft + avail / 2.0, gapRight - avail / 2.0));
-        }
+        // Approach 1 (Hardware Notch Display with active cutout): lock to physical notch center, expand left wing only (0px on right).
+        setBlockerSlot(false, 0.0, 0.0);
+        hasNotch = true;
+        double leftFree = (notchLeftX - 6.0) - (leftMenuRightX + 12.0);
+        leftSafeWidth = std::clamp(leftFree, 140.0, 216.0);
+        rightSafeWidth = 0.0;
+        anchorX = (notchLeftX + notchRightX) / 2.0;
       } else {
+        // Approach 2 (Continuous Menu Bar without active cutout — external monitor or 16:10 scaled mode):
+        // Place a 248pt native NSStatusItem slot at screen center so right status items automatically route around the island.
         hasNotch = false;
-        double gapLeft = leftMenuRightX + 12.0;
-        double gapRight = std::max(gapLeft + 168.0, minRightStatusX - 12.0);
-        double avail = std::clamp(gapRight - gapLeft, 168.0, 304.0);
-        leftSafeWidth = std::round(avail * 0.62);
-        rightSafeWidth = std::round(avail * 0.38);
-        double center = frame.origin.x + screenWidth / 2.0;
-        anchorX = std::clamp(center, gapLeft + avail / 2.0, std::max(gapLeft + avail / 2.0, gapRight - avail / 2.0));
+        const double blockerItemLength = 232.0; // 232 + 16 system padding = 248pt slot
+        leftSafeWidth = 152.0;
+        rightSafeWidth = 88.0;
+        double targetCenterPos = std::clamp(std::round(630.0 + (screenWidth - 1728.0) * 0.55), 240.0, 860.0);
+
+        if (!g_island_blocker_item || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
+          g_blocker_screen_w = screenWidth;
+          g_cached_has_blocker = false;
+          setBlockerSlot(true, targetCenterPos, blockerItemLength);
+        }
+
+        if (g_island_blocker_item && g_island_blocker_item.button && g_island_blocker_item.button.window) {
+          NSWindow* bWin = g_island_blocker_item.button.window;
+          NSRect bf = bWin.frame;
+          if (bf.size.height > 0.0 && bWin.screen == screen && bf.origin.x > leftMenuRightX) {
+            g_cached_blocker_center_x = NSMidX(bf);
+            g_cached_has_blocker = true;
+          }
+        }
+        anchorX = g_cached_has_blocker ? g_cached_blocker_center_x : screenCenterX;
       }
     }
   }
@@ -1091,6 +1152,7 @@ static napi_value init(napi_env e,napi_value exports){
     {"tileTwoWindows",nullptr,tileTwoWindows,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"frontmostApp",nullptr,frontmostApp,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"notchGeometry",nullptr,notchGeometry,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"startIslandStatusClick",nullptr,startIslandStatusClick,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"setStationaryWindow",nullptr,setStationaryWindow,nullptr,nullptr,nullptr,napi_default,nullptr}
   };
   napi_define_properties(e,exports,sizeof(d)/sizeof(d[0]),d);
@@ -1099,6 +1161,7 @@ static napi_value init(napi_env e,napi_value exports){
     stopFinderMonitoring();
     stopCopyMonitoring();
     stopDragSnapMonitoring();
+    stopIslandBlocker();
   }, nullptr);
   return exports;
 }

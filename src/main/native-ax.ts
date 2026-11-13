@@ -25,6 +25,7 @@ export interface NativeAx {
   stopFinderTrigger(): void;
   tileTwoWindows(x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number): number;
   notchGeometry(): { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
+  startIslandStatusClick(cb: () => void): void;
   setStationaryWindow(handle: Buffer): void;
 }
 
