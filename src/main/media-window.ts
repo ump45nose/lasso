@@ -194,7 +194,7 @@ export class MediaWindow {
     await this.ready;
     const win = this.win;
     if (!win || win.isDestroyed()) return;
-    setWindowPresence(win, true);
+    setWindowPresence(win, true, true);
     this.publish();
     win.setBounds(fitToWorkArea(win.getBounds(), screen.getDisplayMatching(win.getBounds()).workArea));
     win.show();

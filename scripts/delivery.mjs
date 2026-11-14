@@ -31,7 +31,7 @@ if (dryRun) {
 function ensureDependencies() {
   const receipt = join(repository, 'outputs/.delivery-dependencies.json');
   const digest = createHash('sha256').update(readFileSync('package-lock.json')).update(process.version).update(process.arch).digest('hex');
-  const required = ['node_modules/@electron/osx-sign/package.json', 'node_modules/@electron/packager/package.json', 'node_modules/.bin/vite', 'node_modules/.bin/esbuild', 'node_modules/electron/dist/Electron.app/Contents/MacOS/Electron'];
+  const required = ['node_modules/@electron/osx-sign/package.json', 'node_modules/@electron/packager/package.json', 'node_modules/.bin/vite', 'node_modules/.bin/esbuild', 'node_modules/electron/checksums.json'];
   let current;
   try { current = JSON.parse(readFileSync(receipt, 'utf8')).digest; } catch { /* Fresh worktree. */ }
   if (action === 'stage') {

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { requireSigningIdentity, signApp } from './sign-app.mjs';
 import { sourceInfo } from './source-info.mjs';
@@ -19,7 +19,10 @@ const paths = await packager({
   dir: '.', out: process.env.LASSO_PACKAGE_OUT || 'release', name: 'Lasso', executableName: 'MacAIPrompt',
   appBundleId: 'local.mac-ai-prompt', appCategoryType: 'public.app-category.productivity',
   platform: 'darwin', arch: process.arch, overwrite: true, asar: false, prune: true,
-  download: { cacheRoot: resolve('outputs/.electron-cache'), checksums: JSON.parse(readFileSync('node_modules/electron/checksums.json', 'utf8')) },
+  download: {
+    ...(existsSync(resolve('outputs/.electron-cache')) ? { cacheRoot: resolve('outputs/.electron-cache') } : {}),
+    checksums: JSON.parse(readFileSync('node_modules/electron/checksums.json', 'utf8')),
+  },
   ignore: [/^\/release(?:\/|$)/, /^\/outputs(?:\/|$)/, /^\/src(?:\/|$)/, /^\/docs(?:\/|$)/, /^\/scripts(?:\/|$)/, /^\/\.git(?:\/|$)/, /^\/\.(?:github|claude|worktree)(?:\/|$)/, /\.tsbuildinfo$/],
   extendInfo: {
     LSUIElement: true,

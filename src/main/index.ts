@@ -152,6 +152,7 @@ let island: NotchIsland;
 let lastSelection: SelectionContext | null = null;
 let smallBounds: Rectangle | null = null;
 let blurTimer: ReturnType<typeof setTimeout>;
+let shownAt = 0;
 let quitting = false;
 let recordingShutdown: Promise<void> | undefined;
 let shutdownComplete = false;
@@ -206,8 +207,10 @@ function closePalette(restore = true) {
 
 function showWindow() {
   if (!win || win.isDestroyed()) return;
+  shownAt = Date.now();
+  clearTimeout(blurTimer);
   if (win.isMinimized()) win.restore();
-  setWindowPresence(win, true);
+  setWindowPresence(win, true, true);
   const bounds = win.getBounds();
   const currentDisplay = screen.getDisplayMatching(bounds);
   const targetDisplay = win.isVisible() ? currentDisplay : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
@@ -231,6 +234,13 @@ function showWindow() {
       if (!quitting) tasks.warmPreferred();
     });
   }
+  setTimeout(() => {
+    if (!quitting && win && !win.isDestroyed() && win.isVisible()) {
+      app.focus({ steal: true });
+      win.focus();
+      if (!palette) tasks.focus();
+    }
+  }, 120);
 }
 
 function openSettings(section?: SettingsSection) {
@@ -266,6 +276,12 @@ function deferHide() {
   clearTimeout(blurTimer);
   blurTimer = setTimeout(() => {
     if (!win || win.isDestroyed() || state.pinned || nativeDialogs > 0) return;
+    if (Date.now() - shownAt < 500) {
+      app.focus({ steal: true });
+      win.focus();
+      if (!palette) tasks.focus();
+      return;
+    }
     const focused = BrowserWindow.getFocusedWindow();
     if (focused === win || (focused && focused.getParentWindow() === win)) return;
     if (win.isVisible()) motion.hide();
@@ -1532,8 +1548,12 @@ async function boot() {
       tasks.dispose();
     }
   });
-  app.on('browser-window-blur', deferHide);
-  app.on('browser-window-focus', () => clearTimeout(blurTimer));
+  app.on('browser-window-blur', (_event, blurred) => {
+    if (blurred === win || blurred.getParentWindow() === win) deferHide();
+  });
+  app.on('browser-window-focus', (_event, focused) => {
+    if (focused === win || focused.getParentWindow() === win) clearTimeout(blurTimer);
+  });
   screen.on('display-removed', () => {
     if (!win || win.isDestroyed()) return;
     const area = screen.getDisplayMatching(win.getBounds()).workArea;

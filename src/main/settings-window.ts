@@ -85,7 +85,7 @@ export class SettingsWindow {
     await this.ready;
     const win = this.win;
     if (!win || win.isDestroyed()) return;
-    setWindowPresence(win, true);
+    setWindowPresence(win, true, true);
     win.setBounds(fitToWorkArea(win.getBounds(), screen.getDisplayMatching(win.getBounds()).workArea));
     this.publish();
     if (win.isMinimized()) win.restore();

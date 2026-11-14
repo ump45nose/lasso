@@ -18,7 +18,7 @@ function refresh() {
 }
 
 /** Only open content windows participate in the Dock and macOS window menu. */
-export function setWindowPresence(window: BrowserWindow, content: boolean) {
+export function setWindowPresence(window: BrowserWindow, content: boolean, activating = false) {
   if (window.isDestroyed()) { windows.delete(window); return; }
   if (!windows.has(window)) {
     window.on('show', refresh);
@@ -28,6 +28,13 @@ export function setWindowPresence(window: BrowserWindow, content: boolean) {
     window.on('closed', () => { windows.delete(window); refresh(); });
   }
   windows.set(window, content);
+  if (content && activating && !quitting) {
+    if (policy !== 'regular') {
+      policy = 'regular';
+      app.setActivationPolicy('regular');
+    }
+    return;
+  }
   refresh();
 }
 
