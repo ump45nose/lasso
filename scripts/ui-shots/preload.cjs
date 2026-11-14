@@ -61,14 +61,115 @@ contextBridge.executeInMainWorld({
         target: 'com.wonderwhy-er.desktop-commander'
       }
     ];
-    const nookReview = {
-      mainGoal: '完成 Lasso v4 全套界面改造与验收',
-      items: ['把本地 CLI 从所有界面和文案里清干净', '核对截图「问 AI」分流与独立生图窗']
-    };
+    const nookReviewBadge = { label: '写日报', hot: true };
+    const nookTaskLists = [
+      { id: 'list-general', title: '一般性', shortTitle: '一般性', openCount: 3 },
+      { id: 'list-routine', title: '循环任务', shortTitle: '循环', openCount: 3 },
+      { id: 'list-hobby', title: '兴趣开发', shortTitle: '兴趣开发', openCount: 2 },
+      { id: 'list-ongoing', title: '持续性任务', shortTitle: '持续', openCount: 1 },
+      { id: 'list-blocked', title: '阻塞任务', shortTitle: '阻塞', openCount: 1 }
+    ];
     const nookTasks = [
-      { id: 'nook-1', title: '整理截图编辑器工具条层级', listTitle: 'Lasso', completed: false, dueLabel: '已逾期 2h', overdue: true },
-      { id: 'nook-2', title: '检查 WebDAV 同步无后台轮询', listTitle: 'Lasso', completed: false, dueLabel: '18:00' },
-      { id: 'nook-3', title: '对齐暖白纸面与单一实心陶土规则', listTitle: 'Lasso', completed: true }
+      {
+        id: 'routine-morning',
+        title: '早起洗漱',
+        listId: 'list-routine',
+        listTitle: '循环任务',
+        notes: '刷牙 2 分钟，轻刷舌苔\n洗脸用洗面奶，涂保湿乳与防晒\n出门前整理头发、胡茬',
+        completed: false,
+        isRoutine: true,
+        routineSlot: '早间',
+        inFocus: true
+      },
+      {
+        id: 'nook-1',
+        title: '替换 hermes 与整理工作流',
+        listId: 'list-general',
+        listTitle: '一般性',
+        completed: false,
+        dueLabel: '逾期 2 天',
+        overdue: true,
+        inFocus: true
+      },
+      {
+        id: 'nook-2',
+        title: '检查 WebDAV 同步与刘海推送状态',
+        listId: 'list-general',
+        listTitle: '一般性',
+        completed: false,
+        dueLabel: '今天',
+        inFocus: true
+      },
+      {
+        id: 'nook-block-1',
+        title: '谷歌账号改密码和支付验证',
+        listId: 'list-blocked',
+        listTitle: '阻塞任务',
+        completed: false,
+        dueLabel: '逾期 5 天',
+        overdue: true,
+        inFocus: true
+      },
+      {
+        id: 'nook-general-3',
+        title: 'review 我的开发方式',
+        listId: 'list-general',
+        listTitle: '一般性',
+        completed: false,
+        inFocus: true
+      },
+      {
+        id: 'nook-done-1',
+        title: '通过硬盘盒迁移数据',
+        listId: 'list-general',
+        listTitle: '一般性',
+        completed: true,
+        inFocus: true
+      },
+      {
+        id: 'routine-work',
+        title: '下班前整理',
+        listId: 'list-routine',
+        listTitle: '循环任务',
+        notes: '擦眼镜\n清理桌面临时文件',
+        completed: false,
+        isRoutine: true,
+        inFocus: false
+      },
+      {
+        id: 'routine-train',
+        title: '一三五七',
+        listId: 'list-routine',
+        listTitle: '循环任务',
+        notes: '俯卧撑: 4 组 × 8~15 次\n弹力带划船: 4 组 × 10~15 次\n哑铃肩推: 3 组 × 8~12 次',
+        completed: false,
+        isRoutine: true,
+        inFocus: false
+      },
+      {
+        id: 'hobby-1',
+        title: '媒体库的 skill 优化',
+        listId: 'list-hobby',
+        listTitle: '兴趣开发',
+        completed: false,
+        inFocus: false
+      },
+      {
+        id: 'hobby-2',
+        title: 'image-caption 重构',
+        listId: 'list-hobby',
+        listTitle: '兴趣开发',
+        completed: false,
+        inFocus: false
+      },
+      {
+        id: 'ongoing-1',
+        title: '沉淀工作流，事务自动化',
+        listId: 'list-ongoing',
+        listTitle: '持续性任务',
+        completed: false,
+        inFocus: false
+      }
     ];
 
     Object.defineProperty(globalThis, '__uiShotsFixtures', {
@@ -80,10 +181,11 @@ contextBridge.executeInMainWorld({
               mode: 'focus',
               alerts: [],
               toast: null,
-              nookReview,
+              nookReviewBadge,
+              nookTaskLists,
               nookTasks,
               nookCompletedCount: 1,
-              nookTotalCount: 3,
+              nookTotalCount: 6,
               pomodoro: { ...focusPomodoro, active: false }
             },
             pomodoroCapsule: {
@@ -91,10 +193,11 @@ contextBridge.executeInMainWorld({
               mode: 'focus',
               alerts: [],
               toast: null,
-              nookReview,
+              nookReviewBadge,
+              nookTaskLists,
               nookTasks,
               nookCompletedCount: 1,
-              nookTotalCount: 3,
+              nookTotalCount: 6,
               pomodoro: focusPomodoro
             },
             alertCapsule: {
@@ -102,10 +205,11 @@ contextBridge.executeInMainWorld({
               mode: 'focus',
               alerts,
               toast: null,
-              nookReview,
+              nookReviewBadge,
+              nookTaskLists,
               nookTasks,
               nookCompletedCount: 1,
-              nookTotalCount: 3,
+              nookTotalCount: 6,
               pomodoro: { ...focusPomodoro, active: false }
             },
             board: {
@@ -113,10 +217,11 @@ contextBridge.executeInMainWorld({
               mode: 'board',
               alerts,
               toast: null,
-              nookReview,
+              nookReviewBadge,
+              nookTaskLists,
               nookTasks,
               nookCompletedCount: 1,
-              nookTotalCount: 3,
+              nookTotalCount: 6,
               pomodoro: focusPomodoro,
               nookPrefs: { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true }
             }

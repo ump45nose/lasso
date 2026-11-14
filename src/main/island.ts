@@ -9,8 +9,9 @@ import type {
   IslandMode,
   IslandState,
   IslandTaskItem,
-  NookFocusReview,
+  IslandTaskListMeta,
   NookReminderPrefs,
+  NookReviewBadge,
   Settings,
   SnapSlot
 } from '../shared/contracts';
@@ -25,7 +26,7 @@ import { EdgeNotes } from './island-notes';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
 
-const WIN_W = 540, WIN_H = 560;
+const WIN_W = 540, WIN_H = 620;
 
 const MODES: readonly IslandMode[] = ['idle', 'focus', 'focus-hover', 'slacking', 'nook-alert', 'toast', 'board'];
 const SNAP_SLOTS: readonly SnapSlot[] = [
@@ -52,33 +53,119 @@ const SNAP_SLOTS: readonly SnapSlot[] = [
 const QUICK_ACTIONS = ['screenshot-area', 'open-settings', 'toggle-notes', 'open-finder-panel', 'open-translator', 'open-clipboard'] as const;
 
 interface NookFocusSnapshot {
-  review: NookFocusReview | null;
+  reviewBadge: NookReviewBadge | null;
+  taskLists: IslandTaskListMeta[];
   tasks: IslandTaskItem[];
   completedCount: number;
   totalCount: number;
   watchedDirs: string[];
 }
 
-function formatDueInfo(dueRaw: string | undefined, todayStr: string): { dueLabel?: string; overdue?: boolean } {
+function localDayKey(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+function todayLocalKey(): string {
+  return localDayKey(new Date());
+}
+
+function isoToLocalDayKey(iso?: string): string {
+  if (!iso) return '';
+  const ms = Date.parse(iso);
+  if (Number.isFinite(ms)) return localDayKey(new Date(ms));
+  return iso.slice(0, 10);
+}
+
+function formatDueInfo(dueRaw: string | undefined, todayStr: string): { dueLabel?: string; overdue?: boolean; diffDays?: number } {
   if (!dueRaw) return {};
   const day = dueRaw.slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return {};
-  if (day === todayStr) return { dueLabel: '今天' };
+  if (day === todayStr) return { dueLabel: '今天', diffDays: 0 };
   const todayMs = Date.parse(`${todayStr}T00:00:00`);
   const dueMs = Date.parse(`${day}T00:00:00`);
   if (!Number.isFinite(todayMs) || !Number.isFinite(dueMs)) return {};
   const diffDays = Math.round((todayMs - dueMs) / 86_400_000);
-  if (diffDays > 0) return { dueLabel: `逾期 ${diffDays} 天`, overdue: true };
-  if (diffDays === -1) return { dueLabel: '明天' };
-  return { dueLabel: day.slice(5) };
+  if (diffDays > 0) return { dueLabel: `逾期 ${diffDays} 天`, overdue: true, diffDays };
+  if (diffDays === -1) return { dueLabel: '明天', diffDays };
+  return { dueLabel: day.slice(5), diffDays };
 }
 
-function todayLocalKey(): string {
-  const now = new Date();
-  const y = now.getFullYear();
-  const m = String(now.getMonth() + 1).padStart(2, '0');
-  const d = String(now.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+function shortListTitle(title: string): string {
+  const trimmed = title.trim();
+  if (trimmed === '循环任务') return '循环';
+  if (trimmed === '持续性任务') return '持续';
+  if (trimmed === '阻塞任务') return '阻塞';
+  return trimmed || 'Tasks';
+}
+
+function isRoutineListTitle(title: string): boolean {
+  return title.includes('循环');
+}
+
+function matchRoutineSlot(title: string, notes: string | undefined, now: Date): { slotLabel: string; priority: number } | null {
+  const firstLine = notes?.split(/\r?\n/, 1)[0]?.trim() || '';
+  const timeMatch = firstLine.match(/^时间\s+(\d{1,2}):(\d{2})/);
+  if (timeMatch) {
+    const h = Number(timeMatch[1]);
+    const m = Number(timeMatch[2]);
+    if (h >= 0 && h < 24 && m >= 0 && m < 60) {
+      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const targetMin = h * 60 + m;
+      const diff = nowMin - targetMin;
+      if (diff >= -45 && diff <= 120) {
+        return { slotLabel: `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`, priority: 0 };
+      }
+    }
+  }
+
+  const hour = now.getHours();
+  const day = now.getDay();
+  const t = title.trim();
+
+  if (hour >= 5 && hour < 11) {
+    if (/早起|晨|早间/.test(t) || (t.includes('洗漱') && !t.includes('睡'))) {
+      return { slotLabel: '早间', priority: 1 };
+    }
+  }
+  if (hour >= 11 && hour < 17) {
+    if (/摸鱼|午|休息|走走/.test(t)) {
+      return { slotLabel: '午后', priority: 1 };
+    }
+  }
+  if (hour >= 17 && hour < 19) {
+    if (/下班|整理|傍晚/.test(t)) {
+      return { slotLabel: '下班前', priority: 1 };
+    }
+  }
+  if (hour >= 19 && hour < 21) {
+    if ([1, 3, 5, 0].includes(day) && t.includes('一三五七')) {
+      return { slotLabel: '今日训练', priority: 1 };
+    }
+    if ([2, 4, 6].includes(day) && t.includes('二四六')) {
+      return { slotLabel: '今日训练', priority: 1 };
+    }
+    if (/健身|训练|运动/.test(t)) {
+      return { slotLabel: '晚间训练', priority: 2 };
+    }
+  }
+  if (hour >= 21 && hour < 23) {
+    if (day === 0 && t.includes('周报')) {
+      return { slotLabel: '周日复盘', priority: 1 };
+    }
+    if (/日报|复盘/.test(t)) {
+      return { slotLabel: '晚间复盘', priority: 2 };
+    }
+  }
+  if (hour >= 22 || hour < 5) {
+    if (/睡觉|睡前|洗漱睡觉/.test(t)) {
+      return { slotLabel: '睡前', priority: 3 };
+    }
+  }
+
+  return null;
 }
 
 function resolveSlotJson(slotPath: string, dirs: Set<string>): unknown | null {
@@ -104,12 +191,9 @@ function resolveNookCacheDir(): string {
   return existsSync(legacy) ? legacy : primary;
 }
 
-function dueRank(dueRaw: string | undefined, overdue: boolean | undefined, dueLabel: string | undefined): { rank: number; dueDay: string } {
-  const dueDay = dueRaw ? dueRaw.slice(0, 10) : '';
-  if (overdue) return { rank: 0, dueDay: dueDay || '0000-00-00' };
-  if (dueLabel === '今天') return { rank: 1, dueDay };
-  if (dueDay) return { rank: 2, dueDay };
-  return { rank: 3, dueDay: '9999-99-99' };
+function isGeneralFocusList(listTitle: string): boolean {
+  const t = listTitle.trim();
+  return t === '一般性' || t === 'Lasso · 今日重点' || t === 'Google Tasks';
 }
 
 const KNOWN_SERVICE_NAMES: Record<string, string> = {
@@ -185,15 +269,35 @@ function sanitizeAlertItem(raw: IslandAlertItem): IslandAlertItem {
   };
 }
 
+interface RawTaskRecord {
+  id: string;
+  title: string;
+  listId: string;
+  listTitle: string;
+  notes?: string;
+  completed: boolean;
+  completedAt?: string;
+  due?: string;
+  position: string;
+}
+
 function readNookFocusData(): NookFocusSnapshot {
   const base = resolveNookCacheDir();
   const dirs = new Set<string>();
   if (existsSync(base)) dirs.add(base);
   else if (existsSync(dirname(base))) dirs.add(dirname(base));
 
-  const today = todayLocalKey();
-  const openEntries: { item: IslandTaskItem; rank: number; dueDay: string }[] = [];
-  const doneTodayTasks: IslandTaskItem[] = [];
+  const now = new Date();
+  const today = localDayKey(now);
+  const orderedLists: { id: string; title: string }[] = [];
+  const seenListIds = new Set<string>();
+  const ensureList = (id: string, title: string) => {
+    if (!seenListIds.has(id)) {
+      seenListIds.add(id);
+      orderedLists.push({ id, title });
+    }
+  };
+  const rawTasks: RawTaskRecord[] = [];
 
   for (const file of ['google.json', 'agenda.json']) {
     const data = resolveSlotJson(join(base, file), dirs) as {
@@ -201,110 +305,223 @@ function readNookFocusData(): NookFocusSnapshot {
       tasks?: {
         id?: string;
         listID?: string;
+        listId?: string;
+        list_id?: string;
         title?: string;
+        notes?: string;
         completed?: boolean;
         deleted?: boolean;
         completedAt?: string;
         due?: string;
+        position?: string;
         parent?: string;
       }[];
-      taskLists?: { title?: string; items?: { id?: string; title?: string; status?: string; due?: string; completedAt?: string }[] }[];
+      taskLists?: {
+        id?: string;
+        title?: string;
+        items?: { id?: string; title?: string; notes?: string; status?: string; due?: string; completedAt?: string }[];
+      }[];
     } | null;
     if (!data || typeof data !== 'object') continue;
 
     if (Array.isArray(data.tasks)) {
       const listNames = new Map<string, string>();
       for (const l of data.lists || []) {
-        if (l.id && l.title) listNames.set(l.id, l.title);
-      }
-      for (const task of data.tasks) {
-        if (!task.id || !task.title || task.parent || task.deleted) continue;
-        const listTitle = (task.listID && listNames.get(task.listID)) || 'Google Tasks';
-        if (task.completed) {
-          if (!task.completedAt || task.completedAt.slice(0, 10) === today) {
-            doneTodayTasks.push({ id: task.id, title: task.title, listTitle, completed: true });
-          }
-        } else {
-          const { dueLabel, overdue } = formatDueInfo(task.due, today);
-          const { rank, dueDay } = dueRank(task.due, overdue, dueLabel);
-          openEntries.push({
-            item: { id: task.id, title: task.title, listTitle, completed: false, dueLabel, overdue },
-            rank,
-            dueDay
-          });
+        if (l.id && l.title) {
+          listNames.set(l.id, l.title);
+          ensureList(l.id, l.title);
         }
+      }
+      for (let i = 0; i < data.tasks.length; i++) {
+        const task = data.tasks[i];
+        if (!task.id || !task.title || task.parent || task.deleted) continue;
+        const listId = task.listID || task.listId || task.list_id || 'default';
+        const listTitle = listNames.get(listId) || 'Google Tasks';
+        ensureList(listId, listTitle);
+        const notes = typeof task.notes === 'string' && task.notes.trim() ? task.notes.trim() : undefined;
+        rawTasks.push({
+          id: task.id,
+          title: task.title.trim(),
+          listId,
+          listTitle,
+          notes,
+          completed: Boolean(task.completed),
+          completedAt: task.completedAt,
+          due: task.due,
+          position: task.position || String(i).padStart(6, '0')
+        });
       }
       break;
     }
 
     if (Array.isArray(data.taskLists)) {
-      for (const list of data.taskLists) {
-        for (const item of list.items || []) {
+      for (let li = 0; li < data.taskLists.length; li++) {
+        const list = data.taskLists[li];
+        const listTitle = list.title?.trim() || 'Google Tasks';
+        const listId = list.id || `list-${li}`;
+        ensureList(listId, listTitle);
+        const items = list.items || [];
+        for (let ii = 0; ii < items.length; ii++) {
+          const item = items[ii];
           if (!item.id || !item.title || item.status === 'deleted') continue;
-          const listTitle = list.title || 'Google Tasks';
-          if (item.status === 'completed' || item.status === 'done') {
-            doneTodayTasks.push({ id: item.id, title: item.title, listTitle, completed: true });
-          } else if (item.status === 'open' || !item.status) {
-            const { dueLabel, overdue } = formatDueInfo(item.due, today);
-            const { rank, dueDay } = dueRank(item.due, overdue, dueLabel);
-            openEntries.push({
-              item: { id: item.id, title: item.title, listTitle, completed: false, dueLabel, overdue },
-              rank,
-              dueDay
-            });
-          }
+          const notes = typeof item.notes === 'string' && item.notes.trim() ? item.notes.trim() : undefined;
+          const completed = item.status === 'completed' || item.status === 'done';
+          rawTasks.push({
+            id: item.id,
+            title: item.title.trim(),
+            listId,
+            listTitle,
+            notes,
+            completed,
+            completedAt: item.completedAt,
+            due: item.due,
+            position: String(ii).padStart(6, '0')
+          });
         }
       }
-      if (openEntries.length || doneTodayTasks.length) break;
+      if (rawTasks.length) break;
     }
   }
 
-  openEntries.sort((a, b) => a.rank - b.rank || a.dueDay.localeCompare(b.dueDay));
-  const openTasks = openEntries.map(entry => entry.item);
-  const completedCount = doneTodayTasks.length;
-  const totalCount = openTasks.length + completedCount;
-  const tasks = [...openTasks.slice(0, 6), ...doneTodayTasks.slice(0, 2)];
+  const openEntries: { item: IslandTaskItem; rank: number; dueDay: string; position: string }[] = [];
+  const doneTodayTasks: IslandTaskItem[] = [];
+  const openCountByList = new Map<string, number>();
+  let bestRoutine: { index: number; slotLabel: string; priority: number; position: string } | null = null;
 
-  let review: NookFocusReview | null = null;
+  for (const task of rawTasks) {
+    const isRoutine = isRoutineListTitle(task.listTitle);
+    if (task.completed) {
+      if (!task.completedAt || isoToLocalDayKey(task.completedAt) === today) {
+        doneTodayTasks.push({
+          id: task.id,
+          title: task.title,
+          listId: task.listId,
+          listTitle: task.listTitle,
+          notes: task.notes,
+          completed: true,
+          isRoutine,
+          inFocus: !isRoutine
+        });
+      }
+      continue;
+    }
+
+    openCountByList.set(task.listId, (openCountByList.get(task.listId) ?? 0) + 1);
+    const dueDay = task.due ? task.due.slice(0, 10) : '';
+
+    if (isRoutine) {
+      const idx = openEntries.length;
+      openEntries.push({
+        item: {
+          id: task.id,
+          title: task.title,
+          listId: task.listId,
+          listTitle: task.listTitle,
+          notes: task.notes,
+          completed: false,
+          isRoutine: true,
+          inFocus: false
+        },
+        rank: 6,
+        dueDay: dueDay || '9999-99-99',
+        position: task.position
+      });
+      const match = matchRoutineSlot(task.title, task.notes, now);
+      if (match) {
+        if (
+          !bestRoutine ||
+          match.priority < bestRoutine.priority ||
+          (match.priority === bestRoutine.priority && task.position.localeCompare(bestRoutine.position) < 0)
+        ) {
+          bestRoutine = { index: idx, slotLabel: match.slotLabel, priority: match.priority, position: task.position };
+        }
+      }
+      continue;
+    }
+
+    const { dueLabel, overdue, diffDays } = formatDueInfo(task.due, today);
+    const isGeneral = isGeneralFocusList(task.listTitle);
+    const dueWithinWeek = diffDays !== undefined && diffDays >= -7;
+    const inFocus = isGeneral || Boolean(overdue || dueWithinWeek);
+    let rank = 5;
+    if (overdue) rank = 1;
+    else if (dueLabel === '今天') rank = 2;
+    else if (isGeneral) rank = 3;
+    else if (dueWithinWeek) rank = 4;
+
+    openEntries.push({
+      item: {
+        id: task.id,
+        title: task.title,
+        listId: task.listId,
+        listTitle: task.listTitle,
+        notes: task.notes,
+        completed: false,
+        dueLabel,
+        overdue,
+        inFocus
+      },
+      rank,
+      dueDay: dueDay || '9999-99-99',
+      position: task.position
+    });
+  }
+
+  if (bestRoutine) {
+    const picked = openEntries[bestRoutine.index];
+    picked.item.routineSlot = bestRoutine.slotLabel;
+    picked.item.inFocus = true;
+    picked.rank = 0;
+  }
+
+  if (!openEntries.some(e => e.item.inFocus)) {
+    for (const entry of openEntries) {
+      if (!entry.item.isRoutine) entry.item.inFocus = true;
+    }
+  }
+
+  openEntries.sort((a, b) => a.rank - b.rank || a.dueDay.localeCompare(b.dueDay) || a.position.localeCompare(b.position));
+  const tasks = [...openEntries.map(e => e.item), ...doneTodayTasks];
+  const taskLists: IslandTaskListMeta[] = orderedLists.map(l => ({
+    id: l.id,
+    title: l.title,
+    shortTitle: shortListTitle(l.title),
+    openCount: openCountByList.get(l.id) ?? 0
+  }));
+
+  const completedCount = doneTodayTasks.filter(t => t.inFocus).length;
+  const totalCount = openEntries.filter(e => e.item.inFocus).length + completedCount;
+
+  let reviewBadge: NookReviewBadge | null = null;
   const hubRaw = resolveSlotJson(join(base, 'hub.json'), dirs) as {
-    mainGoal?: string;
-    items?: string[];
     goals?: {
       data?: {
-        mainline?: { direction?: string; status?: string };
-        goals?: { domain?: string; goal?: string }[];
+        reviews?: {
+          daily?: { label?: string; id?: string; status?: string };
+          weekly?: { label?: string; id?: string; status?: string };
+        };
       };
-      mainline?: { direction?: string; status?: string };
+      reviews?: {
+        daily?: { label?: string; id?: string; status?: string };
+        weekly?: { label?: string; id?: string; status?: string };
+      };
     };
   } | null;
 
   if (hubRaw && typeof hubRaw === 'object') {
-    if (typeof hubRaw.mainGoal === 'string' && hubRaw.mainGoal.trim()) {
-      review = {
-        mainGoal: hubRaw.mainGoal.trim(),
-        items: Array.isArray(hubRaw.items) ? hubRaw.items.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).slice(0, 3) : []
-      };
-    } else {
-      const goalsData = hubRaw.goals?.data ?? (hubRaw.goals as { mainline?: { direction?: string }; goals?: { domain?: string; goal?: string }[] } | undefined);
-      const mainGoal = goalsData?.mainline?.direction?.trim() || '';
-      const items = Array.isArray(goalsData?.goals)
-        ? goalsData.goals
-            .map(g => {
-              const goal = g?.goal?.trim() || '';
-              if (!goal) return '';
-              const domain = g?.domain?.trim();
-              return domain ? `${domain} · ${goal}` : goal;
-            })
-            .filter(Boolean)
-            .slice(0, 3)
-        : [];
-      if (mainGoal || items.length > 0) {
-        review = { mainGoal: mainGoal || items[0] || '', items };
-      }
+    const reviews = hubRaw.goals?.data?.reviews ?? hubRaw.goals?.reviews;
+    const daily = reviews?.daily;
+    const weekly = reviews?.weekly;
+    if (daily?.status === 'open') {
+      reviewBadge = { label: '日报待确认', hot: true };
+    } else if (weekly?.status === 'open') {
+      reviewBadge = { label: '周报待确认', hot: true };
+    } else if (now.getHours() >= 20 && !(daily?.label === today && daily?.status === 'finalized')) {
+      reviewBadge = { label: '写日报', hot: true };
     }
   }
 
-  return { review, tasks, completedCount, totalCount, watchedDirs: [...dirs] };
+  return { reviewBadge, taskLists, tasks, completedCount, totalCount, watchedDirs: [...dirs] };
 }
 
 export interface NotchIslandCallbacks {
@@ -343,7 +560,8 @@ export class NotchIsland {
   private lastTranslatedChangeCount = -1;
   private pendingDoubleCopyAt = 0;
   private copyTimer: ReturnType<typeof setTimeout> | null = null;
-  private nookReview: NookFocusReview | null = null;
+  private nookReviewBadge: NookReviewBadge | null = null;
+  private nookTaskLists: IslandTaskListMeta[] = [];
   private nookTasks: IslandTaskItem[] = [];
   private nookCompletedCount = 0;
   private nookTotalCount = 0;
@@ -557,7 +775,8 @@ export class NotchIsland {
 
   private refreshNookData() {
     const data = readNookFocusData();
-    this.nookReview = data.review;
+    this.nookReviewBadge = data.reviewBadge;
+    this.nookTaskLists = data.taskLists;
     this.nookTasks = data.tasks;
     this.nookCompletedCount = data.completedCount;
     this.nookTotalCount = data.totalCount;
@@ -597,7 +816,7 @@ export class NotchIsland {
   private isCapsuleActive(): boolean {
     if (!this.islandEnabled) return false;
     if (this.mode === 'board' || this.toastItem || this.alerts.length > 0 || this.pomodoro?.active) return true;
-    return this.nookTasks.some(t => !t.completed) || Boolean(this.nookReview && (this.nookReview.mainGoal || this.nookReview.items.length > 0));
+    return this.nookTasks.some(t => !t.completed && t.inFocus) || Boolean(this.nookReviewBadge?.hot);
   }
 
   private placeWindows(anchorX?: number) {
@@ -620,7 +839,7 @@ export class NotchIsland {
 
   private resolveBaseMode(): IslandMode {
     if (this.pomodoro?.active) return this.pomodoro.kind === 'slacking' ? 'slacking' : 'focus';
-    if (this.nookTasks.some(t => !t.completed) || Boolean(this.nookReview && (this.nookReview.mainGoal || this.nookReview.items.length > 0))) return 'focus';
+    if (this.nookTasks.some(t => !t.completed && t.inFocus) || Boolean(this.nookReviewBadge?.hot)) return 'focus';
     return 'idle';
   }
 
@@ -646,7 +865,8 @@ export class NotchIsland {
       pomodoro: this.pomodoro,
       toast: this.toastItem,
       alerts: this.alerts,
-      nookReview: this.nookReview,
+      nookReviewBadge: this.nookReviewBadge,
+      nookTaskLists: this.nookTaskLists,
       nookTasks: this.nookTasks,
       nookCompletedCount: this.nookCompletedCount,
       nookTotalCount: this.nookTotalCount,
@@ -854,7 +1074,7 @@ export class NotchIsland {
   startPomodoro(task?: { id: string | null; title: string }, minutes = 25, kind: 'focus' | 'slacking' = 'focus') {
     if (this.tickTimer) clearInterval(this.tickTimer);
     const totalSeconds = Math.max(60, Math.round(minutes * 60));
-    const firstOpen = this.nookTasks.find(t => !t.completed);
+    const firstOpen = this.nookTasks.find(t => !t.completed && t.inFocus) ?? this.nookTasks.find(t => !t.completed);
     const chosen = task || (firstOpen ? { id: firstOpen.id, title: firstOpen.title } : { id: null, title: '深度专注' });
     this.pomodoro = {
       active: true,
@@ -905,7 +1125,16 @@ export class NotchIsland {
     this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: nextCompleted ? 'complete-task' : 'reopen-task', taskId }));
     if (existing) {
       this.nookTasks = this.nookTasks.map(t => (t.id === taskId ? { ...t, completed: nextCompleted } : t));
-      this.nookCompletedCount = Math.max(0, this.nookCompletedCount + (nextCompleted ? 1 : -1));
+      if (existing.inFocus) {
+        this.nookCompletedCount = Math.max(0, this.nookCompletedCount + (nextCompleted ? 1 : -1));
+      }
+      if (existing.listId) {
+        this.nookTaskLists = this.nookTaskLists.map(list =>
+          list.id === existing.listId
+            ? { ...list, openCount: Math.max(0, list.openCount + (nextCompleted ? -1 : 1)) }
+            : list
+        );
+      }
     }
     if (nextCompleted) {
       this.alerts = this.alerts.filter(a => a.id !== taskId && a.target !== taskId);

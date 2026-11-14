@@ -5,6 +5,7 @@ import {
   Check,
   ClipboardList,
   Coffee,
+  FileText,
   FolderOpen,
   Languages,
   ListChecks,
@@ -15,13 +16,12 @@ import {
   Scan,
   Settings,
   Square,
-  Target,
   Timer,
   X
 } from 'lucide-react';
-import type { IslandAPI, IslandAlertItem, IslandState } from '../../shared/contracts';
+import type { IslandAPI, IslandAlertItem, IslandState, IslandTaskItem } from '../../shared/contracts';
 import { useFonts } from '../fonts';
-import { spring } from '../motion';
+import { collapse, spring } from '../motion';
 import './island.css';
 
 declare global {
@@ -102,8 +102,18 @@ function IslandAlertCard({ item }: { item: IslandAlertItem }) {
   );
 }
 
+function shortTag(listTitle: string): string {
+  const t = listTitle.trim();
+  if (t === '持续性任务') return '持续';
+  if (t === '阻塞任务') return '阻塞';
+  if (t === '循环任务') return '循环';
+  return t;
+}
+
 export function NotchIsland() {
   const [state, setState] = useState<IslandState | null>(null);
+  const [activeListTab, setActiveListTab] = useState<string>('focus');
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   useFonts(state?.fonts);
 
   useEffect(() => {
@@ -115,9 +125,30 @@ export function NotchIsland() {
   }, []);
 
   if (!state) return null;
-  const { mode, pomodoro, toast, alerts, nookReview, nookTasks, nookCompletedCount, nookTotalCount, notch } = state;
-  const openTasks = nookTasks.filter(t => !t.completed);
-  const hasReview = Boolean(nookReview && (nookReview.mainGoal.trim() || nookReview.items.length > 0));
+  const {
+    mode,
+    pomodoro,
+    toast,
+    alerts,
+    nookReviewBadge,
+    nookTaskLists = [],
+    nookTasks,
+    nookCompletedCount,
+    nookTotalCount,
+    notch
+  } = state;
+  const focusOpenTasks = nookTasks.filter(t => !t.completed && t.inFocus);
+  const focusDoneTasks = nookTasks.filter(t => t.completed && t.inFocus);
+  const effectiveTab = activeListTab === 'focus' || nookTaskLists.some(l => l.id === activeListTab) ? activeListTab : 'focus';
+  const visibleTasks: IslandTaskItem[] =
+    effectiveTab === 'focus'
+      ? [...focusOpenTasks, ...focusDoneTasks.slice(0, 2)]
+      : [
+          ...nookTasks.filter(t => t.listId === effectiveTab && !t.completed),
+          ...nookTasks.filter(t => t.listId === effectiveTab && t.completed).slice(0, 4)
+        ];
+  const visibleOpenTasks = visibleTasks.filter(t => !t.completed);
+  const hasHotReview = Boolean(nookReviewBadge?.hot);
   const hasNotch = Boolean(notch?.hasNotch);
   const notchW = hasNotch ? (notch?.width ?? 168) : 0;
   const notchH = hasNotch ? (notch?.height ?? 30) : (notch?.menuBarHeight ?? 28);
@@ -135,7 +166,7 @@ export function NotchIsland() {
         ? 'nook-alert'
         : pomodoro?.active
           ? 'focus'
-          : openTasks.length > 0 || hasReview
+          : focusOpenTasks.length > 0 || hasHotReview
             ? 'idle'
             : null;
 
@@ -166,11 +197,12 @@ export function NotchIsland() {
   }
 
   function startFocus(task?: { id: string | null; title: string }) {
-    const first = task ?? (openTasks[0] ? { id: openTasks[0].id, title: openTasks[0].title } : undefined);
+    const candidate = visibleOpenTasks[0] ?? focusOpenTasks[0];
+    const first = task ?? (candidate ? { id: candidate.id, title: candidate.title } : undefined);
     void window.island.startPomodoro(first, 25, 'focus');
   }
 
-  const urgentTitle = openTasks[0]?.title || nookReview?.items[0] || nookReview?.mainGoal || '';
+  const urgentTitle = focusOpenTasks[0]?.title || nookReviewBadge?.label || '';
   const pomoProgress =
     pomodoro && pomodoro.totalSeconds > 0
       ? Math.max(2, Math.min(100, Math.round(((pomodoro.totalSeconds - pomodoro.remainingSeconds) / pomodoro.totalSeconds) * 100)))
@@ -250,7 +282,7 @@ export function NotchIsland() {
                 </span>
                 {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                 <span className="isl-wing isl-wing-right">
-                  <span className="isl-wing-meta mono">{openTasks.length > 0 ? `今日剩 ${openTasks.length} 项` : '阶段主线'}</span>
+                  <span className="isl-wing-meta mono">{focusOpenTasks.length > 0 ? `今日剩 ${focusOpenTasks.length} 项` : 'Nook 复盘'}</span>
                 </span>
               </button>
             )}
@@ -386,6 +418,18 @@ export function NotchIsland() {
                       <h3>今日聚焦</h3>
                       <span className="isl-board-date mono">{formatTodayLabel()}</span>
                       <span className="grow" />
+                      {nookReviewBadge && (
+                        <button
+                          type="button"
+                          className="isl-review-pill"
+                          title="在 Nook 中打开复盘"
+                          onClick={() => void window.island.openNook()}
+                        >
+                          <span className="isl-dot-clay" aria-hidden="true" />
+                          <span>{nookReviewBadge.label}</span>
+                          <ArrowUpRight size={11} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="isl-ib"
@@ -456,65 +500,117 @@ export function NotchIsland() {
                       )}
                     </div>
 
-                    {/* 3. Nook Review Block */}
-                    <button type="button" className="isl-blk isl-review-blk" onClick={() => void window.island.openNook()}>
-                      <div className="isl-blk-lbl">
-                        <Target size={13} />
-                        <span>Nook 复盘 · 阶段主线</span>
-                        <span className="r">
-                          <ArrowUpRight size={13} />
-                        </span>
-                      </div>
-                      <div className="isl-review-goal">{nookReview?.mainGoal || '点击在 Nook 中制定阶段主线'}</div>
-                      {nookReview &&
-                        nookReview.items.slice(0, 3).map((item, idx) => (
-                          <div key={idx} className="isl-focus-row">
-                            <span className="n mono">{idx + 1}</span>
-                            <span className="trunc">{item}</span>
-                          </div>
-                        ))}
-                    </button>
-
-                    {/* 4. Google Tasks Block */}
+                    {/* 3. Google Tasks Block with List Tabs */}
                     <div className="isl-blk isl-tasks-blk">
                       <div className="isl-blk-lbl">
                         <ListChecks size={13} />
-                        <span>Google Tasks · 今日</span>
+                        <span>Google Tasks</span>
                         <span className="r mono">
-                          {nookCompletedCount} / {nookTotalCount}
+                          {effectiveTab === 'focus' ? `${nookCompletedCount} / ${nookTotalCount}` : `${visibleOpenTasks.length} 待办`}
                         </span>
+                        <button
+                          type="button"
+                          className="isl-ib sm"
+                          aria-label="在 Nook 中打开任务"
+                          onClick={() => void window.island.openNook()}
+                        >
+                          <ArrowUpRight size={13} />
+                        </button>
                       </div>
-                      {nookTasks.length === 0 ? (
-                        <div className="isl-task-empty">今日待办已全部清空</div>
+
+                      <div className="isl-task-tabs" role="tablist" aria-label="任务清单">
+                        <button
+                          type="button"
+                          role="tab"
+                          aria-selected={effectiveTab === 'focus'}
+                          className={'isl-task-tab' + (effectiveTab === 'focus' ? ' on' : '')}
+                          onClick={() => setActiveListTab('focus')}
+                        >
+                          <span>重点</span>
+                          {focusOpenTasks.length > 0 && <span className="n mono">{focusOpenTasks.length}</span>}
+                        </button>
+                        {nookTaskLists.map(list => (
+                          <button
+                            key={list.id}
+                            type="button"
+                            role="tab"
+                            aria-selected={effectiveTab === list.id}
+                            className={'isl-task-tab' + (effectiveTab === list.id ? ' on' : '')}
+                            onClick={() => setActiveListTab(list.id)}
+                          >
+                            <span>{list.shortTitle}</span>
+                            {list.openCount > 0 && <span className="n mono">{list.openCount}</span>}
+                          </button>
+                        ))}
+                      </div>
+
+                      {visibleTasks.length === 0 ? (
+                        <div className="isl-task-empty">{effectiveTab === 'focus' ? '今日重点已全部清空' : '该清单暂无待办'}</div>
                       ) : (
                         <div className="isl-task-list">
-                          {nookTasks.slice(0, 5).map(task => (
-                            <div key={task.id} className={'isl-task' + (task.completed ? ' done' : '')}>
-                              <button
-                                type="button"
-                                className={'isl-chk' + (task.completed ? ' on' : '')}
-                                aria-label={`完成 ${task.title}`}
-                                disabled={Boolean(task.completed)}
-                                onClick={() => void window.island.completeTask(task.id)}
-                              >
-                                {task.completed && <Check size={11} />}
-                              </button>
-                              <span className="t trunc">{task.title}</span>
-                              {!task.completed && (
-                                <button
-                                  type="button"
-                                  className="isl-task-focus"
-                                  onClick={() => startFocus({ id: task.id, title: task.title })}
-                                >
-                                  <Timer size={12} />
-                                  <span>专注</span>
-                                </button>
-                              )}
-                              {task.dueLabel && !task.completed && (
-                                <span className={'due mono' + (task.overdue ? ' late' : '')}>{task.dueLabel}</span>
-                              )}
-                            </div>
-                          ))}
+                          {visibleTasks.map(task => {
+                            const hasNotes = Boolean(task.notes);
+                            const isExpanded = hasNotes && expandedTaskId === task.id;
+                            const secondaryTag =
+                              effectiveTab === 'focus' && task.listTitle && task.listTitle !== '一般性' && task.listTitle !== 'Google Tasks'
+                                ? shortTag(task.listTitle)
+                                : '';
+                            return (
+                              <div key={task.id} className={'isl-task-wrap' + (isExpanded ? ' open' : '')}>
+                                <div className={'isl-task' + (task.completed ? ' done' : '') + (hasNotes ? ' has-notes' : '')}>
+                                  <button
+                                    type="button"
+                                    className={'isl-chk' + (task.completed ? ' on' : '')}
+                                    aria-label={`完成 ${task.title}`}
+                                    disabled={Boolean(task.completed)}
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      void window.island.completeTask(task.id);
+                                    }}
+                                  >
+                                    {task.completed && <Check size={11} />}
+                                  </button>
+                                  {hasNotes ? (
+                                    <button
+                                      type="button"
+                                      className="isl-task-main"
+                                      aria-expanded={isExpanded}
+                                      onClick={() => setExpandedTaskId(prev => (prev === task.id ? null : task.id))}
+                                    >
+                                      <span className="t trunc">{task.title}</span>
+                                      <FileText size={11} className="isl-note-ic" aria-hidden="true" />
+                                    </button>
+                                  ) : (
+                                    <span className="t trunc">{task.title}</span>
+                                  )}
+                                  {!task.completed && (
+                                    <button
+                                      type="button"
+                                      className="isl-task-focus"
+                                      onClick={() => startFocus({ id: task.id, title: task.title })}
+                                    >
+                                      <Timer size={12} />
+                                      <span>专注</span>
+                                    </button>
+                                  )}
+                                  {!task.completed && task.routineSlot ? (
+                                    <span className="isl-task-slot">{task.routineSlot}</span>
+                                  ) : !task.completed && task.dueLabel ? (
+                                    <span className={'due mono' + (task.overdue ? ' late' : '')}>{task.dueLabel}</span>
+                                  ) : !task.completed && secondaryTag ? (
+                                    <span className="due">{secondaryTag}</span>
+                                  ) : null}
+                                </div>
+                                <AnimatePresence initial={false}>
+                                  {isExpanded && task.notes && (
+                                    <motion.div className="isl-task-notes-wrap" {...collapse}>
+                                      <div className="isl-task-notes">{task.notes}</div>
+                                    </motion.div>
+                                  )}
+                                </AnimatePresence>
+                              </div>
+                            );
+                          })}
                         </div>
                       )}
                     </div>

@@ -563,7 +563,21 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       isl.webContents.send('island:changed', islFixtures.board);
       await wait(400);
       if (await page(isl, `document.body.textContent.includes('Codex')`)) throw Error('B4 Island board still contains retired CLI');
+      if (await page(isl, `document.body.textContent.includes('阶段主线')`)) throw Error('B4 Island board still contains retired 阶段主线');
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-review-pill')) && Boolean(document.querySelector('.isl-task-tabs'))`))) {
+        throw Error('B4 Island board missing review pill or task tabs');
+      }
       names.push(await save(isl, 'v4-b4-island-board'));
+
+      // Switch to 循环 tab and expand routine task notes
+      await page(isl, `[...document.querySelectorAll('.isl-task-tab')].find(b => b.textContent.includes('循环'))?.click()`);
+      await wait(250);
+      await page(isl, `document.querySelector('.isl-task-main')?.click()`);
+      await wait(300);
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-task-notes'))`))) {
+        throw Error('B4 Island board task notes did not expand');
+      }
+      names.push(await save(isl, 'v4-b4-island-board-routine'));
       isl.hide();
 
       // B5 Dual-Pane Clipboard History (680×480)

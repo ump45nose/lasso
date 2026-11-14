@@ -126,6 +126,23 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 .isl-board-head { display: flex; align-items: center; gap: 10px; padding: 8px 6px 8px 10px; }
 .isl-board-head h3 { margin: 0; font-family: var(--font-display); font-weight: 400; font-size: 18px; color: var(--on-ink); }
 .isl-board-date { font-size: 11px; color: rgba(250, 249, 245, 0.5); }
+.isl-review-pill {
+  height: 24px;
+  padding: 0 8px 0 7px;
+  border: 0;
+  border-radius: 99px;
+  background: rgba(250, 249, 245, 0.06);
+  box-shadow: inset 0 0 0 1px rgba(250, 249, 245, 0.14);
+  color: var(--on-ink);
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+.isl-review-pill:hover { background: var(--clay); color: #FFFFFF; box-shadow: none; }
+.isl-review-pill:hover .isl-dot-clay { background: #FFFFFF; }
 
 .isl-ib { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: rgba(250, 249, 245, 0.72); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background var(--t-fast), color var(--t-fast); }
 .isl-ib:hover { background: var(--clay); color: #FFFFFF; }
@@ -168,24 +185,62 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 .isl-timer-hint { font-size: 12px; color: rgba(250, 249, 245, 0.72); }
 .isl-timer-idle-btns { display: flex; gap: 5px; flex-shrink: 0; }
 
-.isl-review-blk { width: 100%; cursor: pointer; transition: background var(--t-fast); }
-.isl-review-blk:hover { background: rgba(250, 249, 245, 0.1); }
-.isl-review-goal { font-family: var(--font-display); font-size: 16px; color: var(--on-ink); margin-bottom: 6px; }
-.isl-focus-row { display: flex; align-items: baseline; gap: 10px; font-size: 13px; padding: 3px 0; color: rgba(250, 249, 245, 0.88); }
-.isl-focus-row .n { font-size: 11px; color: rgba(250, 249, 245, 0.5); width: 14px; flex-shrink: 0; }
-
 .isl-tasks-blk { padding-bottom: 8px; }
-.isl-task-list { display: flex; flex-direction: column; }
-.isl-task { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 6px; margin: 0 -6px; border-radius: 8px; font-size: 13px; color: var(--on-ink); transition: background var(--t-fast); }
-.isl-task:hover { background: rgba(250, 249, 245, 0.06); }
+.isl-tasks-blk .isl-blk-lbl .isl-ib.sm { margin-right: -4px; }
+.isl-task-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+.isl-task-tab {
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(250, 249, 245, 0.05);
+  color: var(--on-ink-2);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  transition: background var(--t-fast), color var(--t-fast), box-shadow var(--t-fast);
+}
+.isl-task-tab .n { font-size: 10px; opacity: 0.72; }
+.isl-task-tab.on { background: rgba(250, 249, 245, 0.08); color: var(--clay); box-shadow: inset 0 0 0 1px var(--clay-line); }
+.isl-task-tab.on .n { opacity: 0.9; }
+.isl-task-tab:hover { background: var(--clay); color: #FFFFFF; box-shadow: none; }
+.isl-task-tab:hover .n { opacity: 0.9; }
+
+.isl-task-list { display: flex; flex-direction: column; max-height: 220px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
+.isl-task-list::-webkit-scrollbar-thumb { background: rgba(250, 249, 245, 0.16) padding-box; }
+.isl-task-list::-webkit-scrollbar-thumb:hover { background-color: rgba(250, 249, 245, 0.28); }
+.isl-task-wrap { display: flex; flex-direction: column; }
+.isl-task { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 6px; margin: 0; border-radius: 8px; font-size: 13px; color: var(--on-ink); transition: background var(--t-fast); }
+.isl-task:hover, .isl-task-wrap.open .isl-task { background: rgba(250, 249, 245, 0.06); }
+.isl-task > .t { flex: 1; min-width: 0; }
+.isl-task-main { flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent; color: inherit; display: flex; align-items: center; gap: 6px; text-align: left; }
+.isl-task-main .t { min-width: 0; }
+.isl-note-ic { color: rgba(250, 249, 245, 0.45); flex-shrink: 0; transition: color var(--t-fast); }
+.isl-task:hover .isl-note-ic, .isl-task-wrap.open .isl-note-ic { color: var(--clay); }
 .isl-chk { width: 16px; height: 16px; padding: 0; border-radius: 5px; border: 1.5px solid rgba(250, 249, 245, 0.35); background: transparent; color: var(--ink); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .isl-chk.on { background: var(--on-ink); border-color: var(--on-ink); }
 .isl-task.done .t { color: rgba(250, 249, 245, 0.5); text-decoration: line-through; }
-.isl-task .due { margin-left: auto; font-size: 11px; color: rgba(250, 249, 245, 0.5); white-space: nowrap; }
+.isl-task .due { margin-left: auto; font-size: 11px; color: rgba(250, 249, 245, 0.5); white-space: nowrap; flex-shrink: 0; }
 .isl-task .due.late { color: var(--clay); }
+.isl-task-slot { margin-left: auto; padding: 1px 6px; border-radius: 5px; box-shadow: inset 0 0 0 1px var(--clay-line); font-size: 10.5px; color: var(--clay); white-space: nowrap; flex-shrink: 0; }
 .isl-task-focus { display: none; margin-left: auto; height: 24px; padding: 0 8px; border: 0; border-radius: 7px; background: var(--clay); color: #FFFFFF; font-size: 12px; align-items: center; gap: 4px; flex-shrink: 0; }
 .isl-task:hover .isl-task-focus { display: inline-flex; }
-.isl-task:hover .due { display: none; }
+.isl-task:hover .due, .isl-task:hover .isl-task-slot { display: none; }
+.isl-task-notes-wrap { overflow: hidden; }
+.isl-task-notes {
+  margin: 2px 0 6px 25px;
+  padding: 7px 10px;
+  border-radius: 2px 8px 8px 2px;
+  background: rgba(250, 249, 245, 0.05);
+  border-left: 2px solid var(--clay-line);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--on-ink-2);
+  white-space: pre-wrap;
+  user-select: text;
+}
 .isl-task-empty { font-size: 12.5px; color: rgba(250, 249, 245, 0.5); padding: 4px 0; }
 
 .isl-tools6 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; padding: 4px; }

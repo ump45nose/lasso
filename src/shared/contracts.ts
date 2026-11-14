@@ -361,14 +361,25 @@ export interface IslandAlertItem {
 export interface IslandTaskItem {
   id: string;
   title: string;
+  listId?: string;
   listTitle: string;
+  notes?: string;
   completed?: boolean;
   dueLabel?: string;
   overdue?: boolean;
+  isRoutine?: boolean;
+  routineSlot?: string;
+  inFocus?: boolean;
 }
-export interface NookFocusReview {
-  mainGoal: string;
-  items: string[];
+export interface IslandTaskListMeta {
+  id: string;
+  title: string;
+  shortTitle: string;
+  openCount: number;
+}
+export interface NookReviewBadge {
+  label: string;
+  hot?: boolean;
 }
 export interface IslandState {
   mode: IslandMode;
@@ -386,7 +397,8 @@ export interface IslandState {
   } | null;
   toast: { id: string; text: string; badge?: string } | null;
   alerts: IslandAlertItem[];
-  nookReview: NookFocusReview | null;
+  nookReviewBadge: NookReviewBadge | null;
+  nookTaskLists: IslandTaskListMeta[];
   nookTasks: IslandTaskItem[];
   nookCompletedCount: number;
   nookTotalCount: number;
