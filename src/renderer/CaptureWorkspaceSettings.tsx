@@ -98,7 +98,7 @@ export function CaptureHistory({
     <>
       <div className="l-set-group">
         <div className="l-set-lbl">
-          <span>保留策略</span>
+          <span>历史保留策略</span>
           <span className="r">超出任一上限时自动清理最早记录</span>
         </div>
         <div className="l-set-card">

@@ -1199,7 +1199,7 @@ export function Editor({ state, source: given }: { state: ScreenshotState; sourc
       </div>
       <button type="button" className="ed-text" onMouseDown={e => e.preventDefault()} disabled={busy} onClick={() => void noteText()}>
         <NotebookPen />
-        <span>入便签</span>
+        <span>存入便签</span>
       </button>
       <button type="button" className="ed-text" onMouseDown={e => e.preventDefault()} disabled={busy} onClick={() => maskSame()}>
         <EyeOff />

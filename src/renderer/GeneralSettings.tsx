@@ -25,7 +25,8 @@ import {
 } from '../shared/shortcuts';
 import { FontSettings } from './FontSettings';
 import { ApiConnectionBindingFields } from './ImageOptionsFields';
-import { Segmented, SubNav, SubPane, useSubNav } from './motion';
+import { AnimatePresence, motion } from 'motion/react';
+import { collapse, Segmented, SelectBox, SubNav, SubPane, useSubNav } from './motion';
 import { Switch } from './Switch';
 import { Badge, shortcutLabel } from './targets';
 import './styles/screenshot-settings.css';
@@ -132,38 +133,44 @@ export function GeneralAppearancePane({ state, notify }: { state: ShellState; no
             </div>
             <Switch label="闲置休眠" value={settings.memory.enabled} change={() => void saveMemory(undefined, !settings.memory.enabled)} />
           </div>
-          <div className="l-set-row">
-            <div className="l-set-row-main">
-              <div className="l-set-row-name">闲置休眠时长</div>
-            </div>
-            <Segmented
-              label="闲置休眠时间"
-              value={[5, 15, 30, 60].includes(settings.memory.idleMinutes) ? String(settings.memory.idleMinutes) : ''}
-              options={[
-                ['5', '5 分钟'],
-                ['15', '15 分钟'],
-                ['30', '30 分钟'],
-                ['60', '60 分钟']
-              ]}
-              onChange={v => v && void saveMemory(Number(v))}
-            />
-            <div className="l-row">
-              <input
-                aria-label="自定义休眠分钟"
-                className="l-input mono l-shot-height"
-                type="number"
-                min="1"
-                max="1440"
-                value={minutes}
-                onChange={e => setMinutes(e.target.value)}
-                onBlur={() => {
-                  const n = Number(minutes);
-                  if (Number.isSafeInteger(n) && n >= 1 && n <= 1440 && n !== settings.memory.idleMinutes) void saveMemory(n);
-                }}
-              />
-              <span className="l-set-row-sub">分</span>
-            </div>
-          </div>
+          <AnimatePresence initial={false}>
+            {settings.memory.enabled && (
+              <motion.div key="mem-idle" className="l-set-collapse" {...collapse}>
+                <div className="l-set-row">
+                  <div className="l-set-row-main">
+                    <div className="l-set-row-name">闲置休眠时长</div>
+                  </div>
+                  <Segmented
+                    label="闲置休眠时间"
+                    value={[5, 15, 30, 60].includes(settings.memory.idleMinutes) ? String(settings.memory.idleMinutes) : ''}
+                    options={[
+                      ['5', '5 分'],
+                      ['15', '15 分'],
+                      ['30', '30 分'],
+                      ['60', '60 分']
+                    ]}
+                    onChange={v => v && void saveMemory(Number(v))}
+                  />
+                  <div className="l-row">
+                    <input
+                      aria-label="自定义休眠分钟"
+                      className="l-input mono l-shot-height"
+                      type="number"
+                      min="1"
+                      max="1440"
+                      value={minutes}
+                      onChange={e => setMinutes(e.target.value)}
+                      onBlur={() => {
+                        const n = Number(minutes);
+                        if (Number.isSafeInteger(n) && n >= 1 && n <= 1440 && n !== settings.memory.idleMinutes) void saveMemory(n);
+                      }}
+                    />
+                    <span className="l-set-row-sub">分</span>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -181,7 +188,7 @@ export function GeneralAppearancePane({ state, notify }: { state: ShellState; no
 /* ───────────────────────── Module 2: 划词与动作条 (B9-A) ───────────────────────── */
 
 const ignoredScopes: readonly (readonly [IgnoredAppScope, string])[] = [
-  ['selection', '划词'],
+  ['selection', '划词触发'],
   ['shortcuts', '快捷键'],
   ['capture-candidates', '窗口候选']
 ];
@@ -239,7 +246,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
   rawEntries.set('note', {
     id: 'note',
     kind: 'note',
-    name: '入便签',
+    name: '存入便签',
     sub: 'Scratchpad.md',
     subMono: true,
     enabled: !hiddenSet.has('note')
@@ -430,7 +437,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
     <>
       <div className="l-set-group">
         <div className="l-set-lbl">
-          <span>划词</span>
+          <span>划词触发</span>
         </div>
         <div className="l-set-card">
           <div className="l-set-row">
@@ -472,7 +479,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
 
       <div className="l-set-group">
         <div className="l-set-lbl">
-          <span>动作条按钮</span>
+          <span>动作条布局与排序</span>
           <span className="r">拖动排序；分隔线以上直接显示在胶囊里</span>
         </div>
         <div className="l-set-card">
@@ -678,7 +685,7 @@ const translationProviders: readonly (readonly [TranslationProvider, string])[] 
   ['system', '内置极速'],
   ['deepl', 'DeepL'],
   ['google', 'Google'],
-  ['llm', 'LLM 模型']
+  ['llm', 'AI 大模型']
 ];
 
 export function TranslationPane({
@@ -712,13 +719,13 @@ export function TranslationPane({
       <div className="l-set-group">
         <div className="l-set-lbl">
           <span>翻译引擎</span>
-          <span className="r">供划词「翻译」、⌥T 输入翻译浮窗、截图选字翻译与复制即译共用</span>
+          <span className="r">供划词「翻译」、独立翻译浮窗、截图选字翻译与复制即译共用</span>
         </div>
         <div className="l-set-card">
           <div className="l-set-row">
             <div className="l-set-row-main">
               <div className="l-set-row-name">首选引擎</div>
-              <div className="l-set-row-sub">内置极速免配置开箱即用；LLM 模型支持流式地道润色</div>
+              <div className="l-set-row-sub">内置引擎免配置开箱即用；AI 大模型支持流式地道润色</div>
             </div>
             <Segmented
               label="翻译引擎"
@@ -728,72 +735,75 @@ export function TranslationPane({
             />
           </div>
 
-          {activeProvider === 'deepl' && (
-            <div className="l-set-row col">
-              <div className="l-field">
-                <label htmlFor="translation-deepl-key">DeepL API Key 或 DeepLX 接口地址</label>
-                <input
-                  id="translation-deepl-key"
-                  className="l-input mono"
-                  type="password"
-                  autoComplete="off"
-                  placeholder="输入官方 DeepL Key 或完整 DeepLX /translate 地址"
-                  value={draft.deeplApiKey || ''}
-                  onChange={e => setDraft({ ...draft, provider: 'deepl', deeplApiKey: e.target.value })}
-                  onBlur={() => void commit({ ...draft, provider: 'deepl' })}
-                />
-              </div>
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {activeProvider === 'deepl' && (
+              <motion.div key="tr-deepl" className="l-set-collapse" {...collapse}>
+                <div className="l-set-row col">
+                  <div className="l-field">
+                    <label htmlFor="translation-deepl-key">DeepL API Key 或 DeepLX 接口地址</label>
+                    <input
+                      id="translation-deepl-key"
+                      className="l-input mono"
+                      type="password"
+                      autoComplete="off"
+                      placeholder="输入官方 DeepL Key 或完整 DeepLX /translate 地址"
+                      value={draft.deeplApiKey || ''}
+                      onChange={e => setDraft({ ...draft, provider: 'deepl', deeplApiKey: e.target.value })}
+                      onBlur={() => void commit({ ...draft, provider: 'deepl' })}
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
 
-          {activeProvider === 'google' && (
-            <div className="l-set-row col">
-              <div className="l-field">
-                <label htmlFor="translation-google-key">Google Cloud API Key（可选，留空走免配置极速通道）</label>
-                <input
-                  id="translation-google-key"
-                  className="l-input mono"
-                  type="password"
-                  autoComplete="off"
-                  placeholder="留空直接使用内置 Google 翻译，或填入 Cloud Translation Key"
-                  value={draft.googleApiKey || ''}
-                  onChange={e => setDraft({ ...draft, provider: 'google', googleApiKey: e.target.value })}
-                  onBlur={() => void commit({ ...draft, provider: 'google' })}
-                />
-              </div>
-            </div>
-          )}
+            {activeProvider === 'google' && (
+              <motion.div key="tr-google" className="l-set-collapse" {...collapse}>
+                <div className="l-set-row col">
+                  <div className="l-field">
+                    <label htmlFor="translation-google-key">Google Cloud API Key（可选，留空走免配置极速通道）</label>
+                    <input
+                      id="translation-google-key"
+                      className="l-input mono"
+                      type="password"
+                      autoComplete="off"
+                      placeholder="留空直接使用内置 Google 翻译，或填入 Cloud Translation Key"
+                      value={draft.googleApiKey || ''}
+                      onChange={e => setDraft({ ...draft, provider: 'google', googleApiKey: e.target.value })}
+                      onBlur={() => void commit({ ...draft, provider: 'google' })}
+                    />
+                  </div>
+                </div>
+              </motion.div>
+            )}
 
-          {activeProvider === 'llm' && (
-            <div className="l-set-row col">
-              <ApiConnectionBindingFields
-                connectionId={draft.connectionId}
-                model={draft.model}
-                modelId="translation-llm-model"
-                modelPlaceholder="deepseek-chat / gpt-4.1-mini"
-                label="流式翻译模型"
-                onOpenConnections={onOpenConnections}
-                onChange={({ connectionId, model }) => void commit({ ...draft, provider: 'llm', connectionId, model })}
-              />
-            </div>
-          )}
+            {activeProvider === 'llm' && (
+              <motion.div key="tr-llm" className="l-set-collapse" {...collapse}>
+                <div className="l-set-row col">
+                  <ApiConnectionBindingFields
+                    connectionId={draft.connectionId}
+                    model={draft.model}
+                    modelId="translation-llm-model"
+                    modelPlaceholder="deepseek-chat / gpt-4.1-mini"
+                    label="流式翻译模型"
+                    onOpenConnections={onOpenConnections}
+                    onChange={({ connectionId, model }) => void commit({ ...draft, provider: 'llm', connectionId, model })}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <div className="l-set-row">
             <div className="l-set-row-main">
               <div className="l-set-row-name">默认目标语言</div>
             </div>
-            <select
-              aria-label="默认翻译目标语言"
-              className="l-select l-select-compact"
+            <SelectBox
+              label="默认翻译目标语言"
+              compact
               value={draft.targetLang}
-              onChange={e => void commit({ ...draft, targetLang: e.target.value as TranslationLang })}
-            >
-              {translationLanguages.map(([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              options={translationLanguages}
+              onChange={targetLang => void commit({ ...draft, targetLang })}
+            />
           </div>
         </div>
       </div>
@@ -861,18 +871,18 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
         <div className="l-set-card">
           <div className="l-set-row">
             <div className="l-set-row-main">
-              <div className="l-set-row-name">启用顶部刘海岛胶囊</div>
+              <div className="l-set-row-name">启用顶部刘海岛</div>
               <div className="l-set-row-sub">平时无事项自动隐藏；有专注任务、番茄钟或提醒时显现（按住 ⌘ 点击穿透）</div>
             </div>
             <Switch
-              label="启用顶部刘海岛胶囊"
+              label="启用顶部刘海岛"
               value={settings.notchIslandEnabled}
               change={() => void saveSuite({ notchIslandEnabled: !settings.notchIslandEnabled })}
             />
           </div>
           <div className="l-set-row">
             <div className="l-set-row-main">
-              <div className="l-set-row-name">接收 Nook 待办与紧迫提醒（含屏幕边缘呼吸光）</div>
+              <div className="l-set-row-name">接收 Nook 待办与紧迫提醒</div>
             </div>
             <Switch
               label="Nook 提醒总开关"
@@ -880,26 +890,31 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
               change={() => void saveSuite({ nookPrefs: { ...prefs, enabled: !prefs.enabled } })}
             />
           </div>
-          {prefs.enabled &&
-            (
-              [
-                ['tasks', '日程与 Google Tasks 待办提醒'],
-                ['hubAttention', 'Nook Hub 状态告警'],
-                ['aiResets', 'AI 订阅额度重置提醒'],
-                ['localAndCustom', '本机守护进程与自定义定时提醒']
-              ] as const
-            ).map(([key, label]) => (
-              <div className="l-set-row" key={key}>
-                <div className="l-set-row-main">
-                  <div className="l-set-row-name">{label}</div>
-                </div>
-                <Switch
-                  label={label}
-                  value={prefs[key]}
-                  change={() => void saveSuite({ nookPrefs: { ...prefs, [key]: !prefs[key] } })}
-                />
-              </div>
-            ))}
+          <AnimatePresence initial={false}>
+            {prefs.enabled && (
+              <motion.div key="nook-sub" className="l-set-collapse" {...collapse}>
+                {(
+                  [
+                    ['tasks', '日程与 Google Tasks 待办提醒'],
+                    ['hubAttention', 'Nook Hub 状态告警'],
+                    ['aiResets', 'AI 订阅额度重置提醒'],
+                    ['localAndCustom', '本机守护进程与自定义定时提醒']
+                  ] as const
+                ).map(([key, label]) => (
+                  <div className="l-set-row" key={key}>
+                    <div className="l-set-row-main">
+                      <div className="l-set-row-name">{label}</div>
+                    </div>
+                    <Switch
+                      label={label}
+                      value={prefs[key]}
+                      change={() => void saveSuite({ nookPrefs: { ...prefs, [key]: !prefs[key] } })}
+                    />
+                  </div>
+                ))}
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       </div>
 
@@ -920,21 +935,27 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
               change={() => void saveSuite({ windowDragSnap: !settings.windowDragSnap })}
             />
           </div>
-          <div className="l-set-row">
-            <div className="l-set-row-main">
-              <div className="l-set-row-name">上／下边缘停顿触发时长</div>
-            </div>
-            <Segmented
-              label="边缘停顿时长"
-              value={String(settings.snapDwellMs || 250)}
-              onChange={v => void saveSuite({ snapDwellMs: Number(v) })}
-              options={[
-                ['150', '150 ms'],
-                ['250', '250 ms'],
-                ['400', '400 ms']
-              ]}
-            />
-          </div>
+          <AnimatePresence initial={false}>
+            {settings.windowDragSnap && (
+              <motion.div key="snap-dwell" className="l-set-collapse" {...collapse}>
+                <div className="l-set-row">
+                  <div className="l-set-row-main">
+                    <div className="l-set-row-name">上／下边缘停顿触发时长</div>
+                  </div>
+                  <Segmented
+                    label="边缘停顿时长"
+                    value={String(settings.snapDwellMs || 250)}
+                    onChange={v => void saveSuite({ snapDwellMs: Number(v) })}
+                    options={[
+                      ['150', '150 ms'],
+                      ['250', '250 ms'],
+                      ['400', '400 ms']
+                    ]}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="l-set-row">
             <div className="l-set-row-main">
               <div className="l-set-row-name">一键排列当前双窗口</div>
@@ -953,7 +974,7 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
 
       <div className="l-set-group">
         <div className="l-set-lbl">
-          <span>访达动作面板（⌃⌥F）</span>
+          <span>访达动作面板</span>
           <span className="r">
             <button type="button" className="l-text-btn" onClick={() => void window.desktop.act('open-finder-panel')}>
               唤起面板 →
@@ -1338,7 +1359,7 @@ function ConfigSyncSection({ notify }: { notify: NotifyFn }) {
 
       <div className="l-set-group">
         <div className="l-set-lbl">
-          <span>飞牛 WebDAV 云同步</span>
+          <span>WebDAV 云同步</span>
           <span className="r">
             <button type="button" className="l-text-btn" disabled={syncing} onClick={() => void refresh()}>
               <RefreshCw size={12} />
@@ -1355,7 +1376,7 @@ function ConfigSyncSection({ notify }: { notify: NotifyFn }) {
                   <div className="l-set-row-sub">密码仅加密保存在本机安全存储中</div>
                 </div>
                 <Switch
-                  label="启用飞牛 WebDAV"
+                  label="启用 WebDAV 同步"
                   value={draft.enabled}
                   disabled={syncing}
                   change={() => void commitWebdav({ ...draft, enabled: !draft.enabled })}

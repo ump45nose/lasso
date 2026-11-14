@@ -54,11 +54,11 @@ contextBridge.executeInMainWorld({
     };
     const alerts = [
       {
-        id: 'alert-1',
+        id: 'launchd:com.wonderwhy-er.desktop-commander',
         kind: 'launchd',
-        title: 'local.lasso.sync 异常退出',
-        subtitle: 'LaunchAgents · Exit 1',
-        target: 'local.lasso.sync'
+        title: 'Desktop Commander 未运行',
+        subtitle: '后台服务异常 · 点击重启',
+        target: 'com.wonderwhy-er.desktop-commander'
       }
     ];
     const nookReview = {
@@ -78,7 +78,6 @@ contextBridge.executeInMainWorld({
             focusCapsule: {
               ...base,
               mode: 'focus',
-              glow: false,
               alerts: [],
               toast: null,
               nookReview,
@@ -90,7 +89,6 @@ contextBridge.executeInMainWorld({
             pomodoroCapsule: {
               ...base,
               mode: 'focus',
-              glow: false,
               alerts: [],
               toast: null,
               nookReview,
@@ -102,7 +100,6 @@ contextBridge.executeInMainWorld({
             alertCapsule: {
               ...base,
               mode: 'focus',
-              glow: true,
               alerts,
               toast: null,
               nookReview,
@@ -114,7 +111,6 @@ contextBridge.executeInMainWorld({
             board: {
               ...base,
               mode: 'board',
-              glow: true,
               alerts,
               toast: null,
               nookReview,
@@ -139,9 +135,12 @@ contextBridge.executeInMainWorld({
             status: 'done',
             error: null,
             firstTokenMs: 142,
-            sourceText:
-              'Good tools stay out of the way until the moment you reach for them, then disappear again without leaving clutter on the screen.',
-            translatedText: '好工具平时不露面，伸手去够的那一刻刚好在手边，用完又干干净净地退开，不在屏幕上留一堆摊子。'
+            sourceText: variant === 'expanded'
+              ? '## Design Principle\n\nGood tools stay out of the way until you reach for `npm run build`:\n- **Focused**: keep clutter off the screen\n- **Reversible**: preserve structure across edits'
+              : 'Good tools stay out of the way until the moment you reach for them, then disappear again without leaving clutter on the screen.',
+            translatedText: variant === 'expanded'
+              ? '## 设计原则\n\n好工具平时安静退在后台，直到你运行 `npm run build` 的那一刻：\n- **克制聚焦**：不在屏幕上留下一堆杂物\n- **结构无损**：多段文本与 Markdown 格式完整保留'
+              : '好工具平时不露面，伸手去够的那一刻刚好在手边，用完又干干净净地退开，不在屏幕上留一堆摊子。'
           };
           return common;
         },

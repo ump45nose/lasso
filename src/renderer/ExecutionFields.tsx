@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ExecutionCatalog, ExecutionProfile, WebTarget } from '../shared/contracts';
 import { sameWebEffortLabel } from '../shared/web-effort';
+import { SelectBox } from './motion';
 
 export function ExecutionFields({ target, profile, update }: { target: WebTarget; profile: ExecutionProfile; update(changes: ExecutionProfile): void }) {
   const [catalog, setCatalog] = useState<ExecutionCatalog | null>(null);
@@ -44,34 +45,35 @@ export function ExecutionFields({ target, profile, update }: { target: WebTarget
       <div className="l-grid-equal">
         <div className="l-field">
           <label htmlFor="preset-model">模型</label>
-          <select id="preset-model" className="l-select" value={profile.model || ''} onChange={e => update({ model: e.target.value, effort: '' })}>
-            <option value="">跟随目标默认</option>
-            {profile.model && !catalog?.models.some(m => m.id === profile.model) && (
-              <option value={profile.model}>
-                {profile.model}
-                {!loading ? '（待确认）' : ''}
-              </option>
-            )}
-            {catalog?.models.map(model => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-              </option>
-            ))}
-          </select>
+          <SelectBox
+            id="preset-model"
+            label="模型"
+            value={profile.model || ''}
+            onChange={model => update({ model, effort: '' })}
+            options={[
+              { value: '', label: '跟随目标默认' },
+              ...(profile.model && !catalog?.models.some(m => m.id === profile.model)
+                ? [{ value: profile.model, label: `${profile.model}${!loading ? '（待确认）' : ''}` }]
+                : []),
+              ...(catalog?.models.map(model => ({ value: model.id, label: model.label })) ?? [])
+            ]}
+          />
         </div>
         <div className="l-field">
           <label htmlFor="preset-effort">思考强度</label>
-          <select id="preset-effort" className="l-select" value={effort} onChange={e => update({ effort: e.target.value })}>
-            <option value="">跟随目标默认</option>
-            {effort && !efforts.some(option => option.id === effort) && (
-              <option value={effort}>{profile.effort?.startsWith('slider:') ? '已保存的网页档位' : profile.effort}（待确认）</option>
-            )}
-            {efforts.map(option => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
+          <SelectBox
+            id="preset-effort"
+            label="思考强度"
+            value={effort}
+            onChange={nextEffort => update({ effort: nextEffort })}
+            options={[
+              { value: '', label: '跟随目标默认' },
+              ...(effort && !efforts.some(option => option.id === effort)
+                ? [{ value: effort, label: `${profile.effort?.startsWith('slider:') ? '已保存的网页档位' : profile.effort}（待确认）` }]
+                : []),
+              ...efforts.map(option => ({ value: option.id, label: option.label }))
+            ]}
+          />
         </div>
       </div>
       <p className="l-field-help">

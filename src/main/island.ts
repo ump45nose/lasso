@@ -95,15 +95,104 @@ function resolveSlotJson(slotPath: string, dirs: Set<string>): unknown | null {
   }
 }
 
+function resolveNookCacheDir(): string {
+  if (process.env.LASSO_NOOK_CACHE_DIR) return process.env.LASSO_NOOK_CACHE_DIR;
+  if (process.env.LASSO_DATA_ROOT) return join(app.getPath('userData'), 'nook-cache');
+  const primary = join(homedir(), 'Library/Application Support/PersonalHub/local-cache');
+  if (existsSync(primary)) return primary;
+  const legacy = join(homedir(), 'Library/Application Support/PersonalDataHub/local-cache');
+  return existsSync(legacy) ? legacy : primary;
+}
+
+function dueRank(dueRaw: string | undefined, overdue: boolean | undefined, dueLabel: string | undefined): { rank: number; dueDay: string } {
+  const dueDay = dueRaw ? dueRaw.slice(0, 10) : '';
+  if (overdue) return { rank: 0, dueDay: dueDay || '0000-00-00' };
+  if (dueLabel === '今天') return { rank: 1, dueDay };
+  if (dueDay) return { rank: 2, dueDay };
+  return { rank: 3, dueDay: '9999-99-99' };
+}
+
+const KNOWN_SERVICE_NAMES: Record<string, string> = {
+  'com.wonderwhy-er.desktop-commander': 'Desktop Commander',
+  'desktop-commander': 'Desktop Commander',
+  'com.yuwk.personal-hub.agent': 'Nook Hub 服务',
+  'com.yuwk.personalhub.agent': 'Nook Hub 服务',
+  'com.yuwk.nook.agent': 'Nook Hub 服务',
+  'local.lasso.sync': 'Lasso 同步服务'
+};
+
+function friendlyServiceName(raw?: string): string {
+  if (!raw) return '后台服务';
+  const trimmed = raw.trim();
+  if (!trimmed) return '后台服务';
+  const lower = trimmed.toLowerCase();
+  for (const [key, label] of Object.entries(KNOWN_SERVICE_NAMES)) {
+    if (lower === key || lower.includes(key)) return label;
+  }
+  if (/^(com|org|net|io|local)\.[a-z0-9_.-]+$/i.test(trimmed)) {
+    const tail = trimmed.split('.').filter(Boolean).pop() || trimmed;
+    return tail
+      .replace(/[-_]+/g, ' ')
+      .replace(/\b\w/g, ch => ch.toUpperCase());
+  }
+  return trimmed;
+}
+
+function cleanAlertText(raw?: string): string {
+  if (!raw) return '';
+  return raw
+    .replace(/\(?\bExit\s*-?\d+\)?/gi, '')
+    .replace(/\bcli_failed\b/gi, '执行失败')
+    .replace(/\bmissing_executable\b/gi, '未找到可执行程序')
+    .replace(/\btimeout\b/gi, '执行超时')
+    .replace(/\bmodel_unavailable\b/gi, '模型额度耗尽')
+    .replace(/\bunknown_error\b/gi, '运行异常')
+    .replace(/\bLaunchAgents?\b/gi, '后台服务')
+    .replace(/\b(com|org|net|io|local)\.[a-z0-9_.-]+/gi, match => friendlyServiceName(match))
+    .replace(/[·•]\s*$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+function sanitizeAlertItem(raw: IslandAlertItem): IslandAlertItem {
+  const kind = raw.kind === 'launchd' || raw.kind === 'reset' || raw.kind === 'task' ? raw.kind : 'custom';
+  let title = raw.title || '';
+  let subtitle = raw.subtitle || '';
+  const target = raw.target;
+
+  if (kind === 'launchd') {
+    const baseName = friendlyServiceName(target || title.replace(/\s*(异常退出|未运行|服务异常).*$/u, ''));
+    if (!title || /^(com|org|net|io|local)\./i.test(title) || /\bExit\b|cli_failed/i.test(title)) {
+      title = `${baseName} 未运行`;
+    } else {
+      title = cleanAlertText(title);
+    }
+    subtitle = cleanAlertText(subtitle);
+    if (!subtitle || subtitle === baseName) {
+      subtitle = '后台服务异常 · 点击重启';
+    }
+  } else {
+    title = cleanAlertText(title) || 'Nook 提醒';
+    subtitle = cleanAlertText(subtitle) || (kind === 'task' ? '待办提醒' : 'Nook 提醒');
+  }
+
+  return {
+    id: raw.id || String(Date.now()),
+    kind,
+    title,
+    subtitle,
+    target
+  };
+}
+
 function readNookFocusData(): NookFocusSnapshot {
-  const base = process.env.LASSO_DATA_ROOT
-    ? join(app.getPath('userData'), 'nook-cache')
-    : join(homedir(), 'Library/Application Support/PersonalDataHub/local-cache');
+  const base = resolveNookCacheDir();
   const dirs = new Set<string>();
   if (existsSync(base)) dirs.add(base);
+  else if (existsSync(dirname(base))) dirs.add(dirname(base));
 
   const today = todayLocalKey();
-  const openTasks: IslandTaskItem[] = [];
+  const openEntries: { item: IslandTaskItem; rank: number; dueDay: string }[] = [];
   const doneTodayTasks: IslandTaskItem[] = [];
 
   for (const file of ['google.json', 'agenda.json']) {
@@ -114,6 +203,7 @@ function readNookFocusData(): NookFocusSnapshot {
         listID?: string;
         title?: string;
         completed?: boolean;
+        deleted?: boolean;
         completedAt?: string;
         due?: string;
         parent?: string;
@@ -128,7 +218,7 @@ function readNookFocusData(): NookFocusSnapshot {
         if (l.id && l.title) listNames.set(l.id, l.title);
       }
       for (const task of data.tasks) {
-        if (!task.id || !task.title || task.parent) continue;
+        if (!task.id || !task.title || task.parent || task.deleted) continue;
         const listTitle = (task.listID && listNames.get(task.listID)) || 'Google Tasks';
         if (task.completed) {
           if (!task.completedAt || task.completedAt.slice(0, 10) === today) {
@@ -136,7 +226,12 @@ function readNookFocusData(): NookFocusSnapshot {
           }
         } else {
           const { dueLabel, overdue } = formatDueInfo(task.due, today);
-          openTasks.push({ id: task.id, title: task.title, listTitle, completed: false, dueLabel, overdue });
+          const { rank, dueDay } = dueRank(task.due, overdue, dueLabel);
+          openEntries.push({
+            item: { id: task.id, title: task.title, listTitle, completed: false, dueLabel, overdue },
+            rank,
+            dueDay
+          });
         }
       }
       break;
@@ -145,21 +240,27 @@ function readNookFocusData(): NookFocusSnapshot {
     if (Array.isArray(data.taskLists)) {
       for (const list of data.taskLists) {
         for (const item of list.items || []) {
-          if (!item.id || !item.title) continue;
+          if (!item.id || !item.title || item.status === 'deleted') continue;
           const listTitle = list.title || 'Google Tasks';
           if (item.status === 'completed' || item.status === 'done') {
             doneTodayTasks.push({ id: item.id, title: item.title, listTitle, completed: true });
           } else if (item.status === 'open' || !item.status) {
             const { dueLabel, overdue } = formatDueInfo(item.due, today);
-            openTasks.push({ id: item.id, title: item.title, listTitle, completed: false, dueLabel, overdue });
+            const { rank, dueDay } = dueRank(item.due, overdue, dueLabel);
+            openEntries.push({
+              item: { id: item.id, title: item.title, listTitle, completed: false, dueLabel, overdue },
+              rank,
+              dueDay
+            });
           }
         }
       }
-      if (openTasks.length || doneTodayTasks.length) break;
+      if (openEntries.length || doneTodayTasks.length) break;
     }
   }
 
-  openTasks.sort((a, b) => Number(Boolean(b.overdue)) - Number(Boolean(a.overdue)) || Number(Boolean(b.dueLabel)) - Number(Boolean(a.dueLabel)));
+  openEntries.sort((a, b) => a.rank - b.rank || a.dueDay.localeCompare(b.dueDay));
+  const openTasks = openEntries.map(entry => entry.item);
   const completedCount = doneTodayTasks.length;
   const totalCount = openTasks.length + completedCount;
   const tasks = [...openTasks.slice(0, 6), ...doneTodayTasks.slice(0, 2)];
@@ -184,10 +285,18 @@ function readNookFocusData(): NookFocusSnapshot {
         items: Array.isArray(hubRaw.items) ? hubRaw.items.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).slice(0, 3) : []
       };
     } else {
-      const goalsData = hubRaw.goals?.data ?? (hubRaw.goals as { mainline?: { direction?: string }; goals?: { goal?: string }[] } | undefined);
+      const goalsData = hubRaw.goals?.data ?? (hubRaw.goals as { mainline?: { direction?: string }; goals?: { domain?: string; goal?: string }[] } | undefined);
       const mainGoal = goalsData?.mainline?.direction?.trim() || '';
       const items = Array.isArray(goalsData?.goals)
-        ? goalsData.goals.map(g => g?.goal?.trim() || '').filter(Boolean).slice(0, 3)
+        ? goalsData.goals
+            .map(g => {
+              const goal = g?.goal?.trim() || '';
+              if (!goal) return '';
+              const domain = g?.domain?.trim();
+              return domain ? `${domain} · ${goal}` : goal;
+            })
+            .filter(Boolean)
+            .slice(0, 3)
         : [];
       if (mainGoal || items.length > 0) {
         review = { mainGoal: mainGoal || items[0] || '', items };
@@ -218,13 +327,13 @@ export class NotchIsland {
   readonly clipboardHistory: ClipboardHistoryPanel;
   private ax: Partial<NativeAx>;
   private mode: IslandMode = 'idle';
-  private glow = false;
   private islandEnabled = true;
   private pomodoro: IslandState['pomodoro'] = null;
   private toastItem: IslandState['toast'] = null;
   private alerts: IslandAlertItem[] = [];
   private alertBridgeMeta = new Map<string, { route?: string; rule?: string; rules?: string[] }>();
   private dismissedAlertKeys = new Set<string>();
+  private serviceRestartCooldown = new Map<string, number>();
   private readonly dismissedAlertsPath = join(app.getPath('userData'), 'island-dismissed-alerts.json');
   private nookPrefs: NookReminderPrefs = { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true };
   private copyTranslateEnabled = false;
@@ -388,10 +497,6 @@ export class NotchIsland {
       }
       this.callbacks.onQuickAction(action);
     });
-    ipcMain.handle('island:glow', (event, enabled: boolean) => {
-      check(event);
-      this.setGlow(Boolean(enabled));
-    });
     ipcMain.handle('island:nook-prefs', (event, patch: Partial<NookReminderPrefs>) => {
       check(event);
       if (
@@ -492,7 +597,7 @@ export class NotchIsland {
   private isCapsuleActive(): boolean {
     if (!this.islandEnabled) return false;
     if (this.mode === 'board' || this.toastItem || this.alerts.length > 0 || this.pomodoro?.active) return true;
-    return this.nookTasks.some(t => !t.completed) || Boolean(this.nookReview?.mainGoal);
+    return this.nookTasks.some(t => !t.completed) || Boolean(this.nookReview && (this.nookReview.mainGoal || this.nookReview.items.length > 0));
   }
 
   private placeWindows(anchorX?: number) {
@@ -515,8 +620,7 @@ export class NotchIsland {
 
   private resolveBaseMode(): IslandMode {
     if (this.pomodoro?.active) return this.pomodoro.kind === 'slacking' ? 'slacking' : 'focus';
-    if (this.alerts.length > 0) return 'nook-alert';
-    if (this.nookTasks.some(t => !t.completed) || this.nookReview?.mainGoal) return 'focus';
+    if (this.nookTasks.some(t => !t.completed) || Boolean(this.nookReview && (this.nookReview.mainGoal || this.nookReview.items.length > 0))) return 'focus';
     return 'idle';
   }
 
@@ -526,7 +630,6 @@ export class NotchIsland {
     if (geo?.anchorX) this.placeWindows(geo.anchorX);
     return {
       mode: this.islandEnabled ? this.mode : 'idle',
-      glow: this.islandEnabled ? this.glow : false,
       notch: geo
         ? {
             hasNotch: geo.hasNotch,
@@ -567,7 +670,6 @@ export class NotchIsland {
     if (this.islandEnabled !== nextEnabled) {
       this.islandEnabled = nextEnabled;
       if (!nextEnabled) {
-        this.setGlow(false);
         this.ax.notchGeometry?.(false);
         if (!this.window.isDestroyed() && this.window.isVisible()) this.window.hide();
       } else if (!process.env.LASSO_DATA_ROOT && !this.window.isDestroyed() && !this.window.isVisible()) {
@@ -731,12 +833,6 @@ export class NotchIsland {
     this.ax.paste?.();
   }
 
-  setGlow(enabled: boolean) {
-    this.glow = enabled;
-    this.ax.setGlow?.(this.islandEnabled ? enabled : false);
-    this.publish();
-  }
-
   toast(text: string, badge?: string) {
     if (this.toastTimer) clearTimeout(this.toastTimer);
     this.toastItem = { id: String(Date.now()), text, badge };
@@ -770,7 +866,6 @@ export class NotchIsland {
       totalSeconds
     };
     this.mode = kind === 'slacking' ? 'slacking' : 'focus';
-    if (kind === 'slacking') this.setGlow(true);
     this.publish();
 
     this.tickTimer = setInterval(() => {
@@ -796,7 +891,6 @@ export class NotchIsland {
       this.tickTimer = null;
     }
     this.pomodoro = null;
-    if (this.glow && this.alerts.length === 0) this.setGlow(false);
     this.mode = this.resolveBaseMode();
     this.publish();
   }
@@ -818,7 +912,6 @@ export class NotchIsland {
       if (this.pomodoro?.taskId === taskId) {
         this.stopPomodoro();
       }
-      if (this.alerts.length === 0 && this.glow) this.setGlow(false);
       if (this.mode === 'nook-alert' && this.alerts.length === 0) {
         this.mode = this.resolveBaseMode();
         if (this.mode === 'idle' || this.mode === 'focus') {
@@ -840,7 +933,6 @@ export class NotchIsland {
       ...(meta ?? {})
     }));
     this.alerts = this.alerts.filter(a => a.id !== alertId);
-    if (this.alerts.length === 0) this.setGlow(false);
     if (this.mode !== 'board') {
       this.mode = this.resolveBaseMode();
       if (this.mode === 'idle' || this.mode === 'focus') {
@@ -872,7 +964,6 @@ export class NotchIsland {
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'dismiss', id: alertId }));
     }
     this.persistDismissedAlerts();
-    if (this.alerts.length === 0 && this.pomodoro?.kind !== 'slacking') this.setGlow(false);
     if (this.mode !== 'board') {
       this.mode = this.resolveBaseMode();
       if (this.mode === 'idle' || this.mode === 'focus') {
@@ -883,21 +974,19 @@ export class NotchIsland {
   }
 
   restartService(label: string) {
-    this.dismissedAlertKeys.add(label);
-    this.persistDismissedAlerts();
+    this.serviceRestartCooldown.set(label, Date.now() + 120_000);
     const uid = typeof process.getuid === 'function' ? process.getuid() : 501;
     execFile('launchctl', ['kickstart', '-k', `gui/${uid}/${label}`], () => {
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'restart-launchd', label }));
     });
-    this.alerts = this.alerts.filter(a => a.target !== label && a.id !== label);
-    if (this.alerts.length === 0) this.setGlow(false);
+    this.alerts = this.alerts.filter(a => a.target !== label && a.id !== label && a.id !== `launchd:${label}`);
     if (this.mode !== 'board') {
       this.mode = this.resolveBaseMode();
       if (this.mode === 'idle' || this.mode === 'focus') {
         this.window.setIgnoreMouseEvents(true, { forward: true });
       }
     }
-    this.toast(`已重启服务 ${label}`, 'launchd');
+    this.toast(`已重启 ${friendlyServiceName(label)}`, '服务');
   }
 
   private handleBridgeNotification(name: string, payload: string) {
@@ -924,20 +1013,15 @@ export class NotchIsland {
       try {
         const parsed = payload ? (JSON.parse(payload) as { id?: string }) : {};
         if (parsed.id) {
-          this.dismissedAlertKeys.add(parsed.id);
+          this.dismissedAlertKeys.delete(parsed.id);
           this.alerts = this.alerts.filter(a => a.id !== parsed.id);
         } else {
-          for (const a of this.alerts) {
-            if (a.id) this.dismissedAlertKeys.add(a.id);
-            this.dismissedAlertKeys.add(`${a.kind}:${a.target || ''}:${a.title}`);
-          }
           this.alerts = [];
         }
       } catch {
         this.alerts = [];
       }
       this.persistDismissedAlerts();
-      if (this.alerts.length === 0) this.setGlow(false);
       if (this.mode !== 'board') {
         this.mode = this.resolveBaseMode();
         if (this.mode === 'idle' || this.mode === 'focus') {
@@ -959,7 +1043,6 @@ export class NotchIsland {
           route?: string;
           rule?: string;
           rules?: string[];
-          glow?: boolean;
           items?: (IslandAlertItem & { route?: string; rule?: string; rules?: string[] })[];
         };
         if (data.kind === 'slacking') {
@@ -987,41 +1070,46 @@ export class NotchIsland {
           }
         };
 
-        const isDismissed = (item: { id?: string; kind?: string; target?: string; title?: string }) => {
-          if (item.id) return this.dismissedAlertKeys.has(item.id);
+        const isSuppressed = (item: { id?: string; kind?: string; target?: string; title?: string }) => {
+          if (item.target) {
+            const until = this.serviceRestartCooldown.get(item.target);
+            if (until && until > Date.now()) return true;
+            if (until && until <= Date.now()) this.serviceRestartCooldown.delete(item.target);
+          }
+          if (item.id && this.dismissedAlertKeys.has(item.id)) return true;
+          if (item.target && (this.dismissedAlertKeys.has(item.target) || this.dismissedAlertKeys.has(`launchd:${item.target}`))) return true;
           const key = `${item.kind || 'custom'}:${item.target || ''}:${item.title || ''}`;
           return this.dismissedAlertKeys.has(key);
         };
 
         if (Array.isArray(data.items) && data.items.length > 0) {
-          const fresh = data.items.filter(item => !isDismissed(item) && isAllowedByPrefs(item));
+          const fresh = data.items
+            .filter(item => isAllowedByPrefs(item) && !isSuppressed(item))
+            .map(item => ({ raw: item, clean: sanitizeAlertItem(item) }))
+            .filter(({ clean }) => !isSuppressed(clean));
           if (fresh.length === 0) return;
-          for (const item of fresh) {
-            if (item.id) recordMeta(item.id, item);
+          for (const { raw, clean } of fresh) {
+            recordMeta(clean.id, raw);
           }
-          this.alerts = fresh.map(({ id, kind, title, subtitle, target }) => ({ id, kind, title, subtitle, target }));
+          this.alerts = fresh.map(({ clean }) => clean);
         } else if (data.title) {
-          if (isDismissed(data) || !isAllowedByPrefs(data)) return;
-          const item: IslandAlertItem = {
+          if (!isAllowedByPrefs(data) || isSuppressed(data)) return;
+          const item = sanitizeAlertItem({
             id: data.id || String(Date.now()),
             kind: data.kind === 'launchd' || data.kind === 'reset' || data.kind === 'task' ? data.kind : 'custom',
             title: data.title,
             subtitle: data.subtitle || '来自 Nook 提醒中心',
             target: data.target
-          };
+          });
+          if (isSuppressed(item)) return;
           recordMeta(item.id, data);
-          this.alerts = [item, ...this.alerts.filter(a => a.id !== item.id && !isDismissed(a))].slice(0, 6);
+          this.alerts = [item, ...this.alerts.filter(a => a.id !== item.id && !isSuppressed(a))].slice(0, 6);
         } else {
           return;
         }
 
         this.refreshNookData();
         if (this.alerts.length === 0) return;
-        if (data.glow !== false) this.setGlow(true);
-        if (this.mode !== 'board' && this.mode !== 'focus-hover' && this.mode !== 'slacking') {
-          this.mode = 'nook-alert';
-          this.window.setIgnoreMouseEvents(true, { forward: true });
-        }
         this.publish();
       } catch {
         // ignore invalid payload
@@ -1039,7 +1127,6 @@ export class NotchIsland {
     if (this.nookWatchDebounce) clearTimeout(this.nookWatchDebounce);
     for (const watcher of this.nookWatchers.values()) watcher.close();
     this.nookWatchers.clear();
-    this.ax.setGlow?.(false);
     this.ax.notchGeometry?.(false);
     this.ax.stopFinderTrigger?.();
     this.ax.stopCopyWatch?.();

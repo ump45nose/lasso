@@ -76,7 +76,24 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-engine-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .sw-tr-out { flex: 1; min-height: 92px; padding: 10px 16px 14px; overflow-y: auto; user-select: text; }
-.sw-tr-prose { font-family: var(--font-text); font-size: 16px; line-height: 1.8; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.sw-tr-prose { font-family: var(--font-text); font-size: 15px; line-height: 1.75; color: var(--ink); word-break: break-word; }
+.sw-tr-prose > *:first-child { margin-top: 0; }
+.sw-tr-prose > *:last-child { margin-bottom: 0; }
+.sw-tr-prose p { margin: 0 0 8px; }
+.sw-tr-prose h1, .sw-tr-prose h2, .sw-tr-prose h3, .sw-tr-prose h4 { font-family: var(--font-display); font-weight: 500; color: var(--ink); margin: 10px 0 6px; line-height: 1.35; }
+.sw-tr-prose h1 { font-size: 18px; }
+.sw-tr-prose h2 { font-size: 16px; }
+.sw-tr-prose h3, .sw-tr-prose h4 { font-size: 14.5px; }
+.sw-tr-prose ul, .sw-tr-prose ol { margin: 4px 0 8px; padding-left: 20px; }
+.sw-tr-prose li { margin-bottom: 3px; }
+.sw-tr-prose blockquote { margin: 6px 0; padding: 2px 10px; border-left: 2px solid var(--clay-line); color: var(--ink-3); }
+.sw-tr-prose code { font-family: var(--font-mono); font-size: 12.5px; background: var(--sunken); padding: 1px 5px; border-radius: 4px; color: var(--ink-2); }
+.sw-tr-prose pre { margin: 8px 0; padding: 9px 11px; border-radius: 8px; background: var(--sunken); border: 1px solid var(--line); overflow-x: auto; line-height: 1.55; }
+.sw-tr-prose pre code { background: transparent; padding: 0; }
+.sw-tr-prose table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+.sw-tr-prose th, .sw-tr-prose td { border: 1px solid var(--line); padding: 5px 8px; text-align: left; }
+.sw-tr-prose th { background: var(--sunken); font-weight: 500; }
+.sw-tr-prose a { color: var(--clay-ink); text-decoration: underline; text-underline-offset: 2px; }
 .sw-tr-placeholder { font-size: 13.5px; color: var(--ink-5); }
 .sw-tr-error { padding: 8px 10px; border-radius: 8px; background: var(--danger-wash); color: var(--danger); font-size: 12.5px; }
 .sw-caret { display: inline-block; width: 1.5px; height: 1.1em; background: var(--clay); vertical-align: -0.15em; margin-left: 2px; }

@@ -410,10 +410,10 @@ export function ClipboardWindow() {
               type="button"
               className="sw-btn ghost sm"
               disabled={!selected}
-              onClick={() => selected && void runAct({ action: 'note', id: selected.id }, '已入便签')}
+              onClick={() => selected && void runAct({ action: 'note', id: selected.id }, '已存入便签')}
             >
               <NotebookPen size={14} />
-              <span>入便签</span>
+              <span>存入便签</span>
             </button>
             <button
               type="button"

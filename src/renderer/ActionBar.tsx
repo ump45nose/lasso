@@ -137,7 +137,7 @@ function FastApiCard({ card, side }: { card: FastApiCardState; side: 'above' | '
           <Copy size={13} />
           复制<kbd>⌘C</kbd>
         </button>
-        <button type="button" className="ab-fast-icon" aria-label="入便签" title="入便签" disabled={!card.text.trim()} onClick={() => void window.actionBar.noteFastResult(card.text)}>
+        <button type="button" className="ab-fast-icon" aria-label="存入便签" title="存入便签" disabled={!card.text.trim()} onClick={() => void window.actionBar.noteFastResult(card.text)}>
           <NotebookPen size={14} />
         </button>
         <button
@@ -420,7 +420,7 @@ export function ActionBar() {
               </>
             ) : tipItem?.kind === 'note' ? (
               <>
-                入便签<span className="ab-tip-dim">· 追加到 Scratchpad</span>
+                存入便签<span className="ab-tip-dim">· 追加到浮动便签</span>
               </>
             ) : tipItem?.target ? (
               <>

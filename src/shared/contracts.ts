@@ -372,7 +372,6 @@ export interface NookFocusReview {
 }
 export interface IslandState {
   mode: IslandMode;
-  glow: boolean;
   notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
   nookPrefs: NookReminderPrefs;
   copyTranslateEnabled: boolean;
@@ -530,7 +529,6 @@ export interface IslandAPI {
   dismissAlert(alertId?: string): Promise<void>;
   restartService(label: string): Promise<void>;
   quickAction(action: IslandQuickAction): Promise<void>;
-  setGlow(enabled: boolean): Promise<void>;
   setNookReminderPrefs(patch: Partial<NookReminderPrefs>): Promise<void>;
   setCopyTranslate(enabled: boolean): Promise<void>;
   getTranslatorState(): Promise<TranslatorWindowState>;

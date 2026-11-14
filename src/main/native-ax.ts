@@ -15,7 +15,6 @@ export interface NativeAx {
   startCopyWatch(cb: (event: { doubleCopy: boolean; timestamp: number }) => void): void;
   stopCopyWatch(): void;
   setWindowDragSnapEnabled(enabled: boolean, dwellMs?: number): void;
-  setGlow(enabled: boolean): void;
   startBridge(cb: (event: { name: string; payload: string }) => void): void;
   stopBridge(): void;
   postBridge(name: string, payload: string): void;

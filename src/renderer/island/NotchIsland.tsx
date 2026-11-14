@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowUpRight,
-  Bell,
   Check,
   ClipboardList,
   Coffee,
@@ -16,12 +15,11 @@ import {
   Scan,
   Settings,
   Square,
-  SunDim,
   Target,
   Timer,
   X
 } from 'lucide-react';
-import type { IslandAPI, IslandState } from '../../shared/contracts';
+import type { IslandAPI, IslandAlertItem, IslandState } from '../../shared/contracts';
 import { useFonts } from '../fonts';
 import { spring } from '../motion';
 import './island.css';
@@ -47,6 +45,63 @@ function formatTodayLabel(): string {
   return `${mm}·${dd} ${WEEKDAYS[now.getDay()]}`;
 }
 
+const ALERT_KIND_LABELS: Record<IslandAlertItem['kind'], string> = {
+  launchd: '后台服务',
+  task: '待办逾期',
+  reset: '额度重置',
+  custom: 'Nook 提醒'
+};
+
+function compactWingAlertTitle(item: IslandAlertItem | undefined): string {
+  if (!item) return 'Nook 提醒';
+  return item.title.replace(/\s*(未运行|异常退出|服务异常)$/u, '').trim() || item.title;
+}
+
+function compactWingAlertMeta(alerts: IslandAlertItem[]): string {
+  if (alerts.length > 1) return `${alerts.length} 项`;
+  return alerts[0]?.kind === 'launchd' ? '异常' : '提醒';
+}
+
+function IslandAlertCard({ item }: { item: IslandAlertItem }) {
+  return (
+    <div className="isl-blk alert isl-alert-card">
+      <div className="isl-alert-head">
+        <span className="isl-dot-clay" aria-hidden="true" />
+        <span className="isl-alert-title trunc">{item.title}</span>
+        <span className="isl-alert-kind mono">{ALERT_KIND_LABELS[item.kind]}</span>
+        <button type="button" className="isl-ib sm" aria-label="关闭提醒" onClick={() => void window.island.dismissAlert(item.id)}>
+          <X size={13} />
+        </button>
+      </div>
+      {item.subtitle && <div className="isl-alert-sub trunc">{item.subtitle}</div>}
+      <div className="isl-alert-acts">
+        {item.kind === 'task' && item.target && (
+          <button type="button" className="isl-ink-btn line" onClick={() => void window.island.completeTask(item.target!)}>
+            <Check size={12} />
+            完成
+          </button>
+        )}
+        {item.kind === 'launchd' && item.target && (
+          <button type="button" className="isl-ink-btn line" onClick={() => void window.island.restartService(item.target!)}>
+            <RotateCcw size={12} />
+            重启服务
+          </button>
+        )}
+        <span className="grow" />
+        <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 10)}>
+          10m
+        </button>
+        <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 30)}>
+          30m
+        </button>
+        <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 120)}>
+          2h
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function NotchIsland() {
   const [state, setState] = useState<IslandState | null>(null);
   useFonts(state?.fonts);
@@ -60,7 +115,7 @@ export function NotchIsland() {
   }, []);
 
   if (!state) return null;
-  const { mode, pomodoro, toast, alerts, nookReview, nookTasks, nookCompletedCount, nookTotalCount, glow, notch } = state;
+  const { mode, pomodoro, toast, alerts, nookReview, nookTasks, nookCompletedCount, nookTotalCount, notch } = state;
   const openTasks = nookTasks.filter(t => !t.completed);
   const hasReview = Boolean(nookReview && (nookReview.mainGoal.trim() || nookReview.items.length > 0));
   const hasNotch = Boolean(notch?.hasNotch);
@@ -101,8 +156,8 @@ export function NotchIsland() {
 
   function enterCard() {
     window.island.hit(true);
-    if (mode === 'focus') window.island.setMode('focus-hover');
-    else if (mode === 'idle' && alerts.length > 0) window.island.setMode('nook-alert');
+    if (alerts.length > 0 && (mode === 'idle' || mode === 'focus')) window.island.setMode('nook-alert');
+    else if (mode === 'focus' && pomodoro?.active) window.island.setMode('focus-hover');
   }
 
   function leaveCard() {
@@ -141,14 +196,14 @@ export function NotchIsland() {
             '--right-safe-w': `${rightSafeW}px`
           } as React.CSSProperties
         }
-        className={`isl-shell mode-${mode}${glow ? ' glow-on' : ''}${!hasNotch ? ' no-notch' : ''}`}
+        className={`isl-shell mode-${mode}${!hasNotch ? ' no-notch' : ''}`}
         role="region"
         aria-label="Lasso 刘海岛"
       >
         {(wingKind || dropKind) && hasNotch && (
           <button
             type="button"
-            className={`isl-notch-anchor${glow ? ' glow-on' : ''}`}
+            className="isl-notch-anchor"
             aria-label="展开或收起今日聚焦看板"
             onPointerEnter={event => {
               if (event.metaKey) {
@@ -166,7 +221,7 @@ export function NotchIsland() {
 
         {wingKind && (
           <div
-            className={`isl-menubar-wings mode-${wingKind}${!hasNotch ? ' no-notch' : ''}${glow ? ' glow-on' : ''}`}
+            className={`isl-menubar-wings mode-${wingKind}${!hasNotch ? ' no-notch' : ''}`}
             onPointerEnter={event => {
               if (event.metaKey) {
                 window.island.hit(false);
@@ -195,7 +250,7 @@ export function NotchIsland() {
                 </span>
                 {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                 <span className="isl-wing isl-wing-right">
-                  <span className="isl-wing-meta mono">{openTasks.length > 0 ? `今日剩 ${openTasks.length} 项` : '本周主线'}</span>
+                  <span className="isl-wing-meta mono">{openTasks.length > 0 ? `今日剩 ${openTasks.length} 项` : '阶段主线'}</span>
                 </span>
               </button>
             )}
@@ -229,11 +284,11 @@ export function NotchIsland() {
               >
                 <span className="isl-wing isl-wing-left">
                   <span className="isl-dot-clay" />
-                  <span className="isl-wing-title">{alerts[0]?.title || 'Nook 提醒'}</span>
+                  <span className="isl-wing-title">{compactWingAlertTitle(alerts[0])}</span>
                 </span>
                 {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                 <span className="isl-wing isl-wing-right">
-                  <span className="isl-wing-meta mono">{alerts[0]?.subtitle || `${alerts.length} 条提醒`}</span>
+                  <span className="isl-wing-meta mono">{compactWingAlertMeta(alerts)}</span>
                 </span>
               </button>
             )}
@@ -270,7 +325,7 @@ export function NotchIsland() {
                 initial={{ opacity: 0, y: -4, scale: 0.97 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 exit={{ opacity: 0, y: -4, scale: 0.97 }}
-                className={`isl-drop-card mode-${dropKind}${glow ? ' glow-on' : ''}`}
+                className={`isl-drop-card mode-${dropKind}`}
                 onPointerEnter={enterCard}
                 onPointerLeave={leaveCard}
               >
@@ -320,40 +375,7 @@ export function NotchIsland() {
                 {dropKind === 'nook-alert' && (
                   <div className="isl-mini-card">
                     {alerts.slice(0, 2).map(item => (
-                      <div key={item.id} className="isl-blk alert">
-                        <div className="isl-alert-top">
-                          <Bell size={14} className="isl-clay-ic" />
-                          <span className="isl-alert-title">{item.title}</span>
-                          <span className="grow" />
-                          <span className="isl-alert-meta mono">{item.subtitle}</span>
-                        </div>
-                        <div className="isl-alert-acts">
-                          {item.kind === 'task' && item.target && (
-                            <button type="button" className="isl-ink-btn line" onClick={() => void window.island.completeTask(item.target!)}>
-                              完成
-                            </button>
-                          )}
-                          {item.kind === 'launchd' && item.target && (
-                            <button type="button" className="isl-ink-btn line" onClick={() => void window.island.restartService(item.target!)}>
-                              <RotateCcw size={12} />
-                              重启
-                            </button>
-                          )}
-                          <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 10)}>
-                            10m
-                          </button>
-                          <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 30)}>
-                            30m
-                          </button>
-                          <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 120)}>
-                            2h
-                          </button>
-                          <span className="grow" />
-                          <button type="button" className="isl-ib sm" aria-label="关闭提醒" onClick={() => void window.island.dismissAlert(item.id)}>
-                            <X size={13} />
-                          </button>
-                        </div>
-                      </div>
+                      <IslandAlertCard key={item.id} item={item} />
                     ))}
                   </div>
                 )}
@@ -366,15 +388,6 @@ export function NotchIsland() {
                       <span className="grow" />
                       <button
                         type="button"
-                        className={'isl-ib' + (glow ? ' act' : '')}
-                        aria-label={glow ? '静默四边光效' : '开启四边光效'}
-                        title={glow ? '点击静默屏幕四边光效' : '屏幕四边提醒微光'}
-                        onClick={() => void window.island.setGlow(!glow)}
-                      >
-                        <SunDim size={15} />
-                      </button>
-                      <button
-                        type="button"
                         className="isl-ib"
                         aria-label="收起看板"
                         onClick={() => window.island.setMode(resolveCollapsedMode())}
@@ -385,41 +398,7 @@ export function NotchIsland() {
 
                     {/* 1. Alert Block (only when pending alerts exist) */}
                     {alerts.map(item => (
-                      <div key={item.id} className="isl-blk alert">
-                        <div className="isl-alert-top">
-                          <Bell size={14} className="isl-clay-ic" />
-                          <span className="isl-alert-title">{item.title}</span>
-                          <span className="grow" />
-                          <span className="isl-alert-meta mono">{item.subtitle}</span>
-                        </div>
-                        <div className="isl-alert-sub">Nook · 提醒</div>
-                        <div className="isl-alert-acts">
-                          {item.kind === 'task' && item.target && (
-                            <button type="button" className="isl-ink-btn line" onClick={() => void window.island.completeTask(item.target!)}>
-                              完成
-                            </button>
-                          )}
-                          {item.kind === 'launchd' && item.target && (
-                            <button type="button" className="isl-ink-btn line" onClick={() => void window.island.restartService(item.target!)}>
-                              <RotateCcw size={12} />
-                              重启
-                            </button>
-                          )}
-                          <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 10)}>
-                            10m
-                          </button>
-                          <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 30)}>
-                            30m
-                          </button>
-                          <button type="button" className="isl-ink-btn line mono" onClick={() => void window.island.snoozeAlert(item.id, 120)}>
-                            2h
-                          </button>
-                          <span className="grow" />
-                          <button type="button" className="isl-ib sm" aria-label="关闭提醒" onClick={() => void window.island.dismissAlert(item.id)}>
-                            <X size={13} />
-                          </button>
-                        </div>
-                      </div>
+                      <IslandAlertCard key={item.id} item={item} />
                     ))}
 
                     {/* 2. Focus Timer Block */}
@@ -481,12 +460,12 @@ export function NotchIsland() {
                     <button type="button" className="isl-blk isl-review-blk" onClick={() => void window.island.openNook()}>
                       <div className="isl-blk-lbl">
                         <Target size={13} />
-                        <span>Nook 复盘 · 本周主线</span>
+                        <span>Nook 复盘 · 阶段主线</span>
                         <span className="r">
                           <ArrowUpRight size={13} />
                         </span>
                       </div>
-                      <div className="isl-review-goal">{nookReview?.mainGoal || '点击在 Nook 中制定本周主线'}</div>
+                      <div className="isl-review-goal">{nookReview?.mainGoal || '点击在 Nook 中制定阶段主线'}</div>
                       {nookReview &&
                         nookReview.items.slice(0, 3).map((item, idx) => (
                           <div key={idx} className="isl-focus-row">

@@ -439,7 +439,7 @@ function PresetEditor({
 
         <div className="l-set-row">
           <div className="l-set-row-main">
-            <div className="l-set-row-name">必须有选区或图片才能触发</div>
+            <div className="l-set-row-name">仅在选中内容或图片后可用</div>
             <div className="l-set-row-sub">关闭后可在指令面板（⌘K）直接无输入触发</div>
           </div>
           <Switch label="需要选区内容" value={draft.needsSelection} change={() => set({ needsSelection: !draft.needsSelection })} />

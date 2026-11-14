@@ -7,7 +7,8 @@ import type { RecordingSettings } from '../shared/recording';
 import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings, type ScreenshotActions, type ScreenshotKind } from '../shared/screenshot-settings';
 import { CaptureHistory, PinWorkspace } from './CaptureWorkspaceSettings';
 import { ApiConnectionBindingFields } from './ImageOptionsFields';
-import { Segmented, SubNav, SubPane, useSubNav } from './motion';
+import { AnimatePresence, motion } from 'motion/react';
+import { collapse, Segmented, SubNav, SubPane, useSubNav } from './motion';
 import { Switch } from './Switch';
 import './styles/screenshot-settings.css';
 
@@ -537,25 +538,29 @@ export function ScreenshotSettings({
               </button>
             </span>
           </div>
-          {addingLang && (
-            <div className="l-wrap">
-              {supported
-                .filter(lang => !draft.languages.includes(lang))
-                .map(lang => (
-                  <button
-                    key={lang}
-                    type="button"
-                    className="l-btn small"
-                    onClick={() => {
-                      patch({ languages: [...draft.languages, lang] });
-                      setAddingLang(false);
-                    }}
-                  >
-                    {languageName(lang)}
-                  </button>
-                ))}
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {addingLang && (
+              <motion.div key="ocr-add-lang" className="l-collapse" {...collapse}>
+                <div className="l-wrap">
+                  {supported
+                    .filter(lang => !draft.languages.includes(lang))
+                    .map(lang => (
+                      <button
+                        key={lang}
+                        type="button"
+                        className="l-btn small"
+                        onClick={() => {
+                          patch({ languages: [...draft.languages, lang] });
+                          setAddingLang(false);
+                        }}
+                      >
+                        {languageName(lang)}
+                      </button>
+                    ))}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="l-set-card">
             {draft.languages.map((language, index) => (
               <div className="l-set-row" key={language}>
@@ -837,22 +842,28 @@ export function ScreenshotSettings({
                 />
               </div>
             ))}
-            <div className="l-set-row">
-              <div className="l-set-row-main">
-                <div className="l-set-row-name">摄像头画中画位置</div>
-              </div>
-              <Segmented
-                label="摄像头位置"
-                value={draft.recording.cameraPosition}
-                onChange={cameraPosition => patch({ recording: { ...draft.recording, cameraPosition } })}
-                options={[
-                  ['bottom-right', '右下'],
-                  ['bottom-left', '左下'],
-                  ['top-right', '右上'],
-                  ['top-left', '左上']
-                ]}
-              />
-            </div>
+            <AnimatePresence initial={false}>
+              {draft.recording.cameraOverlay && (
+                <motion.div key="cam-pos" className="l-set-collapse" {...collapse}>
+                  <div className="l-set-row">
+                    <div className="l-set-row-main">
+                      <div className="l-set-row-name">摄像头画中画位置</div>
+                    </div>
+                    <Segmented
+                      label="摄像头位置"
+                      value={draft.recording.cameraPosition}
+                      onChange={cameraPosition => patch({ recording: { ...draft.recording, cameraPosition } })}
+                      options={[
+                        ['bottom-right', '右下'],
+                        ['bottom-left', '左下'],
+                        ['top-right', '右上'],
+                        ['top-left', '左上']
+                      ]}
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
       </SubPane>

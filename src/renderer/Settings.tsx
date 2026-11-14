@@ -12,7 +12,7 @@ import {
   TextCursorInput,
   type LucideIcon
 } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import type { SettingsSection, ShellState } from '../shared/contracts';
 import { useFonts } from './fonts';
 import {
@@ -23,7 +23,7 @@ import {
   TranslationPane
 } from './GeneralSettings';
 import { ConnectionsPane } from './ImageOptionsFields';
-import { rise } from './motion';
+import { Glide, rise } from './motion';
 import { PresetSettings } from './PresetSettings';
 import { ScreenshotSettings } from './ScreenshotSettings';
 
@@ -95,22 +95,25 @@ export function Settings() {
   return (
     <main className="l-set-win" aria-label="Lasso 设置">
       <aside className="l-set-side" aria-label="设置分类">
-        {modules.map(item => {
-          const Icon = item.icon;
-          const active = item.id === section;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              className="l-set-nav-item"
-              aria-current={active ? 'page' : undefined}
-              onClick={() => switchSection(item.id)}
-            >
-              <Icon size={15} />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
+        <LayoutGroup id="settings-sidebar">
+          {modules.map(item => {
+            const Icon = item.icon;
+            const active = item.id === section;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className="l-set-nav-item"
+                aria-current={active ? 'page' : undefined}
+                onClick={() => switchSection(item.id)}
+              >
+                {active && <Glide id="settings-nav-pill" className="l-set-nav-pill" />}
+                <Icon size={15} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </LayoutGroup>
         <div className="l-set-ver">Lasso 2.4.0</div>
       </aside>
 

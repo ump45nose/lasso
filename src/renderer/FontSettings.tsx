@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Trash2, Upload } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { defaultFonts, type FontRole, type Settings } from '../shared/contracts';
 import { builtinFonts, fontStack, loadImported } from './fonts';
+import { collapse } from './motion';
 
 const roles: { id: FontRole; name: string; use: string; sample: string }[] = [
   { id: 'display', name: '标题', use: '启动台、设置与看板标题', sample: '随手问一句，再回到手上的事。' },
@@ -150,58 +152,62 @@ export function FontSettings({ settings, notify }: { settings: Settings; notify?
                 <div className="l-font-preview" style={{ fontFamily: fontStack(role.id, family) }}>
                   {role.sample}
                 </div>
-                {expanded && (
-                  <div className="l-set-subform-box">
-                    <input
-                      className="l-input"
-                      aria-label="搜索或输入字体名"
-                      placeholder="搜索，或输入本机字体名后回车"
-                      value={query}
-                      autoFocus
-                      spellCheck={false}
-                      onChange={e => setQuery(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter' && !e.nativeEvent.isComposing && query.trim()) void choose(role.id, query.trim());
-                      }}
-                    />
-                    <div className="l-wrap" role="listbox" aria-label={role.name + '字体'}>
-                      {options.map(option => (
-                        <button
-                          key={option}
-                          type="button"
-                          role="option"
-                          aria-selected={option === family}
-                          className={'l-btn small' + (option === family ? ' ton' : '')}
-                          onClick={() => void choose(role.id, option)}
-                          style={{ fontFamily: fontStack(role.id, option) }}
-                        >
-                          {option}
-                        </button>
-                      ))}
-                      {!options.length && <p className="l-field-help">按回车直接使用「{query}」</p>}
-                    </div>
-                    <div className="l-row">
-                      <button type="button" className="l-btn small" onClick={() => void importFile(role.id)}>
-                        <Upload size={13} />
-                        <span>导入字体文件…</span>
-                      </button>
-                      {window.queryLocalFonts && (
-                        <button type="button" className="l-btn small" onClick={() => void readLocal()}>
-                          读取全部本机字体
-                        </button>
-                      )}
-                      <span className="grow" />
-                      <button
-                        type="button"
-                        className="l-ghost small"
-                        disabled={family === defaultFonts[role.id]}
-                        onClick={() => void choose(role.id, defaultFonts[role.id])}
-                      >
-                        恢复默认
-                      </button>
-                    </div>
-                  </div>
-                )}
+                <AnimatePresence initial={false}>
+                  {expanded && (
+                    <motion.div key={role.id + '-picker'} className="l-collapse" {...collapse}>
+                      <div className="l-set-subform-box">
+                        <input
+                          className="l-input"
+                          aria-label="搜索或输入字体名"
+                          placeholder="搜索，或输入本机字体名后回车"
+                          value={query}
+                          autoFocus
+                          spellCheck={false}
+                          onChange={e => setQuery(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' && !e.nativeEvent.isComposing && query.trim()) void choose(role.id, query.trim());
+                          }}
+                        />
+                        <div className="l-wrap" role="listbox" aria-label={role.name + '字体'}>
+                          {options.map(option => (
+                            <button
+                              key={option}
+                              type="button"
+                              role="option"
+                              aria-selected={option === family}
+                              className={'l-btn small' + (option === family ? ' ton' : '')}
+                              onClick={() => void choose(role.id, option)}
+                              style={{ fontFamily: fontStack(role.id, option) }}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                          {!options.length && <p className="l-field-help">按回车直接使用「{query}」</p>}
+                        </div>
+                        <div className="l-row">
+                          <button type="button" className="l-btn small" onClick={() => void importFile(role.id)}>
+                            <Upload size={13} />
+                            <span>导入字体文件…</span>
+                          </button>
+                          {window.queryLocalFonts && (
+                            <button type="button" className="l-btn small" onClick={() => void readLocal()}>
+                              读取全部本机字体
+                            </button>
+                          )}
+                          <span className="grow" />
+                          <button
+                            type="button"
+                            className="l-ghost small"
+                            disabled={family === defaultFonts[role.id]}
+                            onClick={() => void choose(role.id, defaultFonts[role.id])}
+                          >
+                            恢复默认
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             );
           })}

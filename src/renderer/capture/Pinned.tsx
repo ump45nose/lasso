@@ -664,7 +664,7 @@ export function Pinned() {
                         <Languages />
                       </Tool>
                       <Tool
-                        label="入便签"
+                        label="存入便签"
                         disabled={textEditing}
                         onClick={() => void run(window.pin.noteText(kind === 'text' ? payload?.text || '' : text, state.revision))}
                       >

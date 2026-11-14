@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Lock, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import type { ShellState } from '../shared/contracts';
 import { imagePixels, mediaAspects, type ApiConnection, type ImageOptions, type MediaAspect, type MediaResolution } from '../shared/media';
-import { Segmented } from './motion';
+import { collapse, Segmented, SelectBox } from './motion';
 
 const connectionListeners = new Set<(connections: ApiConnection[]) => void>();
 export const broadcastConnections = (connections: ApiConnection[]) => {
@@ -321,7 +322,7 @@ export function ConnectionsPane({
 
   return (
     <>
-      <p className="l-field-help">这里是唯一的连接池：API 对话、API 预设、LLM 翻译、截图识别、AI 生图都从这里选。</p>
+      <p className="l-field-help">统一管理所有 AI 服务连接：API 对话、动作预设、AI 大模型翻译、截图识别与 AI 生图均在此选用。</p>
 
       <div className="l-set-group">
         <div className="l-set-lbl">
@@ -329,7 +330,13 @@ export function ConnectionsPane({
           <span className="r">密钥使用 macOS 安全存储加密保存</span>
         </div>
         <div className="l-set-card">
-          {expandedId === '__new__' && renderForm(undefined)}
+          <AnimatePresence initial={false}>
+            {expandedId === '__new__' && (
+              <motion.div key="__new__" className="l-collapse" {...collapse}>
+                {renderForm(undefined)}
+              </motion.div>
+            )}
+          </AnimatePresence>
           {connections.map(conn => {
             const expanded = expandedId === conn.id;
             const usages = connectionUsages(state, conn.id);
@@ -367,7 +374,13 @@ export function ConnectionsPane({
                   )}
                   {expanded ? <ChevronDown size={14} className="faint" /> : <ChevronRight size={14} className="faint" />}
                 </div>
-                {expanded && renderForm(conn)}
+                <AnimatePresence initial={false}>
+                  {expanded && (
+                    <motion.div key={conn.id + '-form'} className="l-collapse" {...collapse}>
+                      {renderForm(conn)}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
             );
           })}
@@ -466,25 +479,24 @@ export function ApiConnectionBindingFields({
               </button>
             )}
           </div>
-          <select
+          <SelectBox
             id={modelId + '-connection'}
-            aria-label="绑定 API 连接"
-            className="l-select"
+            label="绑定 API 连接"
             value={connectionId}
-            onChange={e => {
+            placeholder="请选择 API 连接…"
+            onChange={nextId => {
               setError('');
-              onChange({ connectionId: e.target.value, model });
+              onChange({ connectionId: nextId, model });
             }}
-          >
-            <option value="">请选择 API 连接…</option>
-            {connections.map(conn => (
-              <option key={conn.id} value={conn.id}>
-                {conn.name}
-                {conn.baseURL ? ` · ${conn.baseURL}` : ''}
-              </option>
-            ))}
-            {connectionId && !activeConnection && <option value={connectionId}>未找到连接 ({connectionId})</option>}
-          </select>
+            options={[
+              { value: '', label: '请选择 API 连接…' },
+              ...connections.map(conn => ({
+                value: conn.id,
+                label: `${conn.name}${conn.baseURL ? ` · ${conn.baseURL}` : ''}`
+              })),
+              ...(connectionId && !activeConnection ? [{ value: connectionId, label: `未找到连接 (${connectionId})` }] : [])
+            ]}
+          />
         </div>
 
         <div className="l-field">
@@ -512,50 +524,54 @@ export function ApiConnectionBindingFields({
           <button type="button" className="l-text-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
             {open ? '收起已缓存模型' : `从已缓存模型中选择（${models.length}）`}
           </button>
-          {open && (
-            <div className="l-wrap">
-              {models.map(item =>
-                onChooseEditModel ? (
-                  <span key={item} className="l-chip mono">
-                    {item}{' '}
-                    <button
-                      type="button"
-                      className="l-text-btn"
-                      onClick={() => {
-                        onChange({ connectionId, model: item });
-                        setOpen(false);
-                      }}
-                    >
-                      生成
-                    </button>
-                    {' / '}
-                    <button
-                      type="button"
-                      className="l-text-btn"
-                      onClick={() => {
-                        onChooseEditModel(item);
-                        setOpen(false);
-                      }}
-                    >
-                      改图
-                    </button>
-                  </span>
-                ) : (
-                  <button
-                    key={item}
-                    type="button"
-                    className={'l-btn small mono' + (item === model ? ' ton' : '')}
-                    onClick={() => {
-                      onChange({ connectionId, model: item });
-                      setOpen(false);
-                    }}
-                  >
-                    {item}
-                  </button>
-                )
-              )}
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {open && (
+              <motion.div key="cached-models" className="l-collapse" {...collapse}>
+                <div className="l-wrap">
+                  {models.map(item =>
+                    onChooseEditModel ? (
+                      <span key={item} className="l-chip mono">
+                        {item}{' '}
+                        <button
+                          type="button"
+                          className="l-text-btn"
+                          onClick={() => {
+                            onChange({ connectionId, model: item });
+                            setOpen(false);
+                          }}
+                        >
+                          生成
+                        </button>
+                        {' / '}
+                        <button
+                          type="button"
+                          className="l-text-btn"
+                          onClick={() => {
+                            onChooseEditModel(item);
+                            setOpen(false);
+                          }}
+                        >
+                          改图
+                        </button>
+                      </span>
+                    ) : (
+                      <button
+                        key={item}
+                        type="button"
+                        className={'l-btn small mono' + (item === model ? ' ton' : '')}
+                        onClick={() => {
+                          onChange({ connectionId, model: item });
+                          setOpen(false);
+                        }}
+                      >
+                        {item}
+                      </button>
+                    )
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
       )}
       {error && (

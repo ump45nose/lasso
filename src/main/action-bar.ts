@@ -43,7 +43,7 @@ export function buildOrderedActionBarItems(presets: readonly Preset[], config: A
     if (!p.enabled || p.kind === 'image') continue;
     catalog.set(`preset:${p.id}`, { id: p.id, kind: 'preset', name: p.name, target: p.target, mode: p.mode });
   }
-  catalog.set('note', { id: 'note', kind: 'note', name: '入便签' });
+  catalog.set('note', { id: 'note', kind: 'note', name: '存入便签' });
 
   const cut = Math.max(1, config.inlineCount);
   const hidden = new Set(config.hidden);

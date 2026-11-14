@@ -386,9 +386,9 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
 
       const hasTranslateAndNote = await page(
         w,
-        `Boolean(document.querySelector('button[aria-label="翻译"]') || [...document.querySelectorAll('.ab-buttons button')].some(b => b.textContent.includes('翻译'))) && Boolean(document.querySelector('button[aria-label="入便签"]'))`
+        `Boolean(document.querySelector('button[aria-label="翻译"]') || [...document.querySelectorAll('.ab-buttons button')].some(b => b.textContent.includes('翻译'))) && Boolean(document.querySelector('button[aria-label="存入便签"]'))`
       );
-      if (!hasTranslateAndNote) throw Error('B1 ActionBar missing 翻译 or 入便签');
+      if (!hasTranslateAndNote) throw Error('B1 ActionBar missing 翻译 or 存入便签');
 
       const btnRect = await page(w, `(() => { const r = document.querySelectorAll('.ab-buttons button')[1]?.getBoundingClientRect(); return r ? [r.x + r.width / 2, r.y + r.height / 2] : null; })()`);
       if (btnRect) {

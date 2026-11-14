@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Check,
   ChevronDown,
@@ -43,6 +45,27 @@ function detectSourceTag(text: string): string {
   if (/[가-힯]/.test(sample)) return 'KO';
   if (/[一-鿿]/.test(sample)) return 'ZH';
   return 'EN';
+}
+
+function formatMarkdownBreaks(markdown: string): string {
+  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
+  let inFence = false;
+  const isBlockLine = (line: string) =>
+    /^\s*(?:$|#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\||`{3,}|~{3,}|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line);
+  return lines
+    .map((line, idx) => {
+      if (/^\s*(?:`{3,}|~{3,})/.test(line)) {
+        inFence = !inFence;
+        return line;
+      }
+      if (inFence || idx === lines.length - 1) return line;
+      const next = lines[idx + 1];
+      if (!isBlockLine(line) && !isBlockLine(next) && !line.endsWith('  ')) {
+        return `${line}  `;
+      }
+      return line;
+    })
+    .join('\n');
 }
 
 export function TranslatorWindow() {
@@ -362,7 +385,9 @@ export function TranslatorWindow() {
             </div>
           ) : state.translatedText || state.status === 'streaming' ? (
             <div className="sw-tr-prose">
-              {state.translatedText}
+              {state.translatedText ? (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatMarkdownBreaks(state.translatedText)}</ReactMarkdown>
+              ) : null}
               {state.status === 'streaming' && <span className="sw-caret" />}
             </div>
           ) : (
@@ -380,9 +405,9 @@ export function TranslatorWindow() {
             <CornerDownLeft size={14} />
             <span>替换原选区</span>
           </button>
-          <button type="button" className="sw-btn ghost sm" disabled={!hasResult} onClick={() => void runAct('note', '已入便签')}>
+          <button type="button" className="sw-btn ghost sm" disabled={!hasResult} onClick={() => void runAct('note', '已存入便签')}>
             <NotebookPen size={14} />
-            <span>入便签</span>
+            <span>存入便签</span>
           </button>
           <button
             type="button"

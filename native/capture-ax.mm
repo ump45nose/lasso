@@ -35,7 +35,6 @@ static napi_threadsafe_function g_bridge_tsfn = nullptr;
 static id g_present_obs = nil;
 static id g_dismiss_obs = nil;
 static id g_prefs_obs = nil;
-static NSMutableArray<NSPanel*>* g_glow_panels = nil;
 static napi_threadsafe_function g_finder_tsfn = nullptr;
 static id g_finder_monitor = nil;
 static dispatch_source_t g_finder_timer = nil;
@@ -146,78 +145,6 @@ static napi_value pasteToProcess(napi_env e, napi_callback_info info) {
   });
   napi_get_boolean(e, activated, &result);
   return result;
-}
-
-static NSPanel* createGlowStrip(NSRect frame, CGPoint startPoint, CGPoint endPoint) {
-  NSPanel* panel = [[NSPanel alloc] initWithContentRect:frame
-                                              styleMask:(NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel)
-                                                backing:NSBackingStoreBuffered
-                                                  defer:NO];
-  panel.floatingPanel = YES;
-  panel.level = NSStatusWindowLevel;
-  panel.opaque = NO;
-  panel.backgroundColor = [NSColor clearColor];
-  panel.hasShadow = NO;
-  panel.ignoresMouseEvents = YES;
-  panel.collectionBehavior = NSWindowCollectionBehaviorCanJoinAllSpaces | NSWindowCollectionBehaviorFullScreenAuxiliary | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
-
-  NSView* view = [[NSView alloc] initWithFrame:NSMakeRect(0, 0, frame.size.width, frame.size.height)];
-  view.wantsLayer = YES;
-  CAGradientLayer* grad = [CAGradientLayer layer];
-  grad.frame = view.bounds;
-  grad.colors = @[
-    (__bridge id)[NSColor colorWithSRGBRed:217.0/255.0 green:119.0/255.0 blue:87.0/255.0 alpha:0.65].CGColor,
-    (__bridge id)[NSColor colorWithSRGBRed:217.0/255.0 green:119.0/255.0 blue:87.0/255.0 alpha:0.0].CGColor
-  ];
-  grad.startPoint = startPoint;
-  grad.endPoint = endPoint;
-  [view.layer addSublayer:grad];
-
-  CABasicAnimation* pulse = [CABasicAnimation animationWithKeyPath:@"opacity"];
-  pulse.fromValue = @(0.28);
-  pulse.toValue = @(0.95);
-  pulse.duration = 1.2;
-  pulse.autoreverses = YES;
-  pulse.repeatCount = HUGE_VALF;
-  pulse.timingFunction = [CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
-  [grad addAnimation:pulse forKey:@"breathe"];
-
-  panel.contentView = view;
-  return panel;
-}
-
-/** Shows or hides 4 click-through 28pt breathing terracotta edge strips across the active screen. */
-static napi_value setGlow(napi_env e, napi_callback_info info) {
-  size_t n = 1;
-  napi_value args[1];
-  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
-  bool enabled = false;
-  if (n >= 1) napi_get_value_bool(e, args[0], &enabled);
-  dispatch_async(dispatch_get_main_queue(), ^{
-    @autoreleasepool {
-      if (g_glow_panels) {
-        for (NSPanel* p in g_glow_panels) [p orderOut:nil];
-        [g_glow_panels removeAllObjects];
-      }
-      if (!enabled) return;
-      NSScreen* screen = [NSScreen mainScreen] ?: NSScreen.screens.firstObject;
-      if (!screen) return;
-      if (!g_glow_panels) g_glow_panels = [NSMutableArray new];
-      NSRect f = screen.frame;
-      CGFloat t = 28.0;
-      NSPanel* top = createGlowStrip(NSMakeRect(f.origin.x, NSMaxY(f) - t, f.size.width, t), CGPointMake(0.5, 1.0), CGPointMake(0.5, 0.0));
-      NSPanel* bottom = createGlowStrip(NSMakeRect(f.origin.x, f.origin.y, f.size.width, t), CGPointMake(0.5, 0.0), CGPointMake(0.5, 1.0));
-      NSPanel* left = createGlowStrip(NSMakeRect(f.origin.x, f.origin.y, t, f.size.height), CGPointMake(0.0, 0.5), CGPointMake(1.0, 0.5));
-      NSPanel* right = createGlowStrip(NSMakeRect(NSMaxX(f) - t, f.origin.y, t, f.size.height), CGPointMake(1.0, 0.5), CGPointMake(0.0, 0.5));
-      for (NSPanel* p in @[top, bottom, left, right]) {
-        [p orderFrontRegardless];
-        [g_glow_panels addObject:p];
-      }
-    }
-  });
-  napi_value undefined;
-  napi_get_undefined(e, &undefined);
-  return undefined;
 }
 
 static void callBridgeJS(napi_env env, napi_value cb, void*, void* data) {
@@ -1449,7 +1376,6 @@ static napi_value init(napi_env e,napi_value exports){
     {"startCopyWatch",nullptr,startCopyWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"stopCopyWatch",nullptr,stopCopyWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"setWindowDragSnapEnabled",nullptr,setWindowDragSnapEnabled,nullptr,nullptr,nullptr,napi_default,nullptr},
-    {"setGlow",nullptr,setGlow,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"startBridge",nullptr,startBridge,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"stopBridge",nullptr,stopBridge,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"postBridge",nullptr,postBridge,nullptr,nullptr,nullptr,napi_default,nullptr},

@@ -66,10 +66,6 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
   border-radius: 0 0 11px 11px;
 }
 
-.isl-menubar-wings.glow-on, .isl-notch-anchor.glow-on {
-  box-shadow: inset 0 -1px 0 0 var(--clay-line), 0 0 0 1.5px var(--clay-halo), 0 8px 18px -6px rgba(20, 20, 19, 0.72);
-}
-
 .isl-wing-hit {
   width: 100%;
   height: 100%;
@@ -86,7 +82,7 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 
 .isl-wing { height: 100%; display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
 .isl-wing-left { order: 1; flex: 1; padding: 0 6px 0 12px; justify-content: flex-start; }
-.isl-wing-right { order: 2; padding: 0 10px 0 4px; justify-content: flex-end; flex-shrink: 0; }
+.isl-wing-right { order: 2; max-width: 92px; padding: 0 10px 0 4px; justify-content: flex-end; flex-shrink: 0; overflow: hidden; }
 .isl-wing-notch-gap { order: 3; width: var(--notch-w, 168px); height: 100%; flex-shrink: 0; }
 .isl-menubar-wings.no-notch .isl-wing-right { padding-right: 12px; }
 
@@ -95,7 +91,7 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 .isl-dot-olive { width: 7px; height: 7px; border-radius: 50%; background: var(--olive); flex-shrink: 0; }
 .isl-wing-ic { color: rgba(250, 249, 245, 0.72); flex-shrink: 0; }
 .isl-wing-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; text-align: left; }
-.isl-wing-meta { font-size: 11px; color: rgba(250, 249, 245, 0.72); white-space: nowrap; }
+.isl-wing-meta { font-size: 11px; color: rgba(250, 249, 245, 0.72); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isl-clock { font-size: 12px; color: var(--clay); white-space: nowrap; }
 .isl-kbd { padding: 1px 5px; border-radius: 4px; background: rgba(250, 249, 245, 0.12); font-size: 10px; color: rgba(250, 249, 245, 0.72); }
 
@@ -121,10 +117,6 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
   overflow: hidden;
 }
 
-.isl-drop-card.glow-on {
-  box-shadow: inset 0 0 0 1px var(--clay-line), 0 0 0 3px var(--clay-halo), 0 18px 40px -14px rgba(20, 20, 19, 0.72);
-}
-
 .isl-drop-card.mode-focus-hover,
 .isl-drop-card.mode-slacking,
 .isl-drop-card.mode-nook-alert { width: 380px; padding: 10px; }
@@ -147,17 +139,24 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 .isl-ink-btn.pri:hover { background: var(--clay-press); }
 
 .isl-blk { background: rgba(250, 249, 245, 0.06); border-radius: 12px; padding: 12px 14px; text-align: left; border: 0; color: var(--on-ink); }
-.isl-blk.alert { background: transparent; box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.45); }
+.isl-blk.alert { background: rgba(217, 119, 87, 0.1); box-shadow: inset 0 0 0 1px rgba(217, 119, 87, 0.32); }
 .isl-blk-lbl { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: rgba(250, 249, 245, 0.5); margin-bottom: 8px; }
 .isl-blk-lbl .r { margin-left: auto; max-width: 220px; }
 
-.isl-clay-ic { color: var(--clay); flex-shrink: 0; }
-.isl-alert-top { display: flex; align-items: center; gap: 8px; }
-.isl-alert-title { font-size: 13.5px; font-weight: 500; }
-.isl-alert-meta { font-size: 11px; color: rgba(250, 249, 245, 0.5); }
-.isl-alert-sub { font-size: 12px; color: rgba(250, 249, 245, 0.5); margin: 2px 0 10px 22px; }
-.isl-alert-acts { display: flex; align-items: center; gap: 4px; margin-left: 20px; margin-top: 8px; }
-.isl-alert-sub + .isl-alert-acts { margin-top: 0; }
+.isl-alert-card { display: flex; flex-direction: column; gap: 6px; padding: 11px 12px; }
+.isl-alert-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.isl-alert-title { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 500; color: var(--on-ink); }
+.isl-alert-kind {
+  font-size: 10.5px;
+  color: var(--clay);
+  background: rgba(217, 119, 87, 0.14);
+  padding: 2px 6px;
+  border-radius: 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.isl-alert-sub { font-size: 11.5px; color: rgba(250, 249, 245, 0.58); padding-left: 15px; }
+.isl-alert-acts { display: flex; align-items: center; gap: 6px; padding-left: 15px; margin-top: 2px; }
 
 .isl-timer-row { display: flex; align-items: flex-end; gap: 8px; }
 .isl-timer-big { font-family: var(--font-mono); font-size: 34px; line-height: 1; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--on-ink); }
