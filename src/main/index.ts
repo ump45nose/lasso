@@ -206,9 +206,21 @@ function closePalette(restore = true) {
 
 function showWindow() {
   if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
   setWindowPresence(win, true);
-  const area = screen.getDisplayMatching(win.getBounds()).workArea;
-  win.setBounds(state.expanded ? area : fitToWorkArea(win.getBounds(), area));
+  const bounds = win.getBounds();
+  const currentDisplay = screen.getDisplayMatching(bounds);
+  const targetDisplay = win.isVisible() ? currentDisplay : screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const area = targetDisplay.workArea;
+  const nextBounds =
+    targetDisplay.id === currentDisplay.id
+      ? bounds
+      : {
+          ...bounds,
+          x: Math.round(area.x + (bounds.x - currentDisplay.workArea.x)),
+          y: Math.round(area.y + (bounds.y - currentDisplay.workArea.y))
+        };
+  win.setBounds(state.expanded ? area : fitToWorkArea(nextBounds, area));
   actionBar?.hide();
   motion.show();
   app.focus({ steal: true });
@@ -1855,9 +1867,11 @@ else {
   });
   app.on('activate', () => {
     if (!win || win.isDestroyed()) return;
-    if (!win.isVisible() && !win.isMinimized()) showWindow();
+    showWindow();
   });
-  app.on('window-all-closed', () => {});
+  app.on('window-all-closed', () => {
+    if (quitting) app.quit();
+  });
   app.on('before-quit', event => {
     if (shutdownComplete) return;
     if (recordingShutdown) {
@@ -1865,7 +1879,7 @@ else {
       return;
     }
     quitting = true;
-    if (recording) {
+    if (recording?.active) {
       event.preventDefault();
       screenshots?.cancelRecordingSelection();
       recordingShutdown = recording
@@ -1873,11 +1887,16 @@ else {
         .catch(error => console.error('[recording] 退出保存失败', error))
         .finally(() => {
           screenshots?.dispose();
+          actionBar?.destroy();
+          island?.destroy();
           shutdownComplete = true;
-          app.quit();
+          setImmediate(() => app.quit());
         });
     } else {
+      void recording?.dispose().catch(() => {});
       screenshots?.dispose();
+      actionBar?.destroy();
+      island?.destroy();
       shutdownComplete = true;
     }
   });

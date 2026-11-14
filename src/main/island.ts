@@ -244,6 +244,7 @@ export class NotchIsland {
   private nookWatchers = new Map<string, FSWatcher>();
   private nookWatchDebounce: ReturnType<typeof setTimeout> | null = null;
   private lastAnchorX = -1;
+  private destroyed = false;
 
   private readonly onDisplayMetricsChanged = () => this.placeWindows();
 
@@ -1029,6 +1030,8 @@ export class NotchIsland {
   }
 
   destroy() {
+    if (this.destroyed) return;
+    this.destroyed = true;
     screen.off('display-metrics-changed', this.onDisplayMetricsChanged);
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);

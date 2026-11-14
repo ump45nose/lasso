@@ -41,8 +41,10 @@ export class ClipboardHistoryPanel {
   private polling = false;
   private writing = 0;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private quitting = false;
 
   constructor(fonts: ClipboardWindowState['fonts'], private readonly deps: ClipboardHistoryPanelDeps) {
+    app.on('before-quit', () => { this.quitting = true; });
     this.ax = deps.ax ?? (process.env.LASSO_DATA_ROOT ? {} : nativeAx());
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     this.state = { entries: this.loadEntries(), pinnedOnTop: false, fonts };
@@ -50,7 +52,12 @@ export class ClipboardHistoryPanel {
     this.window.setMovable(true);
     this.window.setAlwaysOnTop(false);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.window.on('close', event => { event.preventDefault(); this.close(); });
+    this.window.on('close', event => {
+      if (!this.quitting) {
+        event.preventDefault();
+        this.close();
+      }
+    });
     this.window.on('blur', () => { if (!this.state.pinnedOnTop) this.close(); });
     this.window.webContents.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && (input.key === 'Escape' || (input.meta && input.key.toLowerCase() === 'w'))) {
@@ -308,6 +315,7 @@ export class ClipboardHistoryPanel {
   }
 
   destroy() {
+    this.quitting = true;
     if (this.timer) clearInterval(this.timer);
     ipcMain.removeHandler('clipboard-history:state');
     ipcMain.removeHandler('clipboard-history:act');

@@ -436,6 +436,6 @@ export class ActionBar {
   destroy() {
     this.closeFast();
     this.motion.dispose();
-    this.window.destroy();
+    if (!this.window.isDestroyed()) this.window.destroy();
   }
 }

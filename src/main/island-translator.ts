@@ -1,4 +1,4 @@
-import { clipboard, ipcMain, screen } from 'electron';
+import { app, clipboard, ipcMain, screen } from 'electron';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
 import type { Settings, TranslatorWindowState } from '../shared/contracts';
@@ -289,8 +289,10 @@ export class TranslatorPanel {
   private requestId = 0;
   private controller: AbortController | null = null;
   private targetPid = 0;
+  private quitting = false;
 
   constructor(fonts: TranslatorWindowState['fonts'], private readonly deps: TranslatorPanelDeps) {
+    app.on('before-quit', () => { this.quitting = true; });
     this.ax = deps.ax ?? (process.env.LASSO_DATA_ROOT ? {} : nativeAx());
     this.state = {
       open: false,
@@ -312,7 +314,12 @@ export class TranslatorPanel {
     this.window.setMovable(true);
     this.window.setAlwaysOnTop(false);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.window.on('close', event => { event.preventDefault(); this.close(); });
+    this.window.on('close', event => {
+      if (!this.quitting) {
+        event.preventDefault();
+        this.close();
+      }
+    });
     this.window.on('blur', () => { if (!this.state.pinnedOnTop) this.close(); });
     this.window.webContents.on('before-input-event', (event, input) => {
       if (input.type === 'keyDown' && (input.key === 'Escape' || (input.meta && input.key.toLowerCase() === 'w'))) {
@@ -467,6 +474,7 @@ export class TranslatorPanel {
   }
 
   destroy() {
+    this.quitting = true;
     this.cancel();
     for (const channel of ['translator:state', 'translator:translate', 'translator:lang', 'translator:pinned', 'translator:act']) ipcMain.removeHandler(channel);
     for (const channel of ['translator:cancel', 'translator:close']) ipcMain.removeAllListeners(channel);

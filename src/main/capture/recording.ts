@@ -65,6 +65,15 @@ export class RecordingManager {
     this.ready = this.loadRecovery();
   }
   state(): RecordingSessionState | null { return this.session ? structuredClone(this.session.state) : null; }
+  get active(): boolean {
+    return Boolean(
+      this.mediaPrepared ||
+      this.capturePrepared ||
+      this.frameTask ||
+      this.interruption ||
+      (this.session && ['recording', 'paused', 'countdown'].includes(this.session.state.status))
+    );
+  }
   async initialized(): Promise<void> { await this.ready; }
   private path(id = this.session!.state.id) { return join(this.directory, id); }
   private emit() { this.options.onChange(this.state()); }

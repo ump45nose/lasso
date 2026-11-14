@@ -31,8 +31,10 @@ export class EdgeNotes {
   readonly window: BrowserWindow;
   private state: Omit<EdgeNotesState, 'notes'>;
   private boundsByDisplay = new Map<number, { x: number; y: number }>();
+  private quitting = false;
 
   constructor(fonts: IslandState['fonts'], private deps: EdgeNotesDeps) {
+    app.on('before-quit', () => { this.quitting = true; });
     const notesDir = resolveNotesFolder();
     const shortcut = deps.settings().actionShortcuts?.['toggle-notes'] ?? 'Alt+N';
     this.state = {
@@ -54,8 +56,10 @@ export class EdgeNotes {
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.window.webContents.setIgnoreMenuShortcuts(true);
     this.window.on('close', event => {
-      event.preventDefault();
-      this.hideDrawer();
+      if (!this.quitting) {
+        event.preventDefault();
+        this.hideDrawer();
+      }
     });
     this.window.on('focus', () => {
       this.state.focused = true;
@@ -202,6 +206,7 @@ export class EdgeNotes {
   }
 
   destroy() {
+    this.quitting = true;
     if (!this.window.isDestroyed()) this.window.destroy();
   }
 
