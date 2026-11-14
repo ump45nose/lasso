@@ -3,8 +3,8 @@ import type { FontRole, Settings } from '../shared/contracts';
 
 export const fontRoles: FontRole[] = ['display', 'text', 'ui', 'mono'];
 /** Bundled faces always available behind the configured family. */
-export const builtinFonts = ['Newsreader Variable', 'JetBrains Mono'];
-const fallback = (role: FontRole) => role === 'mono' ? 'var(--mono-fallback)' : 'var(--serif-fallback)';
+export const builtinFonts = ['Anthropic Sans', 'Anthropic Serif Text', 'Newsreader Variable', 'JetBrains Mono'];
+const fallback = (role: FontRole) => role === 'mono' ? 'var(--mono-fallback)' : role === 'ui' ? 'var(--sans-fallback)' : 'var(--serif-fallback)';
 export const fontStack = (role: FontRole, family: string) => `"${family}", ${fallback(role)}`;
 export const fontUrl = (file: string) => `lasso-font://fonts/${encodeURIComponent(file)}`;
 

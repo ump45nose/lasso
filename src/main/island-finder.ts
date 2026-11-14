@@ -4,16 +4,19 @@ import { execFile } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
-import type { FinderActionReq, FinderMoveTarget, FinderPanelState, IslandState } from '../shared/contracts';
+import type { FinderActionReq, FinderMoveTarget, FinderPanelState, IslandState, Settings } from '../shared/contracts';
 import { encodeWebp } from './capture/output';
 import { visionOCR } from './capture/ocr';
 import { createIslandWindow } from './island-window';
 
-const FINDER_W = 384, FINDER_H = 430;
+const FINDER_W = 428, FINDER_H = 548;
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.heic', '.bmp', '.gif', '.tiff']);
 const FILE_TEMPLATES: Record<'md' | 'txt' | 'py' | 'json' | 'sh', string> = {
-  md: '# 新建笔记\n\n', txt: '', py: '#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n\n',
-  json: '{\n  \n}\n', sh: '#!/usr/bin/env zsh\nset -euo pipefail\n\n'
+  md: '# 新建笔记\n\n',
+  txt: '',
+  py: '#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\n\n',
+  json: '{\n  \n}\n',
+  sh: '#!/usr/bin/env zsh\nset -euo pipefail\n\n'
 };
 type FileTemplate = keyof typeof FILE_TEMPLATES;
 let ocrToken = 2147483647;
@@ -67,7 +70,7 @@ async function queryFinderContext(): Promise<{ folder: string; selection: string
       end tell
     `;
     const out = await new Promise<string>((resolve, reject) => {
-      execFile('osascript', ['-e', script], { encoding: 'utf8', timeout: 900 }, (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
+      execFile('osascript', ['-e', script], { encoding: 'utf8', timeout: 900 }, (error, stdout) => (error ? reject(error) : resolve(stdout.trim())));
     });
     const lines = out.split('\n').map(s => s.trim()).filter(Boolean);
     return { folder: lines[0] || fallback.folder, selection: lines.slice(1) };
@@ -81,6 +84,8 @@ export interface FinderPanelDeps {
   toast: (text: string, badge?: string) => void;
   pinImage: (image: NativeImage, title?: string) => Promise<void>;
   pinText: (text: string, title?: string) => Promise<void>;
+  sendToAi: (paths: string[]) => Promise<void> | void;
+  settings: () => Settings;
 }
 
 export class FinderPanel {
@@ -90,9 +95,17 @@ export class FinderPanel {
   private summonSeq = 0;
 
   constructor(fonts: IslandState['fonts'], private deps: FinderPanelDeps) {
+    const cur = deps.settings();
     this.state = {
-      folder: defaultFinderFolder(), selection: [], hasImageSelection: false,
-      cutPaths: [], moveTargets: [], fonts
+      folder: defaultFinderFolder(),
+      selection: [],
+      imageCount: 0,
+      hasImageSelection: false,
+      cutPaths: [],
+      moveTargets: [],
+      defaultTerminal: cur.finderTerminal ?? 'Ghostty',
+      defaultEditor: cur.finderEditor ?? 'Cursor',
+      fonts
     };
     this.state.moveTargets = this.scanMoveTargets();
     this.window = createIslandWindow(FINDER_W, FINDER_H, { focusable: true });
@@ -100,6 +113,12 @@ export class FinderPanel {
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.window.on('blur', () => {
       if (!this.window.isDestroyed()) this.window.hide();
+    });
+    this.window.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && (input.key === 'Escape' || (input.meta && input.key.toLowerCase() === 'w'))) {
+        event.preventDefault();
+        if (!this.window.isDestroyed()) this.window.hide();
+      }
     });
 
     const { check } = deps;
@@ -122,8 +141,8 @@ export class FinderPanel {
   private scanMoveTargets(): FinderMoveTarget[] {
     const home = homedir();
     const targets: FinderMoveTarget[] = [
-      { id: 'downloads', label: '下载', path: join(home, 'Downloads'), kind: 'common' },
       { id: 'desktop', label: '桌面', path: join(home, 'Desktop'), kind: 'common' },
+      { id: 'downloads', label: '下载', path: join(home, 'Downloads'), kind: 'common' },
       { id: 'notes', label: 'LassoNotes', path: join(home, 'Documents/LassoNotes'), kind: 'common' }
     ];
     for (const category of ['Personal', 'ThirdParty', 'Work']) {
@@ -136,9 +155,17 @@ export class FinderPanel {
           for (const worktree of readdirSync(path, { withFileTypes: true })) {
             if (!worktree.isDirectory() || worktree.name.startsWith('.')) continue;
             const worktreePath = join(path, worktree.name);
-            targets.push({ id: worktreePath, label: `${entry.name.slice(0, -10)} / ${worktree.name}`, path: worktreePath, kind: 'worktree' });
+            targets.push({
+              id: worktreePath,
+              label: `${entry.name.slice(0, -10)} · ${worktree.name}`,
+              group: entry.name,
+              path: worktreePath,
+              kind: 'worktree'
+            });
           }
-        } else targets.push({ id: path, label: `${category} / ${entry.name}`, path, kind: 'repo' });
+        } else {
+          targets.push({ id: path, label: entry.name, group: category, path, kind: 'repo' });
+        }
       }
     }
     return targets;
@@ -148,23 +175,35 @@ export class FinderPanel {
     const seq = ++this.summonSeq;
     const ctx = await queryFinderContext();
     if (seq !== this.summonSeq || this.window.isDestroyed()) return;
+    const images = ctx.selection.filter(path => IMAGE_EXTENSIONS.has(extname(path).toLowerCase()));
+    const cur = this.deps.settings();
     this.state = {
-      ...this.state, ...ctx,
-      hasImageSelection: ctx.selection.some(path => IMAGE_EXTENSIONS.has(extname(path).toLowerCase())),
-      cutPaths: [...this.cutPaths], moveTargets: this.scanMoveTargets()
+      ...this.state,
+      ...ctx,
+      imageCount: images.length,
+      hasImageSelection: images.length > 0,
+      cutPaths: [...this.cutPaths],
+      moveTargets: this.scanMoveTargets(),
+      defaultTerminal: cur.finderTerminal ?? 'Ghostty',
+      defaultEditor: cur.finderEditor ?? 'Cursor'
     };
     const cursor = screen.getCursorScreenPoint();
     const area = screen.getDisplayNearestPoint(cursor).workArea;
-    const x = Math.min(Math.max(area.x + 12, cursor.x - Math.round(FINDER_W / 2)), area.x + area.width - FINDER_W - 12);
-    const y = Math.min(Math.max(area.y + 12, cursor.y - 24), area.y + area.height - FINDER_H - 12);
+    const x = Math.min(Math.max(area.x + 8, cursor.x - Math.round(FINDER_W / 2)), area.x + area.width - FINDER_W - 8);
+    const y = Math.min(Math.max(area.y + 8, cursor.y - 24), area.y + area.height - FINDER_H - 8);
     this.window.setBounds({ x, y, width: FINDER_W, height: FINDER_H });
     this.publish();
     this.window.show();
     this.window.focus();
   }
 
-  updateFonts(fonts: IslandState['fonts']) {
-    this.state = { ...this.state, fonts };
+  updateSettings(settings: Settings) {
+    this.state = {
+      ...this.state,
+      defaultTerminal: settings.finderTerminal ?? 'Ghostty',
+      defaultEditor: settings.finderEditor ?? 'Cursor',
+      fonts: { fonts: settings.fonts, importedFonts: settings.importedFonts }
+    };
     this.publish();
   }
 
@@ -187,9 +226,9 @@ export class FinderPanel {
     return image;
   }
 
-  private async openApp(app: string, path: string) {
+  private async openApp(appName: string, path: string) {
     await new Promise<void>((resolve, reject) => {
-      execFile('open', ['-a', app, path], error => error ? reject(error) : resolve());
+      execFile('open', ['-a', appName, path], error => (error ? reject(error) : resolve()));
     });
   }
 
@@ -207,16 +246,21 @@ export class FinderPanel {
         }
         case 'copy-paths': {
           const style = action.style;
-          const text = targets.map(path => style === 'filename' ? basename(path) : style === 'quoted' ? `'${path.replace(/'/g, "'\\''")}'` : path).join('\n');
+          const text = targets.map(path => (style === 'filename' ? basename(path) : style === 'quoted' ? `'${path.replace(/'/g, "'\\''")}'` : path)).join('\n');
           clipboard.writeText(text);
           this.deps.toast('已复制路径', '⌘C');
           break;
         }
         case 'open-terminal':
-          await this.openApp(action.app ?? 'Terminal', this.state.folder);
+          await this.openApp(action.app ?? this.state.defaultTerminal ?? 'Ghostty', this.state.folder);
           break;
-        case 'open-editor':
-          await this.openApp(action.app === 'VSCode' ? 'Visual Studio Code' : action.app, targets[0]);
+        case 'open-editor': {
+          const editor = action.app ?? this.state.defaultEditor ?? 'Cursor';
+          await this.openApp(editor === 'VSCode' ? 'Visual Studio Code' : editor, targets[0]);
+          break;
+        }
+        case 'send-to-ai':
+          await this.deps.sendToAi(targets);
           break;
         case 'cut-selection':
           this.cutPaths = [...this.state.selection];
@@ -235,6 +279,7 @@ export class FinderPanel {
             this.cutPaths = this.cutPaths.filter(item => item !== path);
           }
           this.state.selection = [];
+          this.state.imageCount = 0;
           this.state.hasImageSelection = false;
           this.deps.toast('已彻底删除所选项目', 'Delete');
           break;
@@ -271,7 +316,9 @@ export class FinderPanel {
             if (action.kind === 'move-to-target') {
               movePath(path, action.targetDir);
               this.cutPaths = this.cutPaths.filter(item => item !== path);
-            } else symlinkSync(resolve(path), uniqueDestPath(action.targetDir, basename(path)));
+            } else {
+              symlinkSync(resolve(path), uniqueDestPath(action.targetDir, basename(path)));
+            }
           }
           this.deps.toast(action.kind === 'move-to-target' ? '已移动到目标目录' : '已创建软链', 'Finder');
           break;

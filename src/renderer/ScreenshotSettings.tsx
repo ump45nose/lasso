@@ -1,162 +1,867 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Check, FolderOpen, X } from 'lucide-react';
-import { AnimatePresence, motion } from 'motion/react';
-import type { ScreenshotSettings as Preferences, ScreenshotActions, ScreenshotKind } from '../shared/screenshot-settings';
-import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings } from '../shared/screenshot-settings';
+import type { Settings } from '../shared/contracts';
 import { captureModeLabels } from '../shared/capture';
 import { validateVisionConfig, type VisionServiceConfig } from '../shared/intelligence';
-import { ApiConnectionBindingFields, ApiConnectionPoolManager } from './ImageOptionsFields';
-import { Segmented, SubNav, SubPane, collapse, useSubNav } from './motion';
 import type { RecordingSettings } from '../shared/recording';
+import { screenshotKinds, screenshotOutputFormats, validateScreenshotSettings, type ScreenshotActions, type ScreenshotKind } from '../shared/screenshot-settings';
 import { CaptureHistory, PinWorkspace } from './CaptureWorkspaceSettings';
-import { SaveBar } from './SaveBar';
+import { ApiConnectionBindingFields } from './ImageOptionsFields';
+import { Segmented, SubNav, SubPane, useSubNav } from './motion';
 import { Switch } from './Switch';
 import './styles/screenshot-settings.css';
+
 const labels = { ...captureModeLabels, scroll: '滚动截图' };
+
 const subTabs = [
   ['capture', '采集与输出'],
-  ['history', '历史记录'],
+  ['editor', '编辑器与鼠标'],
+  ['history', '历史库'],
   ['pins', '贴图空间'],
-  ['vision', '智能服务'],
+  ['vision', '智能识别'],
   ['recording', '屏幕录制']
 ] as const;
+
+const toolbarOptions = [
+  ['text-select', '选字'],
+  ['select', '选择'],
+  ['rectangle', '矩形'],
+  ['ellipse', '椭圆'],
+  ['arrow', '箭头'],
+  ['line', '直线'],
+  ['pen', '画笔'],
+  ['highlight', '高亮'],
+  ['text', '文字'],
+  ['number', '序号'],
+  ['redact', '遮挡'],
+  ['mosaic', '马赛克'],
+  ['blur', '模糊'],
+  ['crop', '裁剪'],
+  ['picker', '取色']
+] as const;
+
 const names = new Intl.DisplayNames(['zh-CN'], { type: 'language' });
-const languageName = (code: string) => { try { return names.of(code) || code; } catch { return code; } };
-function VisionSettings() {
-  const [saved, setSaved] = useState<VisionServiceConfig | null>(null), [draft, setDraft] = useState<VisionServiceConfig | null>(null);
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [message, setMessage] = useState('');
-  useEffect(() => { let active = true; void window.desktop.visionConfig().then(config => { if (active) { setSaved(config); setDraft(config); } }, reason => { if (active) setError(String(reason)); }); return () => { active = false; }; }, []);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(saved);
-  const patch = (input: Partial<VisionServiceConfig>) => { setDraft(value => value && ({ ...value, ...input })); setError(''); setMessage(''); };
-  async function save() {
-    if (!draft) return;
-    if (!draft.connectionId) { setError('请选择智能视觉服务绑定的 API 连接'); return; }
-    if (!draft.model.trim()) { setError('请填写视觉模型名称'); return; }
-    setBusy(true); setError(''); setMessage('');
-    try {
-      const input = { connectionId: draft.connectionId, baseURL: draft.baseURL, model: draft.model.trim(), targetLanguage: draft.targetLanguage };
-      validateVisionConfig(input); const result = await window.desktop.saveVisionConfig(input);
-      setSaved(result); setDraft(result); setMessage('智能识别与翻译设置已保存');
-    } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
+const languageName = (code: string) => {
+  try {
+    return names.of(code) || code;
+  } catch {
+    return code;
   }
-  return <section id="screenshot-vision" className="l-set-section l-gap">
-    <div className="l-set-row-head"><h3>智能识别与翻译</h3><span>必选绑定 API 连接与视觉模型</span></div>
-    {draft && <><ul className="l-group">
-      <li className="col"><ApiConnectionBindingFields connectionId={draft.connectionId} model={draft.model} modelId="vision-model" modelPlaceholder="支持图像理解的模型（如 gpt-4.1）" label="模型名称（必选）" help="用于截图与贴图内的表格提取、数学公式 LaTeX 识别和图像翻译。" onChange={({ connectionId, model }) => patch({ connectionId, model })} /></li>
-      <li className="l-shot-option"><span>默认翻译语言</span><Segmented label="默认翻译语言" value={draft.targetLanguage} onChange={targetLanguage => patch({ targetLanguage })} options={[['简体中文', '中文'], ['English', '英文'], ['日本語', '日文'], ['한국어', '韩文'], ...(!['简体中文', 'English', '日本語', '한국어'].includes(draft.targetLanguage) ? [[draft.targetLanguage, draft.targetLanguage] as const] : [])]} /></li>
-    </ul><div className="l-vision-actions"><span className="l-field-help">{draft.connectionId && draft.model.trim() ? '已绑定 API 连接与视觉模型' : '请选择 API 连接并填写视觉模型'}</span><span className="push" /><button className="l-btn small" disabled={!dirty || busy} onClick={() => { setDraft(saved); setError(''); setMessage(''); }}>放弃更改</button><button className="l-btn small primary" disabled={!dirty || busy} onClick={() => void save()}>{busy ? '保存中…' : '保存智能服务'}</button></div>
-    <ApiConnectionPoolManager idPrefix="vision-" onSelect={id => { if (!draft.connectionId) patch({ connectionId: id }); }} /></>}
-    {error && <p className="l-field-help l-danger" role="alert">{error}</p>}{message && <p className="l-field-help l-ok" role="status"><Check size={14} />{message}</p>}
-  </section>;
+};
+
+function VisionSettings({
+  onOpenConnections,
+  notify
+}: {
+  onOpenConnections(): void;
+  notify(status: { ok?: boolean; error?: string }): void;
+}) {
+  const [draft, setDraft] = useState<VisionServiceConfig | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    void window.desktop.visionConfig().then(
+      config => {
+        if (active) setDraft(config);
+      },
+      reason => {
+        if (active) setError(String(reason));
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function commit(next: VisionServiceConfig) {
+    setDraft(next);
+    setError('');
+    if (!next.connectionId || !next.model.trim()) return;
+    try {
+      const input = {
+        connectionId: next.connectionId,
+        baseURL: next.baseURL,
+        model: next.model.trim(),
+        targetLanguage: next.targetLanguage
+      };
+      validateVisionConfig(input);
+      const saved = await window.desktop.saveVisionConfig(input);
+      setDraft(saved);
+      notify({ ok: true });
+    } catch (reason) {
+      const msg = String(reason);
+      setError(msg);
+      notify({ error: msg });
+    }
+  }
+
+  return (
+    <div className="l-set-group">
+      <div className="l-set-lbl">
+        <span>截图智能识别模型</span>
+        <span className="r">用于截图编辑器与贴图中的整图翻译、表格提取、数学公式 LaTeX 识别</span>
+      </div>
+      <div className="l-set-card">
+        {draft ? (
+          <>
+            <div className="l-set-row col">
+              <ApiConnectionBindingFields
+                connectionId={draft.connectionId}
+                model={draft.model}
+                modelId="vision-model"
+                modelPlaceholder="gpt-4.1 / gemini-2.5-flash"
+                label="视觉模型（需支持图像输入）"
+                onOpenConnections={onOpenConnections}
+                onChange={({ connectionId, model }) => void commit({ ...draft, connectionId, model })}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">整图翻译默认语言</div>
+              </div>
+              <Segmented
+                label="默认翻译语言"
+                value={draft.targetLanguage}
+                onChange={targetLanguage => void commit({ ...draft, targetLanguage })}
+                options={[
+                  ['简体中文', '中文'],
+                  ['English', '英文'],
+                  ['日本語', '日文'],
+                  ['한국어', '韩文'],
+                  ...(!['简体中文', 'English', '日本語', '한국어'].includes(draft.targetLanguage)
+                    ? ([[draft.targetLanguage, draft.targetLanguage]] as const)
+                    : [])
+                ]}
+              />
+            </div>
+          </>
+        ) : (
+          <div className="l-set-row">
+            <span className="l-set-row-sub">正在读取视觉服务配置…</span>
+          </div>
+        )}
+      </div>
+      {error && (
+        <p className="l-field-help l-danger" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
 }
-export function ScreenshotSettings({ settings, shortcuts }: { settings: Preferences; shortcuts: () => void }) {
-  const [sub, setSub, bodyRef] = useSubNav<(typeof subTabs)[number][0]>('capture');
+
+export function ScreenshotSettings({
+  fullSettings,
+  onOpenShortcuts,
+  onOpenConnections,
+  notify
+}: {
+  fullSettings: Settings;
+  onOpenShortcuts(): void;
+  onOpenConnections(): void;
+  notify(status: { ok?: boolean; error?: string }): void;
+}) {
+  const settings = fullSettings.screenshot;
+  const [sub, setSub] = useSubNav<(typeof subTabs)[number][0]>('capture');
   const [pinRevision, setPinRevision] = useState(0);
   const [draft, setDraft] = useState(() => structuredClone(settings));
-  const [supported, setSupported] = useState<string[]>([]), [error, setError] = useState(''), [saved, setSaved] = useState(false), [saving, setSaving] = useState(false), [adding, setAdding] = useState(false);
-  const [height, setHeight] = useState(String(settings.scrollMaxHeight));
-  const dirty = JSON.stringify(draft) !== JSON.stringify(settings) || height !== String(settings.scrollMaxHeight);
-  useEffect(() => { void window.desktop.ocrLanguages().then(setSupported).catch(e => setError(String(e))); }, []);
-  // Presets can change through the custom-capture panel while other settings are drafted.
-  useEffect(() => { setDraft(current => ({ ...current, regionPresets: structuredClone(settings.regionPresets) })); }, [settings.regionPresets]);
-  // Workspace controls save independently; an output save must retain the latest groups.
-  useEffect(() => { setDraft(current => ({ ...current, pinWorkspace: structuredClone(settings.pinWorkspace) })); }, [settings.pinWorkspace]);
-  // Editor style updates must survive saving an unrelated output preference.
-  useEffect(() => { setDraft(current => ({ ...current, annotationMemory: { ...structuredClone(settings.annotationMemory), rememberToolStyles: current.annotationMemory.rememberToolStyles } })); }, [settings.annotationMemory]);
-  const patch = (next: Partial<Preferences>) => { setDraft(value => ({ ...value, ...next })); setError(''); setSaved(false); };
-  function action(kind: ScreenshotKind, key: keyof ScreenshotActions) {
-    setError(''); setSaved(false);
-    setDraft(current => {
-      const next = { ...current.actions[kind], [key]: !current.actions[kind][key] };
-      return next.show || next.copy || next.save ? { ...current, actions: { ...current.actions, [kind]: next } } : current;
+  const [supported, setSupported] = useState<string[]>([]);
+  const [error, setError] = useState('');
+  const [addingLang, setAddingLang] = useState(false);
+  const [heightText, setHeightText] = useState(String(settings.scrollMaxHeight));
+  const supportedRef = useRef<string[]>([]);
+
+  useEffect(() => {
+    void window.desktop
+      .ocrLanguages()
+      .then(list => {
+        setSupported(list);
+        supportedRef.current = list;
+      })
+      .catch(e => setError(String(e)));
+  }, []);
+
+  useEffect(() => {
+    setDraft(structuredClone(settings));
+    setHeightText(String(settings.scrollMaxHeight));
+  }, [settings]);
+
+  async function persistShot(next: typeof settings) {
+    setDraft(next);
+    setError('');
+    try {
+      if (!next.directory.startsWith('/') || !next.quickSaveDirectory.startsWith('/')) {
+        throw Error('截图保存目录需使用绝对路径');
+      }
+      if (supportedRef.current.length > 0) {
+        validateScreenshotSettings(next, supportedRef.current);
+      }
+      const res = await window.desktop.saveScreenshot(next);
+      if (res.error) throw Error(res.error);
+      notify({ ok: true });
+    } catch (reason) {
+      const msg = String(reason);
+      setError(msg);
+      notify({ error: msg });
+    }
+  }
+
+  function patch(changes: Partial<typeof settings>) {
+    void persistShot({ ...draft, ...changes });
+  }
+
+  function toggleAfterAction(kind: ScreenshotKind, key: keyof ScreenshotActions) {
+    const nextKind = { ...draft.actions[kind], [key]: !draft.actions[kind][key] };
+    if (!nextKind.show && !nextKind.copy && !nextKind.save) return;
+    patch({ actions: { ...draft.actions, [kind]: nextKind } });
+  }
+
+  function moveLanguage(index: number, direction: number) {
+    const languages = [...draft.languages];
+    [languages[index], languages[index + direction]] = [languages[index + direction], languages[index]];
+    patch({ languages });
+  }
+
+  async function saveGeneralPatch(changes: Partial<Pick<Settings, 'mouseActions' | 'toolbarTools'>>) {
+    const res = await window.desktop.saveGeneral({
+      launchAtLogin: fullSettings.launchAtLogin,
+      themeMode: fullSettings.themeMode,
+      toolbarTools: fullSettings.toolbarTools,
+      mouseActions: fullSettings.mouseActions,
+      autoCheckUpdates: fullSettings.autoCheckUpdates,
+      ...changes
     });
+    if (res.error) {
+      setError(res.error);
+      notify({ error: res.error });
+    } else {
+      notify({ ok: true });
+    }
   }
-  function move(index: number, direction: number) {
-    const languages = [...draft.languages]; [languages[index], languages[index + direction]] = [languages[index + direction], languages[index]]; patch({ languages });
+
+  function toggleToolbarTool(id: string) {
+    const current = fullSettings.toolbarTools.length ? fullSettings.toolbarTools : toolbarOptions.map(([tool]) => tool);
+    const next = current.includes(id) ? current.filter(tool => tool !== id) : [...current, id];
+    if (!next.length) {
+      setError('请至少保留一个标注工具');
+      return;
+    }
+    void saveGeneralPatch({ toolbarTools: next.length === toolbarOptions.length ? [] : next });
   }
-  async function save() {
-    if (!/^\d+$/.test(height) || !Number.isSafeInteger(Number(height)) || Number(height) < 1) { setError('最大高度请输入正整数'); return; }
-    if (!draft.directory.startsWith('/') || !draft.quickSaveDirectory.startsWith('/')) { setError('截图文件夹和快速保存目录需使用绝对路径'); return; }
-    setSaving(true);
-    try { const next = { ...draft, scrollMaxHeight: Number(height) }; validateScreenshotSettings(next, supported); const result = await window.desktop.saveScreenshot(next); setError(result.error || ''); if (!result.error) { setDraft(next); setHeight(String(next.scrollMaxHeight)); setSaved(true); } }
-    catch (e) { setError(String(e)); } finally { setSaving(false); }
-  }
-  return <>
-    <SubNav scope="screenshot" label="截图设置二级分类" value={sub} options={subTabs} onChange={setSub} />
-    <div ref={bodyRef} className="l-set-body l-shot-settings">
+
+  return (
+    <>
+      <SubNav scope="screenshot" label="截图设置二级分类" value={sub} options={subTabs} onChange={setSub} />
+
       <SubPane scope="screenshot" id="capture" active={sub === 'capture'}>
-        <section id="screenshot-advanced" className="l-set-section">
-          <div className="l-set-row-head"><h3>高级采集</h3><span>保存后用于下一次截图</span></div>
-          <ul className="l-group">
-            <li className="l-shot-option"><span>选区形状</span><Segmented label="选区形状" value={draft.selectionShape} onChange={selectionShape => patch({ selectionShape })} options={ [['rect', '矩形'], ['freehand', '自由套索'], ['polygon', '多边形'], ['multi-rect', '多区域']] } /></li>
-            {([['includeCursor', '截图包含鼠标指针'], ['showCrosshair', '显示十字辅助线'], ['showLoupeGrid', '显示放大镜像素网格']] as const).map(([key, label]) => <li key={key}><span>{label}</span><Switch label={label} value={draft[key]} change={() => patch({ [key]: !draft[key] })} /></li>)}
-            <li className="l-shot-option"><span>放大镜倍率</span><Segmented label="放大镜倍率" value={String(draft.loupeMagnification)} onChange={value => patch({ loupeMagnification: Number(value) as Preferences['loupeMagnification'] })} options={ [['4', '4×'], ['8', '8×'], ['12', '12×']] } /></li>
-            <li className="l-shot-option"><span>取色色值格式</span><Segmented label="取色色值格式" value={draft.loupeColorFormat} onChange={loupeColorFormat => patch({ loupeColorFormat })} options={ [['hex', 'HEX'], ['rgb', 'RGB'], ['hsl', 'HSL']] } /></li>
-          </ul>
-          <div className="l-set-row-head l-gap"><h3>输出装饰与水印</h3></div>
-          <ul className="l-group">
-            {([['cornerRadius', '输出圆角半径', 64], ['borderWidth', '输出边框宽度', 16]] as const).map(([key, label, max]) => <li key={key}><label className="l-row-label" htmlFor={'screenshot-' + key}>{label}</label><div className="l-row"><input id={'screenshot-' + key} className="l-input mono l-shot-height" type="number" min="0" max={max} step="1" value={draft[key]} onChange={e => patch({ [key]: Number(e.target.value) })} /><span>px</span></div></li>)}
-            <li><label className="l-row-label" htmlFor="screenshot-border-color">输出边框颜色</label><input id="screenshot-border-color" className="l-input mono l-shot-color" value={draft.borderColor} maxLength={7} onChange={e => patch({ borderColor: e.target.value })} /></li>
-            <li className="col"><div className="l-field"><label htmlFor="screenshot-watermark">水印文字</label><input id="screenshot-watermark" className="l-input" maxLength={500} value={draft.watermarkText} onChange={e => patch({ watermarkText: e.target.value })} /><p className="l-field-help">在编辑器中点击「水印」，为当前图片添加平铺水印。</p></div></li>
-            <li className="col"><div className="l-field"><label htmlFor="screenshot-watermark-opacity">水印透明度</label><div className="l-row"><input id="screenshot-watermark-opacity" className="l-shot-quality" type="range" min="0" max="1" step="0.01" value={draft.watermarkOpacity} onChange={e => patch({ watermarkOpacity: Number(e.target.value) })} /><output htmlFor="screenshot-watermark-opacity" className="mono">{Math.round(draft.watermarkOpacity * 100)}%</output></div></div></li>
-          </ul>
-        </section>
-        <div className="l-set-row-head l-gap"><h3>截图完成后</h3><button className="l-text-btn" onClick={shortcuts}>配置快捷键</button></div>
-        <ul className="l-group">{screenshotKinds.map(kind => <li key={kind} className="l-shot-policy"><span>{labels[kind]}</span><div className="l-shot-actions">{([['show', '显示'], ['copy', '复制'], ['save', '保存']] as const).map(([key, label]) => <label key={key}><span>{label}</span><Switch label={`${labels[kind]}后${label}`} value={draft.actions[kind][key]} change={() => action(kind, key)} /></label>)}</div></li>)}</ul>
-        <p className="l-field-help">复制和保存输出截图完成时的图片。后续标注通过编辑器手动输出。</p>
-        <div className="l-set-row-head l-gap"><h3>贴图</h3></div>
-        <ul className="l-group"><li><div className="l-row-label"><span>保持原尺寸</span><span>按截图在屏幕上的大小显示，不拖边改变大小。关闭后缩进窗口，并可拖动边缘调整。</span></div><Switch label="贴图保持原尺寸" value={draft.pinKeepsSize} change={() => patch({ pinKeepsSize: !draft.pinKeepsSize })} /></li></ul>
-        <div id="screenshot-editing" className="l-set-row-head l-gap"><h3>编辑</h3></div>
-        <ul className="l-group"><li><div className="l-row-label"><span>记住标注工具样式</span><span>下次编辑恢复所用工具及各工具的颜色、粗细、字号与强度。</span></div><Switch label="记住标注工具样式" value={draft.annotationMemory.rememberToolStyles} change={() => patch({ annotationMemory: { ...draft.annotationMemory, rememberToolStyles: !draft.annotationMemory.rememberToolStyles } })} /></li></ul>
-        <div id="screenshot-output" className="l-set-row-head l-gap"><h3>保存与输出</h3></div>
-        <ul className="l-group">
-          <li className="col"><div className="l-field"><label htmlFor="screenshot-directory">截图文件夹</label><div className="l-row"><input id="screenshot-directory" className="l-input mono" value={draft.directory} onChange={e => patch({ directory: e.target.value })} /><button className="l-btn" aria-label="选择截图文件夹" onClick={() => void window.desktop.choosePath('directory').then(result => { if (result) patch({ directory: result.path }); }).catch(e => setError(String(e)))}><FolderOpen size={16} />选择</button></div></div></li>
-          <li className="l-shot-option"><span>默认格式</span><Segmented label="截图保存格式" value={draft.format} onChange={format => patch({ format })} options={screenshotOutputFormats.map(format => [format, format.toUpperCase()] as const)} /></li>
-          <li className="col"><div className="l-field"><label htmlFor="screenshot-quality">JPEG 质量</label><div className="l-row"><input id="screenshot-quality" className="l-shot-quality" type="range" min="10" max="100" step="1" value={draft.jpegQuality} onChange={e => patch({ jpegQuality: Number(e.target.value) })} /><output htmlFor="screenshot-quality" className="mono">{draft.jpegQuality}%</output></div><p className="l-field-help">只影响 JPEG 输出。JPEG、BMP 的透明区域以{draft.background === 'solid' ? '所选背景色' : '白色'}填充。</p></div></li>
-          <li className="col"><div className="l-field"><label htmlFor="screenshot-quick-directory">快速保存目录</label><div className="l-row"><input id="screenshot-quick-directory" className="l-input mono" value={draft.quickSaveDirectory} onChange={e => patch({ quickSaveDirectory: e.target.value })} /><button className="l-btn" aria-label="选择快速保存目录" onClick={() => void window.desktop.choosePath('directory').then(result => { if (result) patch({ quickSaveDirectory: result.path }); }).catch(e => setError(String(e)))}><FolderOpen size={16} />选择</button></div><p className="l-field-help">快速保存直接写入此目录，无需再次选择位置。</p></div></li>
-          <li className="col"><div className="l-field"><label htmlFor="screenshot-template">文件命名模板</label><input id="screenshot-template" className="l-input mono" spellCheck={false} value={draft.fileNameTemplate} onChange={e => patch({ fileNameTemplate: e.target.value })} aria-describedby="screenshot-template-help" /><p id="screenshot-template-help" className="l-field-help l-shot-template-help">{'日期时间：{YYYY} {MM} {DD} {HH} {mm} {ss}；应用：{app}；像素：{width} {height}；序号：{seq}。可用 / 创建子文件夹，不用填写扩展名。'}</p></div></li>
-          <li className="l-shot-option"><span>默认复制方式</span><Segmented label="默认复制方式" value={draft.copyMode} onChange={copyMode => patch({ copyMode })} options={ [['image', '图片'], ['file', '文件'], ['path', '路径']] } /></li>
-          <li className="l-shot-option"><span>默认导出内容</span><Segmented label="默认导出内容" value={draft.exportContentMode} onChange={exportContentMode => patch({ exportContentMode })} options={ [['result', '编辑结果'], ['original', '原始底图'], ['display', '显示效果']] } /></li>
-          <li className="l-shot-option"><span>保存后动作</span><Segmented label="保存后动作" value={draft.afterSaveAction} onChange={afterSaveAction => patch({ afterSaveAction })} options={ [['none', '无'], ['reveal', '显示文件'], ['copy-path', '复制路径'], ['copy-file', '复制文件']] } /></li>
-          <li><div className="l-row-label"><span>保存时缩小至 1×</span><span>仅缩小保存文件，编辑、复制和贴图保留原始像素。</span></div><Switch label="保存时缩小至 1×" value={draft.resizeTo1x} change={() => patch({ resizeTo1x: !draft.resizeTo1x })} /></li>
-        </ul>
-        <div className="l-set-row-head l-gap"><h3>区域记忆</h3></div><ul className="l-group"><li><div className="l-row-label"><span>重启后记住上次区域</span></div><Switch label="重启后记住上次区域" value={draft.rememberRegionAcrossLaunches} change={() => patch({ rememberRegionAcrossLaunches: !draft.rememberRegionAcrossLaunches })} /></li></ul>
-        <div className="l-set-row-head l-gap"><h3>窗口外观</h3><span>窗口截图与前台窗口截图</span></div>
-        <ul className="l-group">
-          <li><span>背景</span><Segmented label="窗口截图背景" value={draft.background} onChange={background => patch({ background })} options={ [['transparent', '透明'], ['solid', '纯色']] } /></li>
-          <AnimatePresence initial={false}>{draft.background === 'solid' && <motion.li key="color" {...collapse}><label htmlFor="screenshot-color">背景颜色</label><div className="l-row"><span className="l-shot-swatch" style={{ backgroundColor: /^#[\da-f]{6}$/i.test(draft.backgroundColor) ? draft.backgroundColor : undefined }} />{/* ui-check-ignore: configured background is exported image content */}<input id="screenshot-color" className="l-input mono l-shot-color" aria-label="窗口背景颜色" value={draft.backgroundColor} maxLength={7} onChange={e => patch({ backgroundColor: e.target.value })} /></div></motion.li>}</AnimatePresence>
-          <li><span>保留窗口阴影</span><Switch label="保留窗口阴影" value={draft.shadow} change={() => patch({ shadow: !draft.shadow })} /></li>
-        </ul>
-        <div className="l-set-row-head l-gap"><h3>滚动截图</h3></div>
-        <ul className="l-group"><li><div className="l-row-label"><label htmlFor="screenshot-height">最大输出高度</label><span>原始像素；同时受 2000 万总像素限制。</span></div><div className="l-row"><input id="screenshot-height" className="l-input mono l-shot-height" inputMode="numeric" value={height} onChange={e => { setHeight(e.target.value); setSaved(false); }} /><span>px</span></div></li></ul>
-        <div className="l-set-row-head l-gap"><h3>文字识别</h3><span>按顺序优先识别</span></div>
-        <ul className="l-group">{draft.languages.map((language, index) => <li key={language}><div className="l-row-label"><span>{languageName(language)}</span>{supported.length > 0 && !supported.includes(language) && <span className="l-danger">本机不支持，请移除</span>}</div><button className="l-icon" aria-label={`提高 ${languageName(language)} 优先级`} disabled={index === 0} onClick={() => move(index, -1)}><ArrowUp size={15} /></button><button className="l-icon" aria-label={`降低 ${languageName(language)} 优先级`} disabled={index === draft.languages.length - 1} onClick={() => move(index, 1)}><ArrowDown size={15} /></button><button className="l-icon" aria-label={`移除 ${languageName(language)}`} disabled={draft.languages.length === 1} onClick={() => patch({ languages: draft.languages.filter(value => value !== language) })}><X size={15} /></button></li>)}</ul>
-        <button className="l-btn small" aria-expanded={adding} disabled={!supported.length} onClick={() => setAdding(!adding)}>添加语言</button>
-        <AnimatePresence>{adding && <motion.div className="l-shot-languages" {...collapse}>{supported.filter(language => !draft.languages.includes(language)).map(language => <button className="l-btn small" key={language} onClick={() => { patch({ languages: [...draft.languages, language] }); setAdding(false); }}>{languageName(language)}</button>)}</motion.div>}</AnimatePresence>
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>截图完成后默认动作</span>
+            <span className="r">
+              <button type="button" className="l-text-btn" onClick={onOpenShortcuts}>
+                配置截图快捷键 →
+              </button>
+            </span>
+          </div>
+          <div className="l-set-card">
+            {screenshotKinds.map(kind => (
+              <div className="l-set-row" key={kind}>
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">{labels[kind]}</div>
+                </div>
+                <div className="l-shot-actions">
+                  {(
+                    [
+                      ['show', '进编辑'],
+                      ['copy', '复制'],
+                      ['save', '保存']
+                    ] as const
+                  ).map(([key, label]) => (
+                    <label key={key}>
+                      <span>{label}</span>
+                      <Switch
+                        label={`${labels[kind]}后${label}`}
+                        value={draft.actions[kind][key]}
+                        change={() => toggleAfterAction(kind, key)}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>选区与辅助</span>
+          </div>
+          <div className="l-set-card">
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">默认选区形状</div>
+              </div>
+              <Segmented
+                label="选区形状"
+                value={draft.selectionShape}
+                onChange={selectionShape => patch({ selectionShape })}
+                options={[
+                  ['rect', '矩形'],
+                  ['freehand', '套索'],
+                  ['polygon', '多边形'],
+                  ['multi-rect', '多区域']
+                ]}
+              />
+            </div>
+            {(
+              [
+                ['includeCursor', '截图包含鼠标指针'],
+                ['showCrosshair', '显示十字辅助线'],
+                ['showLoupeGrid', '显示放大镜像素网格'],
+                ['rememberRegionAcrossLaunches', '重启后记住上次截图区域'],
+                ['pinKeepsSize', '钉为贴图时保持屏幕原尺寸']
+              ] as const
+            ).map(([key, label]) => (
+              <div className="l-set-row" key={key}>
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">{label}</div>
+                </div>
+                <Switch label={label} value={draft[key]} change={() => patch({ [key]: !draft[key] })} />
+              </div>
+            ))}
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">取色放大镜倍率</div>
+              </div>
+              <Segmented
+                label="放大镜倍率"
+                value={String(draft.loupeMagnification)}
+                onChange={v => patch({ loupeMagnification: Number(v) as (typeof draft)['loupeMagnification'] })}
+                options={[
+                  ['4', '4×'],
+                  ['8', '8×'],
+                  ['12', '12×']
+                ]}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">取色色值格式</div>
+              </div>
+              <Segmented
+                label="取色色值格式"
+                value={draft.loupeColorFormat}
+                onChange={loupeColorFormat => patch({ loupeColorFormat })}
+                options={[
+                  ['hex', 'HEX'],
+                  ['rgb', 'RGB'],
+                  ['hsl', 'HSL']
+                ]}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>保存与导出</span>
+          </div>
+          <div className="l-set-card">
+            <div className="l-set-row col">
+              <div className="l-field">
+                <label htmlFor="screenshot-directory">默认保存目录</label>
+                <div className="l-row">
+                  <input
+                    id="screenshot-directory"
+                    className="l-input mono"
+                    value={draft.directory}
+                    onChange={e => setDraft(cur => ({ ...cur, directory: e.target.value }))}
+                    onBlur={() => void persistShot(draft)}
+                  />
+                  <button
+                    type="button"
+                    className="l-btn small"
+                    onClick={() =>
+                      void window.desktop.choosePath('directory').then(res => {
+                        if (res) patch({ directory: res.path });
+                      })
+                    }
+                  >
+                    <FolderOpen size={14} />
+                    <span>选择</span>
+                  </button>
+                </div>
+              </div>
+              <div className="l-field">
+                <label htmlFor="screenshot-quick-directory">快速保存目录（⌘⇧S）</label>
+                <div className="l-row">
+                  <input
+                    id="screenshot-quick-directory"
+                    className="l-input mono"
+                    value={draft.quickSaveDirectory}
+                    onChange={e => setDraft(cur => ({ ...cur, quickSaveDirectory: e.target.value }))}
+                    onBlur={() => void persistShot(draft)}
+                  />
+                  <button
+                    type="button"
+                    className="l-btn small"
+                    onClick={() =>
+                      void window.desktop.choosePath('directory').then(res => {
+                        if (res) patch({ quickSaveDirectory: res.path });
+                      })
+                    }
+                  >
+                    <FolderOpen size={14} />
+                    <span>选择</span>
+                  </button>
+                </div>
+              </div>
+              <div className="l-field">
+                <label htmlFor="screenshot-template">文件命名模板</label>
+                <input
+                  id="screenshot-template"
+                  className="l-input mono"
+                  spellCheck={false}
+                  value={draft.fileNameTemplate}
+                  onChange={e => setDraft(cur => ({ ...cur, fileNameTemplate: e.target.value }))}
+                  onBlur={() => void persistShot(draft)}
+                />
+                <p className="l-field-help">{'可用变量：{YYYY} {MM} {DD} {HH} {mm} {ss} {app} {width} {height} {seq}'}</p>
+              </div>
+            </div>
+
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">默认图片格式</div>
+              </div>
+              <Segmented
+                label="截图保存格式"
+                value={draft.format}
+                onChange={format => patch({ format })}
+                options={screenshotOutputFormats.map(f => [f, f.toUpperCase()] as const)}
+              />
+            </div>
+
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">默认复制方式</div>
+              </div>
+              <Segmented
+                label="默认复制方式"
+                value={draft.copyMode}
+                onChange={copyMode => patch({ copyMode })}
+                options={[
+                  ['image', '图片'],
+                  ['file', '文件'],
+                  ['path', '路径']
+                ]}
+              />
+            </div>
+
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">默认导出内容</div>
+              </div>
+              <Segmented
+                label="默认导出内容"
+                value={draft.exportContentMode}
+                onChange={exportContentMode => patch({ exportContentMode })}
+                options={[
+                  ['result', '编辑结果'],
+                  ['original', '原始底图'],
+                  ['display', '显示效果']
+                ]}
+              />
+            </div>
+
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">保存后动作</div>
+              </div>
+              <Segmented
+                label="保存后动作"
+                value={draft.afterSaveAction}
+                onChange={afterSaveAction => patch({ afterSaveAction })}
+                options={[
+                  ['none', '无'],
+                  ['reveal', '显示文件'],
+                  ['copy-path', '复制路径'],
+                  ['copy-file', '复制文件']
+                ]}
+              />
+            </div>
+
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">保存时缩小至 1× 逻辑分辨率</div>
+              </div>
+              <Switch label="保存时缩小至 1×" value={draft.resizeTo1x} change={() => patch({ resizeTo1x: !draft.resizeTo1x })} />
+            </div>
+
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">保留窗口截图阴影</div>
+              </div>
+              <Switch label="保留窗口阴影" value={draft.shadow} change={() => patch({ shadow: !draft.shadow })} />
+            </div>
+
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">滚动长截图最大高度</div>
+              </div>
+              <div className="l-row">
+                <input
+                  aria-label="滚动长截图最大高度"
+                  className="l-input mono l-shot-height"
+                  inputMode="numeric"
+                  value={heightText}
+                  onChange={e => setHeightText(e.target.value)}
+                  onBlur={() => {
+                    const n = Number(heightText);
+                    if (Number.isSafeInteger(n) && n >= 400) patch({ scrollMaxHeight: n });
+                  }}
+                />
+                <span className="l-set-row-sub mono">px</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>离线 OCR 识别语言</span>
+            <span className="r">
+              <button type="button" className="l-text-btn" disabled={!supported.length} onClick={() => setAddingLang(v => !v)}>
+                {addingLang ? '收起' : '+ 添加语言'}
+              </button>
+            </span>
+          </div>
+          {addingLang && (
+            <div className="l-wrap">
+              {supported
+                .filter(lang => !draft.languages.includes(lang))
+                .map(lang => (
+                  <button
+                    key={lang}
+                    type="button"
+                    className="l-btn small"
+                    onClick={() => {
+                      patch({ languages: [...draft.languages, lang] });
+                      setAddingLang(false);
+                    }}
+                  >
+                    {languageName(lang)}
+                  </button>
+                ))}
+            </div>
+          )}
+          <div className="l-set-card">
+            {draft.languages.map((language, index) => (
+              <div className="l-set-row" key={language}>
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">{languageName(language)}</div>
+                </div>
+                <button
+                  type="button"
+                  className="l-icon small"
+                  aria-label={`提高 ${languageName(language)} 优先级`}
+                  disabled={index === 0}
+                  onClick={() => moveLanguage(index, -1)}
+                >
+                  <ArrowUp size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="l-icon small"
+                  aria-label={`降低 ${languageName(language)} 优先级`}
+                  disabled={index === draft.languages.length - 1}
+                  onClick={() => moveLanguage(index, 1)}
+                >
+                  <ArrowDown size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="l-icon small"
+                  aria-label={`移除 ${languageName(language)}`}
+                  disabled={draft.languages.length === 1}
+                  onClick={() => patch({ languages: draft.languages.filter(v => v !== language) })}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
       </SubPane>
+
+      <SubPane scope="screenshot" id="editor" active={sub === 'editor'}>
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>截图编辑器鼠标动作与样式记忆</span>
+          </div>
+          <div className="l-set-card">
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">记住标注颜色与笔触粗细</div>
+              </div>
+              <Switch
+                label="记住标注工具样式"
+                value={draft.annotationMemory.rememberToolStyles}
+                change={() => patch({ annotationMemory: { ...draft.annotationMemory, rememberToolStyles: !draft.annotationMemory.rememberToolStyles } })}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">双击选区</div>
+              </div>
+              <Segmented
+                label="双击动作"
+                value={fullSettings.mouseActions.doubleClick}
+                onChange={doubleClick => void saveGeneralPatch({ mouseActions: { ...fullSettings.mouseActions, doubleClick } })}
+                options={[
+                  ['copy', '复制'],
+                  ['save', '保存'],
+                  ['pin', '贴图'],
+                  ['none', '无']
+                ]}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">鼠标中键</div>
+              </div>
+              <Segmented
+                label="中键动作"
+                value={fullSettings.mouseActions.middleClick}
+                onChange={middleClick => void saveGeneralPatch({ mouseActions: { ...fullSettings.mouseActions, middleClick } })}
+                options={[
+                  ['pin', '贴图'],
+                  ['quick-save', '快速保存'],
+                  ['none', '无']
+                ]}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">鼠标右键</div>
+              </div>
+              <Segmented
+                label="右键动作"
+                value={fullSettings.mouseActions.rightClick}
+                onChange={rightClick => void saveGeneralPatch({ mouseActions: { ...fullSettings.mouseActions, rightClick } })}
+                options={[
+                  ['reselect', '重新选区'],
+                  ['cancel', '取消截图']
+                ]}
+              />
+            </div>
+          </div>
+        </div>
+
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>主标注栏工具显示</span>
+            <span className="r">
+              <button
+                type="button"
+                className="l-text-btn"
+                disabled={!fullSettings.toolbarTools.length}
+                onClick={() => void saveGeneralPatch({ toolbarTools: [] })}
+              >
+                全部显示
+              </button>
+            </span>
+          </div>
+          <div className="l-set-card">
+            <div className="l-set-row col">
+              <div className="l-ignored-scopes">
+                {toolbarOptions.map(([id, label]) => {
+                  const checked = !fullSettings.toolbarTools.length || fullSettings.toolbarTools.includes(id);
+                  return (
+                    <button key={id} type="button" className="l-btn small" role="checkbox" aria-checked={checked} onClick={() => toggleToolbarTool(id)}>
+                      <Check size={13} aria-hidden="true" />
+                      <span>{label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>平铺水印与输出圆角</span>
+          </div>
+          <div className="l-set-card">
+            <div className="l-set-row col">
+              <div className="l-field">
+                <label htmlFor="screenshot-watermark">默认水印文字（在编辑器「更多特效 ▾ → 平铺水印」中使用）</label>
+                <input
+                  id="screenshot-watermark"
+                  className="l-input"
+                  maxLength={500}
+                  value={draft.watermarkText}
+                  onChange={e => setDraft(cur => ({ ...cur, watermarkText: e.target.value }))}
+                  onBlur={() => void persistShot(draft)}
+                />
+              </div>
+              <div className="l-grid-equal">
+                <div className="l-field">
+                  <label htmlFor="screenshot-cornerRadius">导出圆角 · px</label>
+                  <input
+                    id="screenshot-cornerRadius"
+                    className="l-input mono"
+                    type="number"
+                    min="0"
+                    max="64"
+                    value={draft.cornerRadius}
+                    onChange={e => patch({ cornerRadius: Number(e.target.value) })}
+                  />
+                </div>
+                <div className="l-field">
+                  <label htmlFor="screenshot-borderWidth">导出边框 · px</label>
+                  <input
+                    id="screenshot-borderWidth"
+                    className="l-input mono"
+                    type="number"
+                    min="0"
+                    max="16"
+                    value={draft.borderWidth}
+                    onChange={e => patch({ borderWidth: Number(e.target.value) })}
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </SubPane>
+
       <SubPane scope="screenshot" id="history" active={sub === 'history'}>
-        <CaptureHistory policy={draft.history} change={history => patch({ history })} pinned={() => setPinRevision(value => value + 1)} />
+        <CaptureHistory policy={draft.history} change={history => patch({ history })} pinned={() => setPinRevision(v => v + 1)} notify={notify} />
       </SubPane>
+
       <SubPane scope="screenshot" id="pins" active={sub === 'pins'}>
-        <PinWorkspace settings={settings.pinWorkspace} revision={pinRevision} />
+        <PinWorkspace settings={settings.pinWorkspace} revision={pinRevision} notify={notify} />
       </SubPane>
+
       <SubPane scope="screenshot" id="vision" active={sub === 'vision'}>
-        <VisionSettings />
+        <VisionSettings onOpenConnections={onOpenConnections} notify={notify} />
       </SubPane>
+
       <SubPane scope="screenshot" id="recording" active={sub === 'recording'}>
-        <section id="screenshot-recording" className="l-set-section">
-          <div className="l-set-row-head"><h3>屏幕录制与教学演示</h3><button className="l-text-btn" onClick={() => void window.desktop.recordingPanel(true)}>打开录制面板</button></div>
-          <ul className="l-group">
-            <li className="l-shot-option"><span>帧率</span><Segmented label="录制帧率" value={String(draft.recording.fps)} onChange={fps => patch({ recording: { ...draft.recording, fps: Number(fps) as RecordingSettings['fps'] } })} options={['15', '24', '30', '60'].map(fps => [fps, fps] as const)} /></li>
-            <li className="l-shot-option"><span>画质</span><Segmented label="录制画质" value={draft.recording.quality} onChange={quality => patch({ recording: { ...draft.recording, quality } })} options={ [['low', '低'], ['medium', '中'], ['high', '高']] } /></li>
-            <li className="l-shot-option"><span>默认格式</span><Segmented label="录制默认格式" value={draft.recording.format} onChange={format => patch({ recording: { ...draft.recording, format } })} options={ [['gif', 'GIF'], ['webp', 'WEBP'], ['mp4', 'MP4']] } /></li>
-            <li className="l-shot-option"><span>倒计时</span><Segmented label="录制倒计时" value={String(draft.recording.countdown)} onChange={countdown => patch({ recording: { ...draft.recording, countdown: Number(countdown) as RecordingSettings['countdown'] } })} options={ [['0', '无'], ['3', '3 秒'], ['5', '5 秒']] } /></li>
-            {([['systemAudio', '系统声音'], ['microphone', '麦克风'], ['showKeystrokes', '显示按键提示'], ['showMouseClicks', '显示鼠标点击'], ['cameraOverlay', '摄像头画中画']] as const).map(([key, label]) => <li key={key}><span>{label}</span><Switch label={key === 'systemAudio' || key === 'microphone' ? `录制${label}` : label} value={draft.recording[key]} change={() => patch({ recording: { ...draft.recording, [key]: !draft.recording[key] } })} /></li>)}
-            <li className="l-shot-option"><span>摄像头位置</span><Segmented label="摄像头位置" value={draft.recording.cameraPosition} onChange={cameraPosition => patch({ recording: { ...draft.recording, cameraPosition } })} options={ [['bottom-right', '右下'], ['bottom-left', '左下'], ['top-right', '右上'], ['top-left', '左上']] } /></li>
-          </ul><p className="l-field-help">保存后用于下一次录制。MP4 可包含系统声音和麦克风；GIF、WEBP 与动态贴图无声音。</p>
-        </section>
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>屏幕录制默认参数</span>
+            <span className="r">
+              <button type="button" className="l-text-btn" onClick={() => void window.desktop.recordingPanel(true)}>
+                打开录制面板 →
+              </button>
+            </span>
+          </div>
+          <div className="l-set-card">
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">帧率</div>
+              </div>
+              <Segmented
+                label="录制帧率"
+                value={String(draft.recording.fps)}
+                onChange={fps => patch({ recording: { ...draft.recording, fps: Number(fps) as RecordingSettings['fps'] } })}
+                options={['15', '24', '30', '60'].map(fps => [fps, `${fps} FPS`] as const)}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">画质</div>
+              </div>
+              <Segmented
+                label="录制画质"
+                value={draft.recording.quality}
+                onChange={quality => patch({ recording: { ...draft.recording, quality } })}
+                options={[
+                  ['low', '快速'],
+                  ['medium', '标准'],
+                  ['high', '高画质']
+                ]}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">默认导出格式</div>
+              </div>
+              <Segmented
+                label="录制默认格式"
+                value={draft.recording.format}
+                onChange={format => patch({ recording: { ...draft.recording, format } })}
+                options={[
+                  ['gif', 'GIF'],
+                  ['webp', 'WEBP'],
+                  ['mp4', 'MP4']
+                ]}
+              />
+            </div>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">开始前倒计时</div>
+              </div>
+              <Segmented
+                label="录制倒计时"
+                value={String(draft.recording.countdown)}
+                onChange={countdown => patch({ recording: { ...draft.recording, countdown: Number(countdown) as RecordingSettings['countdown'] } })}
+                options={[
+                  ['0', '无'],
+                  ['3', '3 秒'],
+                  ['5', '5 秒']
+                ]}
+              />
+            </div>
+            {(
+              [
+                ['systemAudio', '录制系统声音（仅 MP4）'],
+                ['microphone', '录制麦克风（仅 MP4）'],
+                ['showKeystrokes', '显示按键教学提示'],
+                ['showMouseClicks', '显示鼠标点击脉冲'],
+                ['cameraOverlay', '开启摄像头画中画']
+              ] as const
+            ).map(([key, label]) => (
+              <div className="l-set-row" key={key}>
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">{label}</div>
+                </div>
+                <Switch
+                  label={label}
+                  value={draft.recording[key]}
+                  change={() => patch({ recording: { ...draft.recording, [key]: !draft.recording[key] } })}
+                />
+              </div>
+            ))}
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">摄像头画中画位置</div>
+              </div>
+              <Segmented
+                label="摄像头位置"
+                value={draft.recording.cameraPosition}
+                onChange={cameraPosition => patch({ recording: { ...draft.recording, cameraPosition } })}
+                options={[
+                  ['bottom-right', '右下'],
+                  ['bottom-left', '左下'],
+                  ['top-right', '右上'],
+                  ['top-left', '左上']
+                ]}
+              />
+            </div>
+          </div>
+        </div>
       </SubPane>
-    </div>
-    <SaveBar dirty={dirty} saved={saved} error={error} saving={saving} saveLabel={saving ? '保存中…' : '保存'} saveDisabled={!supported.length} discard={() => { setDraft(structuredClone(settings)); setHeight(String(settings.scrollMaxHeight)); setError(''); setSaved(false); }} save={() => void save()} />
-  </>;
+
+      {error && (
+        <p className="l-field-help l-danger" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
 }

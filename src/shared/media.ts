@@ -152,8 +152,20 @@ export interface MediaDraft {
   prompt: string;
   options: ImageOptions;
 }
+export interface MediaPresetItem {
+  id: string;
+  name: string;
+  connectionId?: string;
+  options: ImageOptions;
+}
 export type MediaFontSettings = Pick<Settings, 'fonts' | 'importedFonts'>;
-export interface MediaState extends MediaFontSettings { jobs: MediaJob[]; reference: MediaReference | null; draft: MediaDraft | null }
+export interface MediaState extends MediaFontSettings {
+  jobs: MediaJob[];
+  reference: MediaReference | null;
+  draft: MediaDraft | null;
+  presets: MediaPresetItem[];
+  pinnedOnTop: boolean;
+}
 export interface MediaGenerateRequest { requestId: string; draftId: string; prompt: string; connectionId?: string }
 export type MediaOutputAction = 'copy' | 'save' | 'pin' | 'edit';
 export interface MediaAPI {
@@ -161,6 +173,10 @@ export interface MediaAPI {
   state(): Promise<MediaState>;
   onState(callback: (state: MediaState) => void): () => void;
   setReference(id: string | null): Promise<MediaState>;
+  pickReference(): Promise<{ state: MediaState; error: string | null }>;
+  addReferenceBytes(bytes: Uint8Array): Promise<{ state: MediaState; error: string | null }>;
+  selectPreset(presetId: string): Promise<MediaState>;
+  setPinned(pinned: boolean): Promise<MediaState>;
   restore(id: string, edit: boolean, imageId?: string): Promise<MediaState>;
   choosePreset(): Promise<void>;
   generate(request: MediaGenerateRequest): Promise<MediaState>;

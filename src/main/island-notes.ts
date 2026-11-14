@@ -3,11 +3,11 @@ import type { BrowserWindow, Display, IpcMainEvent, IpcMainInvokeEvent, NativeIm
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { EdgeNotesState, IslandState } from '../shared/contracts';
+import type { EdgeNotesState, IslandState, Settings } from '../shared/contracts';
 import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
 
-const NOTES_W = 420, NOTES_H = 488;
+const NOTES_W = 448, NOTES_H = 528;
 const SCRATCHPAD = 'Scratchpad.md';
 
 function resolveNotesFolder(): string {
@@ -16,7 +16,7 @@ function resolveNotesFolder(): string {
     : join(homedir(), 'Documents/LassoNotes');
   mkdirSync(folder, { recursive: true });
   const scratchPath = join(folder, SCRATCHPAD);
-  if (!existsSync(scratchPath)) writeFileSync(scratchPath, '# Scratchpad 随手记\n\n', 'utf8');
+  if (!existsSync(scratchPath)) writeFileSync(scratchPath, '# 随手记\n\n', 'utf8');
   return folder;
 }
 
@@ -24,6 +24,7 @@ export interface EdgeNotesDeps {
   check: (event: IpcMainEvent | IpcMainInvokeEvent) => void;
   toast: (text: string, badge?: string) => void;
   onPinImage: (image: NativeImage) => Promise<void>;
+  settings: () => Settings;
 }
 
 export class EdgeNotes {
@@ -33,7 +34,18 @@ export class EdgeNotes {
 
   constructor(fonts: IslandState['fonts'], private deps: EdgeNotesDeps) {
     const notesDir = resolveNotesFolder();
-    this.state = { open: false, pinnedOnTop: true, activeFile: SCRATCHPAD, content: '', files: [], notesDir, fonts };
+    const shortcut = deps.settings().actionShortcuts?.['toggle-notes'] ?? 'Alt+N';
+    this.state = {
+      open: false,
+      focused: false,
+      pinnedOnTop: true,
+      activeFile: SCRATCHPAD,
+      content: '',
+      files: [],
+      notesDir,
+      shortcut,
+      fonts
+    };
     this.reload();
 
     this.window = createIslandWindow(NOTES_W, NOTES_H, { focusable: true });
@@ -45,10 +57,24 @@ export class EdgeNotes {
       event.preventDefault();
       this.hideDrawer();
     });
+    this.window.on('focus', () => {
+      this.state.focused = true;
+      this.publish();
+    });
+    this.window.on('blur', () => {
+      this.state.focused = false;
+      this.publish();
+    });
     this.window.on('moved', () => {
       const bounds = this.window.getBounds();
       const display = screen.getDisplayMatching(bounds);
       this.boundsByDisplay.set(display.id, { x: bounds.x, y: bounds.y });
+    });
+    this.window.webContents.on('before-input-event', (event, input) => {
+      if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') {
+        event.preventDefault();
+        this.hideDrawer();
+      }
     });
 
     const { check } = deps;
@@ -80,10 +106,10 @@ export class EdgeNotes {
     ipcMain.handle('notes:create', (event, title?: string) => {
       check(event);
       const stamp = new Date().toISOString().slice(5, 16).replace(/[:T]/g, '-');
-      const id = title?.trim().replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '-') || `Note-${stamp}`;
+      const id = title?.trim().replace(/\.md$/i, '').replace(/[^a-zA-Z0-9一-龥_-]/g, '-') || `Note-${stamp}`;
       let file = `${id}.md`;
-      if (!title?.trim()) for (let suffix = 2; existsSync(join(this.state.notesDir, file)); suffix++) file = `${id}-${suffix}.md`;
-      writeFileSync(join(this.state.notesDir, file), `# ${title || file.slice(0, -3)}\n\n`, { encoding: 'utf8', flag: 'wx' });
+      for (let suffix = 2; existsSync(join(this.state.notesDir, file)); suffix++) file = `${id}-${suffix}.md`;
+      writeFileSync(join(this.state.notesDir, file), `# ${title?.trim().replace(/\.md$/i, '') || file.slice(0, -3)}\n\n`, { encoding: 'utf8', flag: 'wx' });
       this.state.activeFile = file;
       this.reload();
       this.publish();
@@ -94,7 +120,7 @@ export class EdgeNotes {
       if (!file) throw new Error('便签不存在');
       if (file === SCRATCHPAD) throw new Error('不能删除 Scratchpad.md');
       unlinkSync(join(this.state.notesDir, file));
-      this.state.activeFile = SCRATCHPAD;
+      if (this.state.activeFile === file) this.state.activeFile = SCRATCHPAD;
       this.reload();
       this.publish();
       return this.snapshot();
@@ -110,7 +136,7 @@ export class EdgeNotes {
       check(event);
       const file = this.noteFile(name);
       if (!file) return;
-      const image = await this.window.webContents.capturePage({ x: 8, y: 14, width: NOTES_W - 18, height: NOTES_H - 28 });
+      const image = await this.window.webContents.capturePage({ x: 14, y: 14, width: NOTES_W - 28, height: NOTES_H - 28 });
       if (!image.isEmpty()) {
         await this.deps.onPinImage(image);
         this.deps.toast(`已将「${file.replace(/\.md$/i, '')}」钉为桌面贴图`, 'Pin');
@@ -124,7 +150,7 @@ export class EdgeNotes {
   place(display: Display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())) {
     if (this.window.isDestroyed()) return;
     const area = display.workArea;
-    const position = this.boundsByDisplay.get(display.id) ?? { x: area.x + area.width - NOTES_W - 32, y: area.y + 56 };
+    const position = this.boundsByDisplay.get(display.id) ?? { x: area.x + area.width - NOTES_W - 24, y: area.y + 44 };
     this.window.setBounds({ ...position, width: NOTES_W, height: NOTES_H });
   }
 
@@ -133,6 +159,7 @@ export class EdgeNotes {
     this.reload();
     this.place();
     this.state.open = true;
+    this.state.focused = true;
     this.publish();
     this.window.show();
     this.window.focus();
@@ -141,6 +168,7 @@ export class EdgeNotes {
   hideDrawer() {
     if (this.window.isDestroyed()) return;
     this.state.open = false;
+    this.state.focused = false;
     this.window.hide();
     this.publish();
   }
@@ -150,24 +178,26 @@ export class EdgeNotes {
     else this.hideDrawer();
   }
 
-  appendScratchpad(text: string) {
+  appendScratchpad(text: string, sourceApp?: string) {
     if (!text.trim()) return;
     const path = join(this.state.notesDir, SCRATCHPAD);
-    const latest = readFileSync(path, 'utf8');
+    const latest = existsSync(path) ? readFileSync(path, 'utf8') : '# 随手记\n';
     const now = new Date(), pad = (value: number) => String(value).padStart(2, '0');
-    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-    const addition = `\n\n> ${stamp}\n${text.trim()}\n`;
-    const content = latest + addition;
+    const timeStr = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const header = `## 摘录 ${timeStr}${sourceApp ? ` · ${sourceApp}` : ''}`;
+    const trimmedLatest = latest.replace(/\s+$/, '');
+    const content = `${trimmedLatest}\n\n${header}\n${text.trim()}\n`;
     writeFileAtomic(path, content);
     if (this.state.activeFile === SCRATCHPAD) {
       this.state.content = content;
-      this.publish();
     }
+    this.publish();
     this.deps.toast('已追加到 Scratchpad', 'Note');
   }
 
-  updateFonts(fonts: IslandState['fonts']) {
-    this.state.fonts = fonts;
+  updateSettings(settings: Settings) {
+    this.state.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.state.shortcut = settings.actionShortcuts?.['toggle-notes'] ?? '';
     this.publish();
   }
 
@@ -182,7 +212,7 @@ export class EdgeNotes {
   private reload() {
     this.state.files = readdirSync(this.state.notesDir)
       .filter(name => name.endsWith('.md') && statSync(join(this.state.notesDir, name)).isFile())
-      .sort((a, b) => a === SCRATCHPAD ? -1 : b === SCRATCHPAD ? 1 : a.localeCompare(b));
+      .sort((a, b) => (a === SCRATCHPAD ? -1 : b === SCRATCHPAD ? 1 : a.localeCompare(b)));
     if (!this.state.files.includes(this.state.activeFile)) this.state.activeFile = SCRATCHPAD;
     this.state.content = readFileSync(join(this.state.notesDir, this.state.activeFile), 'utf8');
   }
@@ -190,8 +220,9 @@ export class EdgeNotes {
   private snapshot(): EdgeNotesState {
     const notes = this.state.files.map(fileName => {
       const path = join(this.state.notesDir, fileName);
+      const stat = statSync(path);
       const content = readFileSync(path, 'utf8');
-      return { fileName, content };
+      return { fileName, content, updatedAt: stat.mtimeMs };
     });
     return { ...this.state, files: [...this.state.files], notes };
   }

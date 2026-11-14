@@ -109,7 +109,7 @@ export class CaptureManager {
   }
   private stopEditorServices: ()=>void;
   private ocr=new OCRService((id,revision)=>this.state?.phase==='result'&&this.state.editId===id&&this.editRevision===revision);
-  constructor(private receive: (image: NativeImage)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string)=>Promise<void>, private changed:()=>void, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'|'toolbarTools'|'mouseActions'>,memory:()=>MemorySettings,private savePreferences:(settings:ScreenshotSettings)=>void,private intelligence:()=>IntelligenceService,external:EditorExternal={}) {
+  constructor(private receive: (image: NativeImage, presetId?: string)=>Promise<void>, private before:()=>boolean, private after:(restore?:boolean)=>void, private receiveText:(text:string, presetId?: string)=>Promise<void>, private changed:()=>void, private settings:()=>ScreenshotSettings, private notice:(message:string)=>void,private appearance:()=>Pick<Settings,'fonts'|'importedFonts'|'editorShortcuts'|'ignoredApps'|'toolbarTools'|'mouseActions'>,memory:()=>MemorySettings,private savePreferences:(settings:ScreenshotSettings)=>void,private intelligence:()=>IntelligenceService,private external:EditorExternal={}) {
     rmSync(this.sleepDirectory,{recursive:true,force:true});
     this.idle=new IdleSleep(memory,async()=>{if(!this.sleepJob){this.sleepJob=this.suspendEditor();try{await this.sleepJob;}finally{this.sleepJob=null;}}});
     this.regionsStore=new RegionStore(join(app.getPath('userData'),'capture-regions.json'),()=>this.settings().rememberRegionAcrossLaunches);
@@ -149,7 +149,7 @@ export class CaptureManager {
     ipcMain.handle('screenshot:action',(e,a:string)=>{assert(e);return result(()=>this.action(a));});
     ipcMain.handle('screenshot:scroll-action',(e,a:ScrollCaptureAction)=>{assert(e);return result(()=>this.scrollAction(a));});
     ipcMain.on('screenshot:load-error',(e,id:string)=>{if(!owns(e)||this.state?.editId!==id)return;if(this.native.snapshot().visible)this.native.update({session:this.state.id,message:'编辑器未能准备好，请重试或取消'});else{this.win?.show();app.focus({steal:true});this.win?.focus();}});
-    ipcMain.handle('screenshot:export',(e,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode)=>{assert(e);return result(()=>this.exportFrame(frame,action,format,contentMode));});
+    ipcMain.handle('screenshot:export',(e,frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode,presetId?:string)=>{assert(e);return result(()=>this.exportFrame(frame,action,format,contentMode,presetId));});
     const session=(e:IpcMainEvent|IpcMainInvokeEvent):EditorSession=>{assert(e);return {
       edit:()=>{const s=this.state;if(s?.phase!=='result'||!s.selection)throw Error('截图编辑会话已结束');return {id:s.editId,revision:this.editRevision};},
       check:(id,revision)=>this.assertVersion(id,revision),
@@ -160,7 +160,7 @@ export class CaptureManager {
       textSent:id=>{if(this.state?.editId===id)this.cancel();},
       recognized:result=>{if(this.state?.editId===result.id&&this.editRevision===result.revision)this.historyOCR={id:result.id,revision:result.revision,text:result.lines.map(line=>line.text).join('\n')};}
     };};
-    this.stopEditorServices=handleEditorServices({recognize:'screenshot:recognize',analyze:'screenshot:analyze',visionLanguage:'screenshot:vision-language',previewFormula:'screenshot:preview-formula',openURL:'screenshot:open-url',exportTable:'screenshot:export-table',pinFormula:'screenshot:pin-formula',copyText:'screenshot:copy-text',sendText:'screenshot:send-text',fastText:'screenshot:fast-text',noteText:'screenshot:note-text',invalidateOCR:'screenshot:invalidate-ocr'},session,{...external,settings:()=>this.settings(),intelligence:()=>this.intelligence(),suppress:()=>this.after(),text:text=>this.receiveText(text)});
+    this.stopEditorServices=handleEditorServices({recognize:'screenshot:recognize',analyze:'screenshot:analyze',visionLanguage:'screenshot:vision-language',previewFormula:'screenshot:preview-formula',openURL:'screenshot:open-url',exportTable:'screenshot:export-table',pinFormula:'screenshot:pin-formula',copyText:'screenshot:copy-text',sendText:'screenshot:send-text',fastText:'screenshot:fast-text',noteText:'screenshot:note-text',invalidateOCR:'screenshot:invalidate-ocr'},session,{...external,settings:()=>this.settings(),intelligence:()=>this.intelligence(),suppress:()=>this.after(),text:(text,presetId)=>this.receiveText(text,presetId)});
     screen.on('display-added',this.displayAdded);
     screen.on('display-removed',this.displayRemoved);
     screen.on('display-metrics-changed',this.displayMetrics);
@@ -324,7 +324,7 @@ export class CaptureManager {
   }
   /** State notifications carry metadata; immutable pixels are read once by frame reference. */
   private editorState(){
-    if(this.state)Object.assign(this.state,editorSettings(this.settings(),this.appearance()));
+    if(this.state)Object.assign(this.state,editorSettings(this.settings(),this.appearance(),this.external.presets?.()),{regionPresets:this.settings().regionPresets});
     return this.state;
   }
   private publish(){if(this.state&&this.win&&!this.win.isDestroyed())this.win.webContents.send('screenshot:changed',this.editorState());}
@@ -364,7 +364,6 @@ export class CaptureManager {
   }
   saveRegionPreset(p:RegionPreset){validateRegionPreset(p);const presets=this.settings().regionPresets.filter(v=>v.id!==p.id);if(presets.length>=100)throw Error('最多保存 100 个区域预设');this.savePreferences({...this.settings(),regionPresets:[...presets,{...p,name:p.name.trim()}]});}
   deleteRegionPreset(id:string){this.savePreferences({...this.settings(),regionPresets:this.settings().regionPresets.filter(p=>p.id!==id)});delete this.regionsStore.placements[id];this.regionsStore.save();}
-  async customCapture(r:CustomCaptureRequest){if(this.active)throw Error('请先完成或关闭当前截图');validateRegionPreset({id:r.presetId??'custom',name:'自定义',width:r.width,height:r.height,ratio:r.ratio,delay:r.delay});return this.efficiency.start('rect',r.delay,r);}
   private clearRegion(){
     const s=this.state,frame=this.screenFrame;if(!s?.editableRegion||!frame)throw Error('当前图片不能重新选区');this.assertCaptureDisplay();
     this.win?.hide();this.presented=false;this.ocr.reset();this.image=null;this.imageTask=null;this.imageLoader=null;this.automaticReady=null;this.handoff=null;
@@ -655,7 +654,7 @@ export class CaptureManager {
     const source=await this.originalImage();
     return {source,image,annotations:validateAnnotations(frame.annotations,source,frame.crop),pixelScale:s.pixelScale};
   }
-  private async exportFrame(frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode){
+  private async exportFrame(frame:CaptureFrame,action:ExportAction,format:ScreenshotOutputFormat,contentMode?:ScreenshotExportContentMode,presetId?:string){
     if(this.exporting)throw Error('正在输出图片');
     const preferences=this.preferences,mode=exportMode(action,format,contentMode??preferences.exportContentMode);
     if(action==='copy'&&preferences.copyMode==='image'&&mode==='result'&&frame.png instanceof Uint8Array&&!frame.annotations&&!frame.outputSize&&!preferences.cornerRadius&&!preferences.borderWidth){const r=this.assertCrop(frame),png=assertPng(frame.png,r.width,r.height);this.acceptVersion(frame.id,frame.revision);this.exporting=true;try{await copyPng(png);if(this.state?.editId===frame.id)this.cancel();}finally{this.exporting=false;}return;}
@@ -669,7 +668,7 @@ export class CaptureManager {
         if(this.state?.editableRegion&&this.screenFrame){const data=await this.native.pixels(this.screenFrame.id,{format:'bgra',rect:crop});image=nativeImage.createFromBitmap(Buffer.from(data.data),{width:data.width,height:data.height});}
         else image=(await this.originalImage()).crop(crop);
       }else image=contentImage(result?.image??decodeFrameImage(frame),mode,this.state?.pixelScale);
-      if(action==='image')await this.receive(image);
+      if(action==='image')await this.receive(image,typeof presetId==='string'&&presetId?presetId:undefined);
       else if(action==='pin'){
         if(this.state?.pinId&&!this.pins.contains(this.state.pinId)){
           this.state.pinId=undefined;this.editorKey=null;this.publish();
@@ -694,6 +693,7 @@ export class CaptureManager {
     if(!this.state)throw Error('截图已结束');
     if(a==='screen'){if(this.state.phase==='selecting'){this.state.captureKind='screen';await this.select({x:0,y:0,width:this.state.width,height:this.state.height},false);}return;}
     if(a==='reselect'){const mode=this.state?.mode==='rect'?'rect':'area';this.cancel();try{await this.start(mode);}catch(error){dialog.showErrorBox('重新截图未能启动',(error as Error).message);}return;}
+    if(a==='start-recording'){const c=this.state?.editableRegion;const rect=c?regionPoints(c.currentCrop,c.display.bounds,c.sourceSize):undefined;this.cancel();await this.external.onStartRecording?.(rect);return;}
     throw Error('不支持的截图操作');
   }
   private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}

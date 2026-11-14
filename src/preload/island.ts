@@ -10,6 +10,7 @@ const api: IslandAPI = {
   togglePausePomodoro: () => ipcRenderer.invoke('island:pomo-pause'),
   stopPomodoro: () => ipcRenderer.invoke('island:pomo-stop'),
   completeTask: taskId => ipcRenderer.invoke('island:complete-task', taskId),
+  openNook: () => ipcRenderer.invoke('island:open-nook'),
   snoozeAlert: (alertId, minutes) => ipcRenderer.invoke('island:snooze-alert', alertId, minutes),
   dismissAlert: alertId => ipcRenderer.invoke('island:dismiss-alert', alertId),
   restartService: label => ipcRenderer.invoke('island:restart-service', label),
@@ -30,7 +31,6 @@ const api: IslandAPI = {
   closeClipboard: () => ipcRenderer.send('clipboard-history:close'),
   onClipboardState: callback => on<ClipboardWindowState>('clipboard-history:changed', callback),
   snapWindow: slot => ipcRenderer.invoke('island:snap-window', slot),
-  focusTask: taskId => ipcRenderer.invoke('island:focus-task', taskId),
   onState: callback => on<IslandState>('island:changed', callback),
 
   getNotesState: () => ipcRenderer.invoke('notes:state'),

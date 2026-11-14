@@ -1,29 +1,188 @@
-import { useState } from 'react';
-import { ScreenshotSettings } from './ScreenshotSettings';
-import { ChevronLeft } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  Camera,
+  Check,
+  Keyboard,
+  Languages,
+  LayoutDashboard,
+  Plug,
+  Plus,
+  SlidersHorizontal,
+  Sparkles,
+  TextCursorInput,
+  type LucideIcon
+} from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Glide, rise } from './motion';
-import type { ShellState } from '../shared/contracts';
-import { FontSettings } from './FontSettings';
-import { GeneralSettings, type GeneralSubTab } from './GeneralSettings';
-import { IntegrationSettings } from './IntegrationSettings';
+import type { SettingsSection, ShellState } from '../shared/contracts';
+import { useFonts } from './fonts';
+import {
+  DesktopSuitePane,
+  GeneralAppearancePane,
+  SelectionActionBarPane,
+  ShortcutsSyncPane,
+  TranslationPane
+} from './GeneralSettings';
+import { ConnectionsPane } from './ImageOptionsFields';
+import { rise } from './motion';
 import { PresetSettings } from './PresetSettings';
+import { ScreenshotSettings } from './ScreenshotSettings';
 
-export type SettingsTab = 'screenshot' | 'presets' | 'apps' | 'local' | 'general' | 'appearance';
-const tabs: [SettingsTab, string][] = [['presets', '预设'], ['screenshot', '截图'], ['apps', '应用背景'], ['local', '本地 CLI'], ['general', '通用'], ['appearance', '外观']];
+const modules: readonly { id: SettingsSection; label: string; icon: LucideIcon }[] = [
+  { id: 'general', label: '通用与外观', icon: SlidersHorizontal },
+  { id: 'selection', label: '划词与动作条', icon: TextCursorInput },
+  { id: 'presets', label: 'AI 预设与生图', icon: Sparkles },
+  { id: 'translation', label: '翻译', icon: Languages },
+  { id: 'connections', label: '模型与 API 连接', icon: Plug },
+  { id: 'capture', label: '截图、贴图与录屏', icon: Camera },
+  { id: 'suite', label: '桌面套件', icon: LayoutDashboard },
+  { id: 'shortcuts', label: '快捷键与同步', icon: Keyboard }
+];
 
-/** Replaces the title bar while open; the web view is hidden by main. */
-export function Settings({ state, tab, setTab }: { state: ShellState; tab: SettingsTab; setTab: (tab: SettingsTab) => void }) {
-  const [generalSub, setGeneralSub] = useState<GeneralSubTab>('system');
-  return <>
-    <header className="l-set-head">
-      <button className="l-text-btn l-back" aria-label={state.tasks.length ? '返回任务' : '返回小窗'} onClick={() => void window.desktop.act('close-settings')}><ChevronLeft size={16} />{state.tasks.length ? '任务' : '小窗'}</button>
-      <h2>设置</h2><span className="l-kbd">⌘,</span>
-    </header>
-    <nav className="l-set-nav" aria-label="设置分类">{tabs.map(([id, label]) => <button key={id} aria-current={tab === id ? 'page' : undefined} onClick={() => { if (id === 'general') setGeneralSub('system'); setTab(id); }}>{label}{tab === id && <Glide id="set-nav" className="l-set-nav-line" />}</button>)}</nav>
-    <AnimatePresence mode="wait" initial={false}><motion.div key={tab} className="l-view" {...rise}>
-      {tab === 'screenshot' ? <ScreenshotSettings settings={state.settings.screenshot} shortcuts={() => { setGeneralSub('shortcuts'); setTab('general'); }} /> : tab === 'presets' ? <PresetSettings presets={state.presets} /> : tab === 'general' ? <GeneralSettings state={state} initialSub={generalSub} /> : tab === 'appearance' ? <FontSettings settings={state.settings} />
-        : <IntegrationSettings settings={state.settings} section={tab} />}
-    </motion.div></AnimatePresence>
-  </>;
+export function Settings() {
+  const [state, setState] = useState<ShellState | null>(null);
+  const [section, setSection] = useState<SettingsSection>('general');
+  const [saveState, setSaveState] = useState<{ error?: string }>({});
+  const [creatingPreset, setCreatingPreset] = useState<'chat' | 'image' | null>(null);
+  const [creatingConn, setCreatingConn] = useState(false);
+  const externalSectionRef = useRef<SettingsSection | undefined>(undefined);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  useFonts(state?.settings);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = state?.settings.themeMode || 'paper';
+  }, [state?.settings.themeMode]);
+
+  const applyState = useCallback((next: ShellState) => {
+    setState(next);
+    if (next.settingsSection && next.settingsSection !== externalSectionRef.current) {
+      externalSectionRef.current = next.settingsSection;
+      setSection(next.settingsSection);
+    }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const stop = window.desktop.onState(next => {
+      if (active) applyState(next);
+    });
+    void window.desktop.getState().then(next => {
+      if (active) applyState(next);
+    });
+    return () => {
+      active = false;
+      stop();
+    };
+  }, [applyState]);
+
+  const notify = useCallback((status: { ok?: boolean; error?: string }) => {
+    if (status.error) setSaveState({ error: status.error });
+    else setSaveState({});
+  }, []);
+
+  function switchSection(next: SettingsSection) {
+    setSection(next);
+    setSaveState({});
+    setCreatingPreset(null);
+    setCreatingConn(false);
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  }
+
+  if (!state) return <main className="l-set-win" aria-label="Lasso 设置" />;
+
+  const currentModule = modules.find(m => m.id === section) || modules[0];
+
+  return (
+    <main className="l-set-win" aria-label="Lasso 设置">
+      <aside className="l-set-side" aria-label="设置分类">
+        {modules.map(item => {
+          const Icon = item.icon;
+          const active = item.id === section;
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className="l-set-nav-item"
+              aria-current={active ? 'page' : undefined}
+              onClick={() => switchSection(item.id)}
+            >
+              <Icon size={15} />
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+        <div className="l-set-ver">Lasso 2.4.0</div>
+      </aside>
+
+      <section className="l-set-pane" aria-labelledby="settings-pane-title">
+        <header className="l-set-pane-head">
+          <h1 id="settings-pane-title">{currentModule.label}</h1>
+          <span className={'l-set-saved' + (saveState.error ? ' error' : '')} role={saveState.error ? 'alert' : 'status'}>
+            {saveState.error ? (
+              <span>{saveState.error}</span>
+            ) : (
+              <>
+                <Check size={13} />
+                <span>已自动保存</span>
+              </>
+            )}
+          </span>
+          {section === 'presets' && (
+            <button type="button" className="l-btn small" onClick={() => setCreatingPreset('chat')}>
+              <Plus size={13} />
+              <span>新建预设</span>
+            </button>
+          )}
+          {section === 'connections' && (
+            <button type="button" className="l-btn small" onClick={() => setCreatingConn(true)}>
+              <Plus size={13} />
+              <span>新建连接</span>
+            </button>
+          )}
+        </header>
+
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div key={section} ref={bodyRef} className="l-set-pane-body" {...rise}>
+            {section === 'general' && <GeneralAppearancePane state={state} notify={notify} />}
+            {section === 'selection' && <SelectionActionBarPane state={state} notify={notify} />}
+            {section === 'presets' && (
+              <PresetSettings
+                presets={state.presets}
+                creatingKind={creatingPreset}
+                onClearCreate={() => setCreatingPreset(null)}
+                onOpenConnections={() => switchSection('connections')}
+                notify={notify}
+              />
+            )}
+            {section === 'translation' && (
+              <TranslationPane
+                translation={state.settings.translation}
+                onOpenConnections={() => switchSection('connections')}
+                notify={notify}
+              />
+            )}
+            {section === 'connections' && (
+              <ConnectionsPane
+                state={state}
+                creatingNew={creatingConn}
+                onStartCreate={() => setCreatingConn(true)}
+                onDoneCreate={() => setCreatingConn(false)}
+                notify={notify}
+              />
+            )}
+            {section === 'capture' && (
+              <ScreenshotSettings
+                fullSettings={state.settings}
+                onOpenShortcuts={() => switchSection('shortcuts')}
+                onOpenConnections={() => switchSection('connections')}
+                notify={notify}
+              />
+            )}
+            {section === 'suite' && <DesktopSuitePane state={state} notify={notify} />}
+            {section === 'shortcuts' && <ShortcutsSyncPane state={state} notify={notify} />}
+          </motion.div>
+        </AnimatePresence>
+      </section>
+    </main>
+  );
 }

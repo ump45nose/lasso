@@ -1,427 +1,1566 @@
-import { useEffect, useState } from 'react';
-import { Check, Copy, Download, Pin, Play, Plus, RefreshCw, Trash2, Upload, X } from 'lucide-react';
-import type { GeneralSettings as Preferences, ScriptAction, ShellState } from '../shared/contracts';
-import type { TranslationLang, TranslationProvider, TranslationSettings } from '../shared/media';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Download, Ellipsis, GripVertical, Languages, NotebookPen, Plus, RefreshCw, Upload, X, Zap } from 'lucide-react';
+import {
+  presetTargetLabels as targetLabels,
+  type ActionBarConfig,
+  type AppPrompt,
+  type FinderEditorApp,
+  type FinderTerminalApp,
+  type GeneralSettings as GeneralPreferences,
+  type ShellState,
+  type SuiteSettings
+} from '../shared/contracts';
 import type { WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
-import { shortcutLabel } from './targets';
-import { editorActionIds, editorActionLabels, globalActionIds, globalActionLabels, isValidShortcut, validateEditorShortcuts, type EditorActionId, type GlobalActionId, type IgnoredAppRule, type IgnoredAppScope } from '../shared/shortcuts';
-import { ApiConnectionBindingFields, ApiConnectionPoolManager } from './ImageOptionsFields';
+import type { TranslationLang, TranslationProvider, TranslationSettings } from '../shared/media';
+import {
+  editorActionIds,
+  editorActionLabels,
+  globalActionLabels,
+  isValidShortcut,
+  validateEditorShortcuts,
+  type EditorActionId,
+  type GlobalActionId,
+  type IgnoredAppRule,
+  type IgnoredAppScope
+} from '../shared/shortcuts';
+import { FontSettings } from './FontSettings';
+import { ApiConnectionBindingFields } from './ImageOptionsFields';
 import { Segmented, SubNav, SubPane, useSubNav } from './motion';
 import { Switch } from './Switch';
+import { Badge, shortcutLabel } from './targets';
 import './styles/screenshot-settings.css';
 
-export type GeneralSubTab = 'system' | 'shortcuts' | 'editor' | 'sync';
-const subTabs: readonly (readonly [GeneralSubTab, string])[] = [
-  ['system', '系统与常驻'],
-  ['shortcuts', '快捷键与忽略'],
-  ['editor', '编辑器与脚本'],
-  ['sync', '同步与迁移']
+type NotifyFn = (status: { ok?: boolean; error?: string }) => void;
+
+/* ───────────────────────── Module 1: 通用与外观 ───────────────────────── */
+
+export function GeneralAppearancePane({ state, notify }: { state: ShellState; notify: NotifyFn }) {
+  const { settings } = state;
+  const [minutes, setMinutes] = useState(String(settings.memory.idleMinutes));
+  useEffect(() => {
+    setMinutes(String(settings.memory.idleMinutes));
+  }, [settings.memory.idleMinutes]);
+
+  async function saveGeneral(patch: Partial<GeneralPreferences>) {
+    const res = await window.desktop.saveGeneral({
+      launchAtLogin: settings.launchAtLogin,
+      themeMode: settings.themeMode,
+      toolbarTools: settings.toolbarTools,
+      mouseActions: settings.mouseActions,
+      autoCheckUpdates: settings.autoCheckUpdates,
+      ...patch
+    });
+    if (res.error) notify({ error: res.error });
+    else notify({ ok: true });
+  }
+
+  async function saveMemory(idleMinutes = settings.memory.idleMinutes, enabled = settings.memory.enabled) {
+    const res = await window.desktop.saveMemory({ enabled, idleMinutes });
+    if (res.error) notify({ error: res.error });
+    else {
+      setMinutes(String(idleMinutes));
+      notify({ ok: true });
+    }
+  }
+
+  const resident = state.tasks.filter(t => t.residency === 'resident').length;
+  const released = state.tasks.length - resident;
+
+  return (
+    <>
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>系统与外观</span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">登录 macOS 时自动启动</div>
+            </div>
+            <Switch label="开机自启" value={settings.launchAtLogin} change={() => void saveGeneral({ launchAtLogin: !settings.launchAtLogin })} />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">自动检查版本更新</div>
+            </div>
+            <Switch label="自动检查更新" value={settings.autoCheckUpdates} change={() => void saveGeneral({ autoCheckUpdates: !settings.autoCheckUpdates })} />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">界面主题</div>
+              <div className="l-set-row-sub">纸面暖白或跟随系统浅色／深色外观</div>
+            </div>
+            <Segmented
+              label="界面主题"
+              value={settings.themeMode}
+              onChange={themeMode => void saveGeneral({ themeMode })}
+              options={[
+                ['paper', '暖白纸面'],
+                ['system', '跟随系统']
+              ]}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">AI 对话小窗默认置顶</div>
+              <div className="l-set-row-sub">关闭置顶时，点击小窗外部自动收起隐藏</div>
+            </div>
+            <Switch
+              label="始终置顶"
+              value={state.pinned}
+              change={() => {
+                void window.desktop.act('pin');
+                notify({ ok: true });
+              }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>内存与网页会话休眠</span>
+          <span className="r">
+            当前 {resident} 个驻留 · {released} 个已休眠
+          </span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">后台闲置自动释放网页内存</div>
+              <div className="l-set-row-sub">隐藏后开始计时，重新切回会话时按原链接恢复</div>
+            </div>
+            <Switch label="闲置休眠" value={settings.memory.enabled} change={() => void saveMemory(undefined, !settings.memory.enabled)} />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">闲置休眠时长</div>
+            </div>
+            <Segmented
+              label="闲置休眠时间"
+              value={[5, 15, 30, 60].includes(settings.memory.idleMinutes) ? String(settings.memory.idleMinutes) : ''}
+              options={[
+                ['5', '5 分钟'],
+                ['15', '15 分钟'],
+                ['30', '30 分钟'],
+                ['60', '60 分钟']
+              ]}
+              onChange={v => v && void saveMemory(Number(v))}
+            />
+            <div className="l-row">
+              <input
+                aria-label="自定义休眠分钟"
+                className="l-input mono l-shot-height"
+                type="number"
+                min="1"
+                max="1440"
+                value={minutes}
+                onChange={e => setMinutes(e.target.value)}
+                onBlur={() => {
+                  const n = Number(minutes);
+                  if (Number.isSafeInteger(n) && n >= 1 && n <= 1440 && n !== settings.memory.idleMinutes) void saveMemory(n);
+                }}
+              />
+              <span className="l-set-row-sub">分</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <FontSettings settings={settings} notify={notify} />
+
+      <div className="l-row">
+        <button type="button" className="l-ghost small danger" onClick={() => void window.desktop.act('quit')}>
+          退出 Lasso
+        </button>
+      </div>
+    </>
+  );
+}
+
+/* ───────────────────────── Module 2: 划词与动作条 (B9-A) ───────────────────────── */
+
+const ignoredScopes: readonly (readonly [IgnoredAppScope, string])[] = [
+  ['selection', '划词'],
+  ['shortcuts', '快捷键'],
+  ['capture-candidates', '窗口候选']
 ];
 
-const actionHelp: Record<GlobalActionId, string> = {
-  rect: '直接拖动框选，不自动吸附窗口或识别区域', area: '悬停识别窗口、消息或任意区域，也可拖动框选', window: '悬停高亮整个窗口，点击截取；被遮挡的部分也完整', screen: '直接截取鼠标所在的屏幕', front: '直接截取最前面的应用窗口',
-  'repeat-last': '按上次截图的区域再次截取', 'custom-capture': '打开自定义尺寸与区域预设', 'scroll-capture': '选择窗口中的滚动区域', 'delay-3s': '倒计时 3 秒后框选截图', 'delay-5s': '倒计时 5 秒后框选截图', 'delay-10s': '倒计时 10 秒后框选截图', 'pin-clipboard': '将剪贴板中的图片贴到屏幕上', 'open-launcher': '有选区时同时打开指令面板；不绑定也可从菜单栏打开',
-  'open-clipboard-history': '查看剪贴板历史（默认 Option+V），选择内容复制或按 Enter 粘贴回原应用', 'open-translator': '划词即译或打开独立输入翻译浮窗（默认 Option+T），支持多引擎与流式替换原选区'
-};
-const ignoredScopes: readonly (readonly [IgnoredAppScope, string])[] = [['selection', '划词'], ['shortcuts', '快捷键'], ['capture-candidates', '窗口候选']];
-const toolbarOptions = [['text-select', '选字'], ['select', '选择'], ['arrow', '箭头'], ['line', '直线'], ['rectangle', '矩形'], ['ellipse', '椭圆'], ['pen', '画笔'], ['highlight', '高亮'], ['text', '文字'], ['number', '序号'], ['redact', '遮挡'], ['mosaic', '马赛克'], ['blur', '模糊'], ['crop', '裁剪'], ['picker', '取色'], ['spotlight', '聚光灯'], ['magnifier', '放大镜'], ['watermark', '水印'], ['auto-mosaic', '联动马赛克'], ['inpaint', '智能消除'], ['image-adjust', '画面变换']] as const;
+interface BarEntry {
+  id: string;
+  kind: 'translate' | 'note' | 'preset';
+  name: string;
+  sub: string;
+  subMono?: boolean;
+  target?: 'chatgpt' | 'gemini' | 'api';
+  enabled: boolean;
+}
 
-function ScriptSettings({ actions, save }: { actions: ScriptAction[]; save: (actions: ScriptAction[]) => Promise<boolean> }) {
-  const [draft, setDraft] = useState<ScriptAction | null>(null), [input, setInput] = useState(''), [output, setOutput] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false), [removing, setRemoving] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const persisted = actions.find(action => action.id === draft?.id), dirty = !!draft && JSON.stringify(draft) !== JSON.stringify(persisted);
-  const reset = () => { setOutput(null); setError(''); setNotice(''); setRemoving(false); };
-  function edit(action: ScriptAction) { setDraft({ ...action }); setInput(''); reset(); }
-  function patch(value: Partial<ScriptAction>) { setDraft(current => current && ({ ...current, ...value })); reset(); }
-  async function store() {
-    if (!draft) return false;
-    if (!draft.name.trim() || !draft.code.trim()) { setError('请填写脚本名称和代码'); return false; }
-    return save(persisted ? actions.map(action => action.id === draft.id ? draft : action) : [...actions, draft]);
+export function SelectionActionBarPane({ state, notify }: { state: ShellState; notify: NotifyFn }) {
+  const { settings, capture, presets } = state;
+  const dragId = useRef<string | null>(null);
+  const [dropId, setDropId] = useState<string | null>(null);
+
+  async function saveCapture(patch: Partial<Pick<typeof settings, 'selectionEnabled' | 'clipboardFallback'>>) {
+    const res = await window.desktop.saveCapture({
+      selectionEnabled: settings.selectionEnabled,
+      clipboardFallback: settings.clipboardFallback,
+      ...patch
+    });
+    if (res.error) notify({ error: res.error });
+    else notify({ ok: true });
   }
-  async function run(mode: 'save' | 'run' | 'copy' | 'pin' | 'delete') {
-    setBusy(true); setError(''); setNotice('');
-    try {
-      if (mode === 'delete') { if (persisted && !await save(actions.filter(action => action.id !== draft?.id))) return; setDraft(null); reset(); setNotice('脚本已删除'); }
-      else if (mode === 'copy') { await navigator.clipboard.writeText(output ?? ''); setNotice('已复制结果'); }
-      else if (mode === 'pin') { const result = await window.desktop.createPin({ kind: 'text', text: output ?? '' }); if (result.error) throw Error(result.error); setNotice('已创建文字贴图'); }
-      else {
-        if (!await store()) return;
-        if (mode === 'save') { setNotice('脚本已保存'); return; }
-        setOutput(null);
-        const result = await window.desktop.runScriptAction(draft!.id, input ? { text: input } : undefined);
-        if (result.error) throw Error(result.error);
-        setOutput(result.output); setNotice('运行完成，结果已复制');
+
+  // Build ordered action-bar entries matching B1 & B9-A
+  const hiddenSet = new Set(settings.actionBar.hidden);
+  const chatPresets = presets.filter(p => p.kind !== 'image');
+  const rawEntries = new Map<string, BarEntry>();
+  rawEntries.set('translate', {
+    id: 'translate',
+    kind: 'translate',
+    name: '翻译',
+    sub: '打开翻译浮窗',
+    enabled: !hiddenSet.has('translate')
+  });
+  for (const p of chatPresets) {
+    const itemId = `preset:${p.id}`;
+    rawEntries.set(itemId, {
+      id: itemId,
+      kind: 'preset',
+      name: p.name || '未命名预设',
+      sub:
+        p.target === 'api'
+          ? 'API · 快答卡'
+          : `${targetLabels[p.target]} · ${p.mode === 'edit' ? '先编辑' : '直接发送'}`,
+      target: p.target,
+      enabled: p.enabled && !hiddenSet.has(itemId)
+    });
+  }
+  rawEntries.set('note', {
+    id: 'note',
+    kind: 'note',
+    name: '入便签',
+    sub: 'Scratchpad.md',
+    subMono: true,
+    enabled: !hiddenSet.has('note')
+  });
+
+  const inlineLimit = Math.max(1, Math.min(8, settings.actionBar.inlineCount || 5));
+  const orderedEntries: BarEntry[] = [];
+  for (const id of settings.actionBar.order) {
+    const entry = rawEntries.get(id);
+    if (entry) {
+      orderedEntries.push(entry);
+      rawEntries.delete(id);
+    }
+  }
+  for (const [id, entry] of rawEntries.entries()) {
+    if (id === 'note' && !settings.actionBar.order.includes('note')) {
+      let enabledBefore = 0;
+      let insertIdx = orderedEntries.length;
+      for (let i = 0; i < orderedEntries.length; i++) {
+        if (orderedEntries[i].enabled) {
+          enabledBefore++;
+          if (enabledBefore === inlineLimit) {
+            insertIdx = i;
+            break;
+          }
+        }
       }
-    } catch (error) { setError(String(error)); } finally { setBusy(false); }
+      orderedEntries.splice(insertIdx, 0, entry);
+    } else {
+      orderedEntries.push(entry);
+    }
   }
-  return <section id="script-actions" className="l-set-section">
-    <div className="l-set-row-head l-gap"><h3>JS 脚本动作</h3><button className="l-text-btn" disabled={busy} onClick={() => edit({ id: crypto.randomUUID(), name: '新脚本', enabled: true, code: 'return input.text.trim();' })}><Plus size={14} />新建脚本</button></div>
-    <p className="l-field-help">启用的脚本也会出现在划词动作条的 ··· 菜单和指令面板中，运行结果直接复制。</p>
-    <ul className="l-group">{actions.length ? actions.map(action => <li key={action.id}><button className="l-preset" aria-pressed={draft?.id === action.id} disabled={busy} onClick={() => edit(action)}><strong>{action.name}</strong><span>{action.enabled ? '已启用' : '已停用'}{draft?.id === action.id && dirty ? ' · 有未保存更改' : ''}</span></button></li>) : <li><p className="l-field-help">添加脚本来处理文字，运行结果可复制或贴到桌面。</p></li>}</ul>
-    {draft && <fieldset className="l-script-editor" disabled={busy}>
-      <div className="l-row"><div className="l-field"><label htmlFor="script-name">脚本名称</label><input id="script-name" className="l-input" value={draft.name} maxLength={80} onChange={e => patch({ name: e.target.value })} /></div><span className="l-field-help">启用</span><Switch label="启用脚本动作" value={draft.enabled} change={() => patch({ enabled: !draft.enabled })} /></div>
-      <div className="l-field"><label htmlFor="script-code">JavaScript 代码</label><textarea id="script-code" className="l-textarea mono l-script-code" spellCheck={false} value={draft.code} onChange={e => patch({ code: e.target.value })} /><p className="l-field-help">{'读取 input.text、input.width、input.height、input.app，用 return 返回文字。'}</p></div>
-      <div className="l-field"><label htmlFor="script-input">运行输入</label><textarea id="script-input" className="l-textarea l-textarea-short" value={input} placeholder="留空时读取剪贴板文字" onChange={e => { setInput(e.target.value); reset(); }} /></div>
-      <div className="l-workspace-actions"><button className="l-btn small" disabled={!dirty} onClick={() => void run('save')}>保存脚本</button><button className="l-btn small primary" disabled={!draft.enabled} onClick={() => void run('run')}><Play size={14} />{dirty ? '保存并运行' : '运行并复制'}</button><button className="l-btn small" onClick={() => { setDraft(null); reset(); }}>{dirty ? '放弃更改' : '关闭编辑'}</button><button className="l-btn small danger" onClick={() => removing ? void run('delete') : setRemoving(true)}><Trash2 size={14} />{removing ? '确认删除' : '删除脚本'}</button>{removing && <button className="l-text-btn" onClick={() => setRemoving(false)}>取消删除</button>}</div>
-      {dirty && <p className="l-field-help">脚本有未保存更改，点击保存或运行后生效。</p>}
-      {output !== null && <div className="l-field"><label htmlFor="script-output">运行结果</label><textarea id="script-output" className="l-textarea mono l-textarea-short" readOnly value={output} /><div className="l-workspace-actions"><button className="l-btn small" onClick={() => void run('copy')}><Copy size={14} />复制结果</button><button className="l-btn small" disabled={!output.trim()} onClick={() => void run('pin')}><Pin size={14} />贴到桌面</button></div></div>}
-    </fieldset>}
-    {busy && <p className="l-field-help" role="status">正在处理脚本…</p>}{error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
-  </section>;
-}
+  const inlineEntries: BarEntry[] = [];
+  const overflowEntries: BarEntry[] = [];
+  let activeSeen = 0;
+  for (const entry of orderedEntries) {
+    if (entry.enabled && activeSeen < inlineLimit) {
+      inlineEntries.push(entry);
+      activeSeen++;
+    } else {
+      overflowEntries.push(entry);
+    }
+  }
 
-function useGeneralSave(settings: Preferences) {
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  const { launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates } = settings;
-  async function save(patch: Partial<Preferences>) {
-    setBusy(true); setError(''); setNotice('');
-    try { const result = await window.desktop.saveGeneral({ launchAtLogin, themeMode, toolbarTools, mouseActions, scriptActions, autoCheckUpdates, ...patch }); if (result.error) throw Error(result.error); setNotice('设置已保存'); return true; }
-    catch (error) { setError(String(error)); return false; } finally { setBusy(false); }
+  async function persistActionBar(next: ActionBarConfig) {
+    const res = await window.desktop.saveActionBarConfig(next);
+    if (res.error) notify({ error: res.error });
+    else notify({ ok: true });
   }
-  return { busy, error, notice, setError, save };
-}
 
-function SystemAppearanceSettings({ settings }: { settings: ShellState['settings'] }) {
-  const { busy, error, notice, save } = useGeneralSave(settings), { launchAtLogin, themeMode, autoCheckUpdates } = settings;
-  return <section className="l-set-section">
-    <fieldset className="l-general-controls" disabled={busy}>
-      <div id="system-settings" className="l-set-row-head"><h3>系统与外观</h3><span>立即保存</span></div>
-      <ul className="l-group">
-        {([['launchAtLogin', '开机自启', launchAtLogin], ['autoCheckUpdates', '自动检查更新', autoCheckUpdates]] as const).map(([key, label, checked]) => <li key={key}><span className="l-row-label">{label}</span><Switch label={label} value={checked} change={() => void save({ [key]: !checked })} /></li>)}
-        <li className="l-shot-option"><span>主题</span><Segmented label="界面主题" value={themeMode} onChange={themeMode => void save({ themeMode })} options={ [['paper', '纸面'], ['system', '跟随系统']] } /></li>
-      </ul>
-    </fieldset>
-    {error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
-  </section>;
-}
+  async function toggleEntry(entry: BarEntry) {
+    const nextHidden = new Set(settings.actionBar.hidden);
+    if (entry.enabled) {
+      nextHidden.add(entry.id);
+    } else {
+      nextHidden.delete(entry.id);
+      if (entry.kind === 'preset') {
+        const pid = entry.id.slice('preset:'.length);
+        const targetPreset = presets.find(p => p.id === pid);
+        if (targetPreset && !targetPreset.enabled) {
+          await window.desktop.savePresets(presets.map(p => (p.id === pid ? { ...p, enabled: true } : p)));
+        }
+      }
+    }
+    await persistActionBar({
+      order: orderedEntries.map(e => e.id),
+      hidden: [...nextHidden],
+      inlineCount: inlineLimit
+    });
+  }
 
-function EditorScriptSettings({ settings }: { settings: ShellState['settings'] }) {
-  const { busy, error, notice, setError, save } = useGeneralSave(settings), { toolbarTools, mouseActions, scriptActions } = settings;
-  function toggleTool(id: string) {
-    const current = toolbarTools.length ? toolbarTools : toolbarOptions.map(([tool]) => tool);
-    const next = current.includes(id) ? current.filter(tool => tool !== id) : [...current, id];
-    if (!next.length) { setError('请至少保留一个工具'); return; }
-    void save({ toolbarTools: next.length === toolbarOptions.length ? [] : next });
+  function reorderEntries(fromId: string, toTarget: string) {
+    const ids = orderedEntries.map(e => e.id);
+    const fromIdx = ids.indexOf(fromId);
+    if (fromIdx < 0) return;
+    if (toTarget === '__cutline__') {
+      // Place right above the cutline and adjust inlineCount
+      const [moved] = ids.splice(fromIdx, 1);
+      const insertAt = Math.min(ids.length, inlineEntries.filter(e => e.id !== fromId).length);
+      ids.splice(insertAt, 0, moved);
+      const newInline = Math.max(1, Math.min(8, insertAt + 1));
+      void persistActionBar({
+        order: ids,
+        hidden: settings.actionBar.hidden,
+        inlineCount: newInline
+      });
+      return;
+    }
+    const toIdx = ids.indexOf(toTarget);
+    if (toIdx < 0 || fromIdx === toIdx) return;
+    const [moved] = ids.splice(fromIdx, 1);
+    ids.splice(toIdx, 0, moved);
+    // Recompute inlineCount if dragged across cutline
+    const wasInline = inlineEntries.some(e => e.id === fromId);
+    const targetIsInline = inlineEntries.some(e => e.id === toTarget);
+    let nextInline = inlineLimit;
+    if (!wasInline && targetIsInline) nextInline = Math.min(8, inlineLimit + 1);
+    else if (wasInline && !targetIsInline) nextInline = Math.max(1, inlineLimit - 1);
+    void persistActionBar({
+      order: ids,
+      hidden: settings.actionBar.hidden,
+      inlineCount: nextInline
+    });
   }
-  return <section className="l-set-section">
-    <fieldset className="l-general-controls" disabled={busy}>
-      <div id="mouse-actions" className="l-set-row-head"><h3>截图编辑器鼠标动作</h3><span>立即保存</span></div>
-      <ul className="l-group">
-        <li className="l-shot-option"><span>双击</span><Segmented label="双击动作" value={mouseActions.doubleClick} onChange={doubleClick => void save({ mouseActions: { ...mouseActions, doubleClick } })} options={ [['copy', '复制'], ['save', '保存'], ['pin', '贴图'], ['none', '无']] } /></li>
-        <li className="l-shot-option"><span>中键</span><Segmented label="中键动作" value={mouseActions.middleClick} onChange={middleClick => void save({ mouseActions: { ...mouseActions, middleClick } })} options={ [['pin', '贴图'], ['quick-save', '快速保存'], ['none', '无']] } /></li>
-        <li className="l-shot-option"><span>右键</span><Segmented label="右键动作" value={mouseActions.rightClick} onChange={rightClick => void save({ mouseActions: { ...mouseActions, rightClick } })} options={ [['reselect', '重新选区'], ['cancel', '取消截图']] } /></li>
-      </ul>
-      <div id="toolbar-tools" className="l-set-row-head l-gap"><h3>编辑器工具栏</h3><button className="l-text-btn" disabled={!toolbarTools.length} onClick={() => void save({ toolbarTools: [] })}>显示全部</button></div>
-      <div className="l-ignored-scopes l-toolbar-options">{toolbarOptions.map(([id, label]) => <button key={id} className="l-btn small" role="checkbox" aria-checked={!toolbarTools.length || toolbarTools.includes(id)} onClick={() => toggleTool(id)}><Check size={14} aria-hidden="true" />{label}</button>)}</div>
-    </fieldset>
-    <ScriptSettings actions={scriptActions} save={scriptActions => save({ scriptActions })} />
-    {error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
-  </section>;
-}
 
-/** Records on keydown and saves right away; main validates and rejects reserved combinations such as ⌥ Space. */
-function ShortcutField({ id, label, help, value, save, local = false, error: external }: { id: string; label: string; help?: string; value: string; save: (value: string) => Promise<{ error: string | null }>; local?: boolean; error?: string | null }) {
-  const [recording, setRecording] = useState(false);
-  const [error, setError] = useState(''), [saving, setSaving] = useState(false);
-  async function commit(next: string) {
-    setRecording(false); setSaving(true);
-    try { setError((await save(next)).error || ''); } catch (error) { setError(String(error)); }
-    finally { setSaving(false); }
+  async function saveAppRules(rules: AppPrompt[]) {
+    const res = await window.desktop.saveAppPrompts(rules);
+    if (res.error) notify({ error: res.error });
+    else notify({ ok: true });
   }
-  function key(event: React.KeyboardEvent) {
-    if (!recording) return;
-    event.preventDefault(); event.stopPropagation();
-    if (event.key === 'Escape') { setRecording(false); return; }
-    if (event.repeat || ['Meta', 'Alt', 'Control', 'Shift'].includes(event.key)) return;
-    const modifiers = [event.metaKey && 'Command', event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift'].filter(Boolean);
-    const code = event.code.replace(/^(Key|Digit|Arrow)/, '').replace(/^Backquote$/, 'Backtick').replace(/^NumpadEnter$/, 'Enter');
-    const shortcut = [...modifiers, code].join('+');
-    if (!local && !isValidShortcut(shortcut)) { setError('支持 F1–F24 单键，其他按键请搭配 ⌘、⌥、⌃ 或 ⇧。'); return; }
-    void commit(shortcut);
+
+  async function addAppPromptRule() {
+    const choice = await window.desktop.choosePath('application');
+    if (!choice?.bundleId || !choice.name) return;
+    if (settings.appPrompts.some(r => r.bundleId === choice.bundleId)) {
+      notify({ error: '该应用已在背景规则中' });
+      return;
+    }
+    await saveAppRules([...settings.appPrompts, { bundleId: choice.bundleId, name: choice.name, prompt: '', enabled: true }]);
   }
-  const message = error || external;
-  return <li className="col">
-    <div className="l-row">
-      <div className="l-row-label"><span>{label}</span>{help && <span>{help}</span>}</div>
-      <button id={id} className={'l-btn small' + (recording ? ' primary' : '')} disabled={saving} aria-label={`${label}快捷键：${value ? shortcutLabel(value) : '未绑定'}，点击录制`}
-        onClick={() => { setRecording(!recording); setError(''); }} onKeyDown={key} onBlur={() => setRecording(false)}>
-        {recording ? '请按快捷键…' : <span className="mono">{value ? shortcutLabel(value) : '未绑定'}</span>}</button>
-      {value && !recording && <button className="l-icon" disabled={saving} aria-label={'取消绑定' + label} data-tip="取消绑定" onClick={() => void commit('')}><X size={14} /></button>}
+
+  async function saveIgnored(rules: IgnoredAppRule[]) {
+    const res = await window.desktop.saveIgnoredApps(rules);
+    if (res.error) notify({ error: res.error });
+    else notify({ ok: true });
+  }
+
+  async function addIgnoredApp() {
+    const choice = await window.desktop.choosePath('application');
+    if (!choice?.bundleId || !choice.name) return;
+    if (settings.ignoredApps.some(r => r.bundleId === choice.bundleId)) {
+      notify({ error: '该应用已在忽略名单中' });
+      return;
+    }
+    await saveIgnored([
+      ...settings.ignoredApps,
+      { bundleId: choice.bundleId, name: choice.name, enabled: true, scopes: ['selection', 'shortcuts', 'capture-candidates'] }
+    ]);
+  }
+
+  const renderBarRow = (entry: BarEntry) => (
+    <div
+      key={entry.id}
+      className="l-set-row"
+      data-drop={dropId === entry.id}
+      draggable
+      onDragStart={() => {
+        dragId.current = entry.id;
+      }}
+      onDragOver={e => {
+        e.preventDefault();
+        if (dragId.current && dragId.current !== entry.id) setDropId(entry.id);
+      }}
+      onDragLeave={() => setDropId(null)}
+      onDragEnd={() => {
+        dragId.current = null;
+        setDropId(null);
+      }}
+      onDrop={() => {
+        if (dragId.current) reorderEntries(dragId.current, entry.id);
+        dragId.current = null;
+        setDropId(null);
+      }}
+    >
+      <span className="l-grip" aria-hidden="true">
+        <GripVertical size={14} />
+      </span>
+      {entry.kind === 'translate' ? (
+        <Languages size={15} className="faint" />
+      ) : entry.kind === 'note' ? (
+        <NotebookPen size={15} className="faint" />
+      ) : entry.target === 'api' ? (
+        <Zap size={15} className="faint" />
+      ) : (
+        <Badge target={entry.target || 'chatgpt'} />
+      )}
+      <div className="l-set-row-main">
+        <div className="l-set-row-name">{entry.name}</div>
+      </div>
+      <span className={'l-set-row-sub' + (entry.subMono ? ' mono' : '')}>{entry.sub}</span>
+      <Switch label={'动作条显示 ' + entry.name} value={entry.enabled} change={() => void toggleEntry(entry)} />
     </div>
-    {message && <p className="l-field-help error" role="alert">{message}</p>}
-  </li>;
+  );
+
+  const authorized = capture.status === 'active' || (capture.status === 'paused' && !settings.selectionEnabled);
+
+  return (
+    <>
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>划词</span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">选中文字时显示动作条</div>
+              <div className="l-set-row-sub">需要辅助功能权限</div>
+            </div>
+            {authorized ? (
+              <span className="l-chip olive">
+                <span className="l-dot olive" />
+                <span>已授权</span>
+              </span>
+            ) : (
+              <button type="button" className="l-btn small" onClick={() => void window.desktop.act('selection-permission')}>
+                去系统设置授权
+              </button>
+            )}
+            <Switch
+              label="选中文字时显示动作条"
+              value={settings.selectionEnabled}
+              change={() => void saveCapture({ selectionEnabled: !settings.selectionEnabled })}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">
+                取不到选区时模拟 <span className="mono">⌘C</span>
+              </div>
+              <div className="l-set-row-sub">终端等不支持辅助功能取词的应用需要</div>
+            </div>
+            <Switch
+              label="取不到选区时模拟 ⌘C"
+              value={settings.clipboardFallback}
+              change={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>动作条按钮</span>
+          <span className="r">拖动排序；分隔线以上直接显示在胶囊里</span>
+        </div>
+        <div className="l-set-card">
+          {inlineEntries.map(renderBarRow)}
+          <div
+            className="l-set-cutline"
+            data-drop={dropId === '__cutline__'}
+            onDragOver={e => {
+              e.preventDefault();
+              if (dragId.current) setDropId('__cutline__');
+            }}
+            onDragLeave={() => setDropId(null)}
+            onDrop={() => {
+              if (dragId.current) reorderEntries(dragId.current, '__cutline__');
+              dragId.current = null;
+              setDropId(null);
+            }}
+          >
+            <Ellipsis size={13} />
+            <span>以下收进 ··· 菜单</span>
+            <span className="grow" />
+            <span className="mono">胶囊上限 {inlineLimit}</span>
+            <button
+              type="button"
+              className="l-text-btn mono"
+              disabled={inlineLimit <= 1}
+              onClick={() =>
+                void persistActionBar({
+                  order: orderedEntries.map(e => e.id),
+                  hidden: settings.actionBar.hidden,
+                  inlineCount: inlineLimit - 1
+                })
+              }
+            >
+              −
+            </button>
+            <button
+              type="button"
+              className="l-text-btn mono"
+              disabled={inlineLimit >= 8}
+              onClick={() =>
+                void persistActionBar({
+                  order: orderedEntries.map(e => e.id),
+                  hidden: settings.actionBar.hidden,
+                  inlineCount: inlineLimit + 1
+                })
+              }
+            >
+              +
+            </button>
+          </div>
+          {overflowEntries.map(renderBarRow)}
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>应用背景规则（{settings.appPrompts.length}）</span>
+          <span className="r">
+            <button type="button" className="l-text-btn" onClick={() => void addAppPromptRule()}>
+              <Plus size={12} />
+              <span>添加应用背景…</span>
+            </button>
+          </span>
+        </div>
+        <div className="l-set-card">
+          {settings.appPrompts.length > 0 ? (
+            settings.appPrompts.map((rule, idx) => (
+              <div key={rule.bundleId} className="l-set-row col">
+                <div className="l-row">
+                  <div className="l-set-row-main">
+                    <div className="l-set-row-name">{rule.name}</div>
+                    <div className="l-set-row-sub mono">{rule.bundleId}</div>
+                  </div>
+                  <Switch
+                    label={'启用应用背景 ' + rule.name}
+                    value={rule.enabled}
+                    change={() => void saveAppRules(settings.appPrompts.map((r, i) => (i === idx ? { ...r, enabled: !r.enabled } : r)))}
+                  />
+                  <button
+                    type="button"
+                    className="l-icon small"
+                    aria-label={'删除应用背景 ' + rule.name}
+                    onClick={() => void saveAppRules(settings.appPrompts.filter((_, i) => i !== idx))}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <AppPromptEditor
+                  value={rule.prompt}
+                  onCommit={prompt => void saveAppRules(settings.appPrompts.map((r, i) => (i === idx ? { ...r, prompt } : r)))}
+                />
+              </div>
+            ))
+          ) : (
+            <div className="l-set-row">
+              <span className="l-set-row-sub">按划词来源应用自动前置背景说明（如在终端附加「命令环境为 macOS zsh」）。</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>忽略应用名单（{settings.ignoredApps.length}）</span>
+          <span className="r">
+            <button type="button" className="l-text-btn" onClick={() => void addIgnoredApp()}>
+              <Plus size={12} />
+              <span>添加忽略应用…</span>
+            </button>
+          </span>
+        </div>
+        <div className="l-set-card">
+          {settings.ignoredApps.length > 0 ? (
+            settings.ignoredApps.map((rule, idx) => (
+              <div key={rule.bundleId} className="l-set-row col">
+                <div className="l-row">
+                  <div className="l-set-row-main">
+                    <div className="l-set-row-name">{rule.name}</div>
+                    <div className="l-set-row-sub mono">{rule.bundleId}</div>
+                  </div>
+                  <Switch
+                    label={'启用忽略 ' + rule.name}
+                    value={rule.enabled}
+                    change={() => void saveIgnored(settings.ignoredApps.map((r, i) => (i === idx ? { ...r, enabled: !r.enabled } : r)))}
+                  />
+                  <button
+                    type="button"
+                    className="l-icon small"
+                    aria-label={'移除忽略应用 ' + rule.name}
+                    onClick={() => void saveIgnored(settings.ignoredApps.filter((_, i) => i !== idx))}
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="l-ignored-scopes">
+                  {ignoredScopes.map(([scope, label]) => {
+                    const checked = rule.scopes.includes(scope);
+                    return (
+                      <button
+                        key={scope}
+                        type="button"
+                        className="l-btn small"
+                        role="checkbox"
+                        aria-checked={checked}
+                        onClick={() => {
+                          const nextScopes = checked ? rule.scopes.filter(s => s !== scope) : [...rule.scopes, scope];
+                          if (!nextScopes.length) return;
+                          void saveIgnored(settings.ignoredApps.map((r, i) => (i === idx ? { ...r, scopes: nextScopes } : r)));
+                        }}
+                      >
+                        <Check size={13} aria-hidden="true" />
+                        <span>{label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="l-set-row">
+              <span className="l-set-row-sub">在指定应用中自动暂停划词、全局热键或截图窗口候选。</span>
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
 }
 
-const webdavInput = (value: WebDavConfig): WebDavConfigInput => ({ enabled: value.enabled, url: value.url, remotePath: value.remotePath, username: value.username, autoSync: value.autoSync });
-const syncLabels = { idle: '等待同步', syncing: '同步中…', synced: '已同步', conflict: '配置冲突，等待选择', offline: '暂时离线', error: '同步失败' };
-function ConfigSyncSettings() {
-  const [config, setConfig] = useState<WebDavConfig | null>(null), [draft, setDraft] = useState<WebDavConfigInput | null>(null);
-  const [password, setPassword] = useState(''), [clearPassword, setClearPassword] = useState(false), [busy, setBusy] = useState('');
-  const [error, setError] = useState(''), [notice, setNotice] = useState(''), [confirm, setConfirm] = useState<'push' | 'pull' | 'import' | null>(null);
-  const dirty = !!config && !!draft && (JSON.stringify(draft) !== JSON.stringify(webdavInput(config)) || !!password || clearPassword);
-  async function refresh() { const next = await window.desktop.webdavConfig(); setConfig(next); setDraft(current => current ?? webdavInput(next)); }
+function AppPromptEditor({ value, onCommit }: { value: string; onCommit(next: string): void }) {
+  const [text, setText] = useState(value);
   useEffect(() => {
-    let live = true;
-    const read = async () => { try { const next = await window.desktop.webdavConfig(); if (live) { setConfig(next); setDraft(current => current ?? webdavInput(next)); } } catch (error) { if (live) setError(String(error)); } };
-    void read(); const timer = setInterval(() => void read(), 3000); return () => { live = false; clearInterval(timer); };
-  }, []);
-  const patch = (next: Partial<WebDavConfigInput>) => { setDraft(current => current && { ...current, ...next }); setError(''); setNotice(''); setConfirm(null); };
-  async function save() {
-    if (!draft) return;
-    setBusy('正在保存 WebDAV 配置…'); setError(''); setNotice(''); setConfirm(null);
-    try { const next = await window.desktop.saveWebdavConfig({ ...draft, ...(password ? { password } : {}), ...(clearPassword ? { clearPassword: true } : {}) }); setConfig(next); setDraft(webdavInput(next)); setPassword(''); setClearPassword(false); setNotice('WebDAV 配置已保存'); }
-    catch (error) { setError(String(error)); } finally { setBusy(''); }
-  }
-  async function sync(direction: WebDavSyncDirection) {
-    setBusy('正在同步配置…'); setError(''); setNotice(''); setConfirm(null);
-    try { const result = await window.desktop.syncWebdav(direction); setConfig(result.state); if (result.error) setError(result.error); else if (result.state.status === 'synced') setNotice('配置已同步'); }
-    catch (error) { setError(String(error)); } finally { setBusy(''); }
-  }
-  async function transfer(direction: 'export' | 'import') {
-    setBusy(direction === 'export' ? '正在导出配置…' : '正在导入配置…'); setError(''); setNotice(''); setConfirm(null);
-    try {
-      if (direction === 'export') { const result = await window.desktop.exportConfig(); if (result.error) throw Error(result.error); setNotice(result.path ? '配置已导出：' + result.path : '已取消导出'); }
-      else { const before = await window.desktop.getState(), result = await window.desktop.importConfig(); if (result.error) throw Error(result.error); const after = await window.desktop.getState(); setNotice(JSON.stringify([before.settings, before.presets]) === JSON.stringify([after.settings, after.presets]) ? '当前配置未变更' : '配置已导入'); }
-      await refresh();
-    } catch (error) { setError(String(error)); } finally { setBusy(''); }
-  }
-  const syncing = !!busy || config?.status === 'syncing', disabledSync = syncing || dirty || !config?.enabled;
-  return <>
-    <section id="config-transfer" className="l-set-section">
-      <div className="l-set-row-head l-gap"><h3>配置迁移</h3></div>
-      <p className="l-field-help">导出偏好设置、快捷键与 AI 预设。不含凭据、本机路径、截图媒体或贴图内容。</p>
-      <div className="l-workspace-actions"><button className="l-btn small" disabled={syncing} onClick={() => void transfer('export')}><Upload size={14} />导出配置</button><button className="l-btn small" disabled={syncing} onClick={() => setConfirm(confirm === 'import' ? null : 'import')}><Download size={14} />导入配置</button></div>
-      {confirm === 'import' && <div className="l-sync-confirm"><p>所选配置会覆盖包内的偏好设置与 AI 预设，本机路径与凭据继续保留。</p><div className="l-workspace-actions"><button className="l-btn small primary" disabled={syncing} onClick={() => void transfer('import')}>选择配置并导入</button><button className="l-btn small" onClick={() => setConfirm(null)}>取消</button></div></div>}
-    </section>
-    <section id="webdav-settings" className="l-set-section">
-      <div className="l-set-row-head l-gap"><h3>飞牛 WebDAV 同步</h3><button className="l-text-btn" disabled={!!busy} onClick={() => void refresh().then(() => setError('')).catch(error => setError(String(error)))}><RefreshCw size={13} />刷新同步状态</button></div>
-      {draft ? <ul className="l-group">
-        <li><div className="l-row-label"><span>启用飞牛 WebDAV</span><span>同步可迁移配置，密码仅保存在本机。</span></div><Switch label="启用飞牛 WebDAV" value={draft.enabled} disabled={syncing} change={() => patch({ enabled: !draft.enabled })} /></li>
-        <li className="col">{([['url', '服务器地址', 'https://nas.example.com/webdav'], ['remotePath', '远端路径', 'Lasso/config.json'], ['username', '用户名', 'WebDAV 用户名']] as const).map(([key, label, placeholder]) => <div className="l-field" key={key}><label htmlFor={'webdav-' + key}>{label}</label><input id={'webdav-' + key} aria-label={label} className="l-input mono" autoComplete="off" placeholder={placeholder} value={draft[key]} disabled={syncing} onChange={e => patch({ [key]: e.target.value })} /></div>)}<div className="l-field"><label htmlFor="webdav-password">密码</label><input id="webdav-password" aria-label="WebDAV 密码" className="l-input" type="password" autoComplete="new-password" value={password} disabled={syncing || clearPassword} placeholder={config?.hasPassword ? '已保存密码；留空保持不变' : '输入 WebDAV 密码'} onChange={e => { setPassword(e.target.value); setNotice(''); setError(''); }} /><div className="l-workspace-actions"><span className="l-field-help">{clearPassword ? '保存后清除本机密码' : config?.hasPassword ? '本机已保存密码' : '尚未保存密码'}</span>{config?.hasPassword && <button className="l-text-btn" disabled={syncing} onClick={() => { setClearPassword(!clearPassword); setPassword(''); }}>{clearPassword ? '保留密码' : '清除已存密码'}</button>}</div></div></li>
-        <li><div className="l-row-label"><span>自动同步</span><span>配置变化后检查本机与远端，遇到冲突等待选择。</span></div><Switch label="WebDAV 自动同步" value={draft.autoSync} disabled={syncing} change={() => patch({ autoSync: !draft.autoSync })} /></li>
-      </ul> : <p className="l-field-help">正在读取 WebDAV 配置…</p>}
-      {draft && <div className="l-workspace-actions"><button className="l-btn small primary" disabled={syncing || !dirty} onClick={() => void save()}>保存 WebDAV 配置</button>{dirty && <><button className="l-btn small" disabled={syncing} onClick={() => { if (config) setDraft(webdavInput(config)); setPassword(''); setClearPassword(false); setConfirm(null); }}>放弃更改</button><span className="l-field-help">请先保存，再同步配置。</span></>}</div>}
-      <div className={'l-sync-status' + (config?.status === 'conflict' ? ' conflict' : '')} role="status"><span>{!config ? '正在读取同步状态…' : config.enabled ? syncLabels[config.status ?? 'idle'] : 'WebDAV 未启用'}</span>{config?.message && <p>{config.message}</p>}<span className="l-field-help">{config?.lastSyncedAt ? '上次同步：' + new Date(config.lastSyncedAt).toLocaleString('zh-CN') : '尚无成功同步记录'}</span></div>
-      {config?.status === 'conflict' && <p className="l-field-help">选择「采用本机配置」覆盖远端，或「采用远端配置」覆盖本机偏好与预设。当前服务按整份配置替换。</p>}
-      <div className="l-workspace-actions"><button className="l-btn small" disabled={disabledSync} onClick={() => setConfirm('push')}><Upload size={14} />{config?.status === 'conflict' ? '采用本机配置' : '立即上传'}</button><button className="l-btn small" disabled={disabledSync} onClick={() => setConfirm('pull')}><Download size={14} />{config?.status === 'conflict' ? '采用远端配置' : '立即拉取'}</button><button className="l-btn small" disabled={disabledSync} onClick={() => void sync('auto')}>检查同步</button></div>
-      {(confirm === 'push' || confirm === 'pull') && <div className="l-sync-confirm"><p>{confirm === 'push' ? '上传会以本机偏好与 AI 预设替换远端配置。' : '拉取会以远端配置替换本机偏好与 AI 预设。'}</p><div className="l-workspace-actions"><button className="l-btn small primary" disabled={disabledSync} onClick={() => void sync(confirm)}>确认{confirm === 'push' ? '上传' : '拉取'}</button><button className="l-btn small" onClick={() => setConfirm(null)}>取消</button></div></div>}
-    </section>
-    {busy && <p className="l-field-help" role="status">{busy}</p>}{error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help l-workspace-notice" role="status">{notice}</p>}
-  </>;
+    setText(value);
+  }, [value]);
+  return (
+    <textarea
+      className="l-textarea"
+      rows={2}
+      placeholder="输入在此应用划词时自动前置的背景提示词…"
+      value={text}
+      onChange={e => setText(e.target.value)}
+      onBlur={() => {
+        if (text !== value) onCommit(text);
+      }}
+    />
+  );
 }
+
+/* ───────────────────────── Module 4: 翻译 ───────────────────────── */
 
 const translationLanguages: readonly (readonly [TranslationLang, string])[] = [
-  ['auto', '中 ⇄ 英自动'], ['zh', '简体中文'], ['en', 'English'], ['ja', '日本語'], ['ko', '한국어'], ['fr', 'Français'], ['de', 'Deutsch']
-];
-const translationProviders: readonly (readonly [TranslationProvider, string])[] = [
-  ['system', '内置极速'], ['deepl', 'DeepL'], ['google', 'Google'], ['llm', 'LLM 模型']
+  ['auto', '中 ⇄ 英自动'],
+  ['zh', '简体中文'],
+  ['en', 'English'],
+  ['ja', '日本語'],
+  ['ko', '한국어'],
+  ['fr', 'Français'],
+  ['de', 'Deutsch']
 ];
 
-function TranslationServiceSettings({ translation }: { translation: TranslationSettings }) {
-  const [draft, setDraft] = useState(translation), [showPool, setShowPool] = useState(false);
-  const [busy, setBusy] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
-  useEffect(() => { setDraft(translation); }, [translation]);
+const translationProviders: readonly (readonly [TranslationProvider, string])[] = [
+  ['system', '内置极速'],
+  ['deepl', 'DeepL'],
+  ['google', 'Google'],
+  ['llm', 'LLM 模型']
+];
+
+export function TranslationPane({
+  translation,
+  onOpenConnections,
+  notify
+}: {
+  translation: TranslationSettings;
+  onOpenConnections(): void;
+  notify: NotifyFn;
+}) {
+  const [draft, setDraft] = useState(translation);
+  useEffect(() => {
+    setDraft(translation);
+  }, [translation]);
+
   const activeProvider: TranslationProvider = draft.provider || (draft.connectionId && draft.model.trim() ? 'llm' : 'system');
-  const dirty = JSON.stringify(draft) !== JSON.stringify(translation);
-  async function commit(next: TranslationSettings, requireBinding = false) {
-    const provider = next.provider || (next.connectionId && next.model.trim() ? 'llm' : 'system');
-    if (requireBinding && provider === 'llm' && (!next.connectionId || !next.model.trim())) { setError('请选择内置翻译绑定的 API 连接并填写模型名称'); return; }
-    if (requireBinding && provider === 'deepl' && !next.deeplApiKey?.trim()) { setError('请填写 DeepL API Key'); return; }
-    setDraft(next); setBusy(true); setError(''); setNotice('');
-    try {
-      const result = await window.desktop.saveTranslationSettings({ ...next, provider, model: next.model.trim() });
-      if (result.error) { setError(result.error); return; }
-      setNotice('内置翻译与复制即译设置已保存');
-    } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
+
+  async function commit(next: TranslationSettings) {
+    setDraft(next);
+    const provider = next.provider || 'system';
+    if (provider === 'llm' && (!next.connectionId || !next.model.trim())) return;
+    if (provider === 'deepl' && !next.deeplApiKey?.trim()) return;
+    const res = await window.desktop.saveTranslationSettings({ ...next, provider, model: next.model.trim() });
+    if (res.error) notify({ error: res.error });
+    else notify({ ok: true });
   }
-  return <section id="translation-settings" className="l-set-section">
-    <div className="l-set-row-head l-gap"><h3>快速翻译引擎与复制即译</h3><button type="button" className="l-text-btn" aria-expanded={showPool} onClick={() => setShowPool(!showPool)}>{showPool ? '收起连接池' : '管理 API 连接池'}</button></div>
-    <ul className="l-group">
-      <li className="l-shot-option">
-        <span>翻译引擎</span>
-        <Segmented
-          label="翻译引擎"
-          value={activeProvider}
-          onChange={provider => {
-            const next = { ...draft, provider };
-            setDraft(next); setError(''); setNotice('');
-            if (provider === 'system' || provider === 'google' || (provider === 'llm' && draft.connectionId && draft.model.trim())) {
-              void commit(next);
-            }
-          }}
-          options={translationProviders}
-        />
-      </li>
-      {activeProvider === 'deepl' && (
-        <li className="col">
-          <div className="l-field">
-            <label htmlFor="translation-deepl-key">DeepL / DeepLX Key 或接口地址</label>
-            <input id="translation-deepl-key" className="l-input mono" type="password" autoComplete="off" placeholder="输入 DeepLX Token / 完整 translate 地址，或官方 DeepL Key"
-              value={draft.deeplApiKey || ''} disabled={busy} onChange={e => { setDraft({ ...draft, provider: 'deepl', deeplApiKey: e.target.value }); setError(''); setNotice(''); }} />
-          </div>
-        </li>
-      )}
-      {activeProvider === 'google' && (
-        <li className="col">
-          <div className="l-field">
-            <label htmlFor="translation-google-key">Google Cloud API Key（可选，留空使用免配置极速通道）</label>
-            <input id="translation-google-key" className="l-input mono" type="password" autoComplete="off" placeholder="留空即用内置 Google 极速通道，或填入 Cloud Translation Key"
-              value={draft.googleApiKey || ''} disabled={busy} onChange={e => { setDraft({ ...draft, provider: 'google', googleApiKey: e.target.value }); setError(''); setNotice(''); }} />
-          </div>
-        </li>
-      )}
-      <li className="col">
-        <ApiConnectionBindingFields connectionId={draft.connectionId} model={draft.model} modelId="translation-model" modelPlaceholder="deepseek-chat / gpt-4.1-mini" label="LLM 翻译模型（可选，绑定后走流式大模型）"
-          help="支持内置极速翻译（免配置开箱即用）、DeepL、Google 与自定义 LLM 连接池，供 ⌥T 划词翻译、动作条「翻译」与复制即译共用。"
-          onChange={next => {
-            const updated: TranslationSettings = { ...draft, ...next, ...(next.connectionId || next.model ? { provider: 'llm' } : {}) };
-            setDraft(updated); setError(''); setNotice('');
-            if (next.connectionId !== draft.connectionId) void commit(updated);
-          }} />
-        <div className="l-workspace-actions">
-          <span className="l-field-help">{activeProvider === 'llm' && draft.connectionId && draft.model.trim() ? '当前使用 LLM 流式翻译模型' : activeProvider === 'deepl' ? '当前使用 DeepL 翻译引擎' : activeProvider === 'google' ? '当前使用 Google 翻译引擎' : '当前使用内置免配置极速翻译'}</span>
-          <span className="push" />
-          {dirty && <button type="button" className="l-btn small" disabled={busy} onClick={() => { setDraft(translation); setError(''); setNotice(''); }}>放弃更改</button>}
-          <button type="button" className="l-btn small primary" disabled={busy || !dirty} onClick={() => void commit(draft, true)}>{busy ? '保存中…' : '保存翻译设置'}</button>
+
+  return (
+    <>
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>翻译引擎</span>
+          <span className="r">供划词「翻译」、⌥T 输入翻译浮窗、截图选字翻译与复制即译共用</span>
         </div>
-      </li>
-      <li className="col"><div className="l-field"><label htmlFor="translation-target-lang">默认目标语言</label><select id="translation-target-lang" aria-label="默认翻译目标语言" className="l-select" value={draft.targetLang} disabled={busy} onChange={e => void commit({ ...draft, targetLang: e.target.value as TranslationLang })}>{translationLanguages.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div></li>
-      <li><div className="l-row-label"><span>复制即译</span><span>在 PDF、终端等不便直接划词的应用中复制文本后，在鼠标旁弹出内置翻译流式卡片（自动跳过密码管理器）。</span></div><Switch label="复制即译" value={draft.copyTranslateEnabled} disabled={busy} change={() => void commit({ ...draft, copyTranslateEnabled: !draft.copyTranslateEnabled })} /></li>
-      <li className="l-shot-option"><span>复制即译触发方式</span><Segmented label="复制即译触发方式" value={draft.copyTranslateTrigger} onChange={copyTranslateTrigger => void commit({ ...draft, copyTranslateTrigger })} options={[['double-cmd-c', '双击 ⌘C'], ['every-copy', '单次复制']]} /></li>
-    </ul>
-    {showPool && <ApiConnectionPoolManager idPrefix="translation-" onSelect={id => { if (!draft.connectionId) void commit({ ...draft, provider: 'llm', connectionId: id }); }} />}
-    {error && <p className="l-field-help error" role="alert">{error}</p>}{notice && <p className="l-field-help" role="status">{notice}</p>}
-  </section>;
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">首选引擎</div>
+              <div className="l-set-row-sub">内置极速免配置开箱即用；LLM 模型支持流式地道润色</div>
+            </div>
+            <Segmented
+              label="翻译引擎"
+              value={activeProvider}
+              options={translationProviders}
+              onChange={provider => void commit({ ...draft, provider })}
+            />
+          </div>
+
+          {activeProvider === 'deepl' && (
+            <div className="l-set-row col">
+              <div className="l-field">
+                <label htmlFor="translation-deepl-key">DeepL API Key 或 DeepLX 接口地址</label>
+                <input
+                  id="translation-deepl-key"
+                  className="l-input mono"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="输入官方 DeepL Key 或完整 DeepLX /translate 地址"
+                  value={draft.deeplApiKey || ''}
+                  onChange={e => setDraft({ ...draft, provider: 'deepl', deeplApiKey: e.target.value })}
+                  onBlur={() => void commit({ ...draft, provider: 'deepl' })}
+                />
+              </div>
+            </div>
+          )}
+
+          {activeProvider === 'google' && (
+            <div className="l-set-row col">
+              <div className="l-field">
+                <label htmlFor="translation-google-key">Google Cloud API Key（可选，留空走免配置极速通道）</label>
+                <input
+                  id="translation-google-key"
+                  className="l-input mono"
+                  type="password"
+                  autoComplete="off"
+                  placeholder="留空直接使用内置 Google 翻译，或填入 Cloud Translation Key"
+                  value={draft.googleApiKey || ''}
+                  onChange={e => setDraft({ ...draft, provider: 'google', googleApiKey: e.target.value })}
+                  onBlur={() => void commit({ ...draft, provider: 'google' })}
+                />
+              </div>
+            </div>
+          )}
+
+          {activeProvider === 'llm' && (
+            <div className="l-set-row col">
+              <ApiConnectionBindingFields
+                connectionId={draft.connectionId}
+                model={draft.model}
+                modelId="translation-llm-model"
+                modelPlaceholder="deepseek-chat / gpt-4.1-mini"
+                label="流式翻译模型"
+                onOpenConnections={onOpenConnections}
+                onChange={({ connectionId, model }) => void commit({ ...draft, provider: 'llm', connectionId, model })}
+              />
+            </div>
+          )}
+
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">默认目标语言</div>
+            </div>
+            <select
+              aria-label="默认翻译目标语言"
+              className="l-select l-select-compact"
+              value={draft.targetLang}
+              onChange={e => void commit({ ...draft, targetLang: e.target.value as TranslationLang })}
+            >
+              {translationLanguages.map(([id, label]) => (
+                <option key={id} value={id}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>复制即译</span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">启用复制即译</div>
+              <div className="l-set-row-sub">在 PDF、终端等不便直接划词的应用中复制文字后自动弹出翻译窗（自动跳过密码软件）</div>
+            </div>
+            <Switch
+              label="复制即译"
+              value={draft.copyTranslateEnabled}
+              change={() => void commit({ ...draft, copyTranslateEnabled: !draft.copyTranslateEnabled })}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">触发手势</div>
+            </div>
+            <Segmented
+              label="复制即译触发方式"
+              value={draft.copyTranslateTrigger}
+              onChange={copyTranslateTrigger => void commit({ ...draft, copyTranslateTrigger })}
+              options={[
+                ['double-cmd-c', '连按两次 ⌘C'],
+                ['every-copy', '每次复制']
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+    </>
+  );
 }
 
-export function GeneralSettings({ state, initialSub = 'system' }: { state: ShellState; initialSub?: GeneralSubTab }) {
-  const [sub, setSub, bodyRef] = useSubNav<GeneralSubTab>(initialSub);
-  useEffect(() => { setSub(initialSub); }, [initialSub]);
-  const { settings, capture } = state;
+/* ───────────────────────── Module 7: 桌面套件 ───────────────────────── */
+
+export function DesktopSuitePane({ state, notify }: { state: ShellState; notify: NotifyFn }) {
+  const { settings } = state;
+
+  async function saveSuite(patch: Partial<SuiteSettings>) {
+    const res = await window.desktop.saveSuiteSettings(patch);
+    if (res.error) notify({ error: res.error });
+    else notify({ ok: true });
+  }
+
+  const prefs = settings.nookPrefs;
+
+  return (
+    <>
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>顶部刘海岛与 Nook 提醒</span>
+          <span className="r">
+            <button type="button" className="l-text-btn" onClick={() => void window.desktop.act('open-island-board')}>
+              展开专注看板 →
+            </button>
+          </span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">启用顶部刘海岛胶囊</div>
+              <div className="l-set-row-sub">平时无事项自动隐藏；有专注任务、番茄钟或提醒时显现（按住 ⌘ 点击穿透）</div>
+            </div>
+            <Switch
+              label="启用顶部刘海岛胶囊"
+              value={settings.notchIslandEnabled}
+              change={() => void saveSuite({ notchIslandEnabled: !settings.notchIslandEnabled })}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">接收 Nook 待办与紧迫提醒（含屏幕边缘呼吸光）</div>
+            </div>
+            <Switch
+              label="Nook 提醒总开关"
+              value={prefs.enabled}
+              change={() => void saveSuite({ nookPrefs: { ...prefs, enabled: !prefs.enabled } })}
+            />
+          </div>
+          {prefs.enabled &&
+            (
+              [
+                ['tasks', '日程与 Google Tasks 待办提醒'],
+                ['hubAttention', 'Nook Hub 状态告警'],
+                ['aiResets', 'AI 订阅额度重置提醒'],
+                ['localAndCustom', '本机守护进程与自定义定时提醒']
+              ] as const
+            ).map(([key, label]) => (
+              <div className="l-set-row" key={key}>
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">{label}</div>
+                </div>
+                <Switch
+                  label={label}
+                  value={prefs[key]}
+                  change={() => void saveSuite({ nookPrefs: { ...prefs, [key]: !prefs[key] } })}
+                />
+              </div>
+            ))}
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>窗口拖拽磁吸分屏</span>
+          <span className="r">自动避让底部与左右程序坞（Dock）</span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">鼠标拖动窗口至边缘／四角分屏</div>
+              <div className="l-set-row-sub">左右边缘即时触发半屏；上边缘最大化与下边缘 1/3 · 2/3 屏需停顿防误触</div>
+            </div>
+            <Switch
+              label="鼠标拖拽分屏"
+              value={settings.windowDragSnap}
+              change={() => void saveSuite({ windowDragSnap: !settings.windowDragSnap })}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">上／下边缘停顿触发时长</div>
+            </div>
+            <Segmented
+              label="边缘停顿时长"
+              value={String(settings.snapDwellMs || 250)}
+              onChange={v => void saveSuite({ snapDwellMs: Number(v) })}
+              options={[
+                ['150', '150 ms'],
+                ['250', '250 ms'],
+                ['400', '400 ms']
+              ]}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">一键排列当前双窗口</div>
+            </div>
+            <div className="l-row">
+              <button type="button" className="l-btn small" onClick={() => void window.desktop.act('snap-coding-ai')}>
+                2:1 双栏
+              </button>
+              <button type="button" className="l-btn small" onClick={() => void window.desktop.act('snap-equal-split')}>
+                1:1 双栏
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>访达动作面板（⌃⌥F）</span>
+          <span className="r">
+            <button type="button" className="l-text-btn" onClick={() => void window.desktop.act('open-finder-panel')}>
+              唤起面板 →
+            </button>
+          </span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">在访达窗口内单击鼠标中键唤起</div>
+            </div>
+            <Switch
+              label="访达中键唤起"
+              value={settings.finderTriggers.middleClick}
+              change={() => void saveSuite({ finderTriggers: { ...settings.finderTriggers, middleClick: !settings.finderTriggers.middleClick } })}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">在访达窗口内长按鼠标右键唤起</div>
+            </div>
+            <Switch
+              label="访达长按右键唤起"
+              value={settings.finderTriggers.rightHold}
+              change={() => void saveSuite({ finderTriggers: { ...settings.finderTriggers, rightHold: !settings.finderTriggers.rightHold } })}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">默认终端</div>
+            </div>
+            <Segmented
+              label="默认终端"
+              value={settings.finderTerminal}
+              onChange={(finderTerminal: FinderTerminalApp) => void saveSuite({ finderTerminal })}
+              options={[
+                ['Terminal', 'Terminal'],
+                ['Ghostty', 'Ghostty'],
+                ['Warp', 'Warp'],
+                ['iTerm', 'iTerm']
+              ]}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">默认代码编辑器</div>
+            </div>
+            <Segmented
+              label="默认编辑器"
+              value={settings.finderEditor}
+              onChange={(finderEditor: FinderEditorApp) => void saveSuite({ finderEditor })}
+              options={[
+                ['Cursor', 'Cursor'],
+                ['VSCode', 'VS Code'],
+                ['Zed', 'Zed']
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>剪贴板历史与浮动便签</span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">剪贴板历史最大保留条数</div>
+              <div className="l-set-row-sub">收藏条目永久保留，不随清空历史删除</div>
+            </div>
+            <Segmented
+              label="剪贴板保留条数"
+              value={String(settings.clipboardMaxItems || 200)}
+              onChange={v => void saveSuite({ clipboardMaxItems: Number(v) })}
+              options={[
+                ['100', '100 条'],
+                ['200', '200 条'],
+                ['500', '500 条']
+              ]}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">浮动便签存储目录</div>
+              <div className="l-set-row-sub mono">~/Documents/LassoNotes</div>
+            </div>
+            <button type="button" className="l-btn small" onClick={() => void window.desktop.act('toggle-edge-notes')}>
+              打开便签
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/* ───────────────────────── Module 8: 快捷键与同步 ───────────────────────── */
+
+const shortcutGroups: { title: string; ids: GlobalActionId[] }[] = [
+  {
+    title: '常用入口',
+    ids: ['open-launcher', 'open-translator', 'open-clipboard-history', 'toggle-notes', 'open-finder-panel']
+  },
+  {
+    title: '截图与贴图',
+    ids: ['area', 'rect', 'window', 'screen', 'front', 'scroll-capture', 'repeat-last', 'delay-3s', 'delay-5s', 'delay-10s', 'pin-clipboard']
+  },
+  {
+    title: '窗口分屏与多显示器',
+    ids: [
+      'snap-left-half',
+      'snap-right-half',
+      'snap-maximize',
+      'snap-center',
+      'snap-left-third',
+      'snap-center-third',
+      'snap-right-third',
+      'snap-left-two-thirds',
+      'snap-right-two-thirds',
+      'snap-coding-ai',
+      'snap-equal-split',
+      'snap-prev-display',
+      'snap-next-display'
+    ]
+  }
+];
+
+function ShortcutRow({
+  id,
+  label,
+  value,
+  local = false,
+  save,
+  notify
+}: {
+  id: string;
+  label: string;
+  value: string;
+  local?: boolean;
+  save: (shortcut: string) => Promise<{ error: string | null }>;
+  notify: NotifyFn;
+}) {
+  const [recording, setRecording] = useState(false);
   const [error, setError] = useState('');
-  const [ignoredError, setIgnoredError] = useState(''), [ignoredSaving, setIgnoredSaving] = useState(false);
-  async function saveIgnored(rules: IgnoredAppRule[]) {
-    setIgnoredSaving(true); setIgnoredError('');
-    try { setIgnoredError((await window.desktop.saveIgnoredApps(rules)).error || ''); }
-    catch (error) { setIgnoredError(String(error)); } finally { setIgnoredSaving(false); }
-  }
-  async function addIgnored() {
+  const [saving, setSaving] = useState(false);
+
+  async function commit(next: string) {
+    setRecording(false);
+    setSaving(true);
     try {
-      const choice = await window.desktop.choosePath('application');
-      if (!choice) return;
-      if (!choice.bundleId || !choice.name) { setIgnoredError('所选应用缺少名称或 bundle ID'); return; }
-      if (settings.ignoredApps.some(rule => rule.bundleId === choice.bundleId)) { setIgnoredError('这个应用已在忽略列表中'); return; }
-      await saveIgnored([...settings.ignoredApps, { bundleId: choice.bundleId, name: choice.name, enabled: true, scopes: ['selection', 'shortcuts', 'capture-candidates'] }]);
-    } catch (error) { setIgnoredError(String(error)); }
+      const res = await save(next);
+      setError(res.error || '');
+      if (res.error) notify({ error: res.error });
+      else notify({ ok: true });
+    } catch (reason) {
+      const msg = String(reason);
+      setError(msg);
+      notify({ error: msg });
+    } finally {
+      setSaving(false);
+    }
   }
-  function updateIgnored(index: number, patch: Partial<IgnoredAppRule>) {
-    if (patch.scopes?.length === 0) { setIgnoredError('至少保留一个忽略范围；无需忽略时可关闭这条规则。'); return; }
-    void saveIgnored(settings.ignoredApps.map((rule, i) => i === index ? { ...rule, ...patch } : rule));
+
+  function onKeyDown(event: React.KeyboardEvent) {
+    if (!recording) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === 'Escape') {
+      setRecording(false);
+      return;
+    }
+    if (event.repeat || ['Meta', 'Alt', 'Control', 'Shift'].includes(event.key)) return;
+    const modifiers = [event.metaKey && 'Command', event.ctrlKey && 'Control', event.altKey && 'Alt', event.shiftKey && 'Shift'].filter(Boolean);
+    const code = event.code
+      .replace(/^(Key|Digit|Arrow)/, '')
+      .replace(/^Backquote$/, 'Backtick')
+      .replace(/^NumpadEnter$/, 'Enter');
+    const shortcut = [...modifiers, code].join('+');
+    if (!local && !isValidShortcut(shortcut)) {
+      setError('支持 F1–F24 单键，其他按键请搭配 ⌘、⌥、⌃ 或 ⇧');
+      return;
+    }
+    void commit(shortcut);
   }
-  async function saveEditor(action: EditorActionId, shortcut: string) {
-    const next = { ...settings.editorShortcuts, [action]: shortcut }, error = validateEditorShortcuts(next);
+
+  return (
+    <div className="l-set-row">
+      <div className="l-set-row-main">
+        <div className="l-set-row-name">{label}</div>
+        {error && <div className="l-set-row-sub l-danger">{error}</div>}
+      </div>
+      <button
+        id={id}
+        type="button"
+        className={'l-btn small' + (recording ? ' primary' : '')}
+        disabled={saving}
+        aria-label={`${label}快捷键：${value ? shortcutLabel(value) : '未绑定'}，点击录制`}
+        onClick={() => {
+          setRecording(!recording);
+          setError('');
+        }}
+        onKeyDown={onKeyDown}
+        onBlur={() => setRecording(false)}
+      >
+        {recording ? '按下快捷键…' : <span className="mono">{value ? shortcutLabel(value) : '未绑定'}</span>}
+      </button>
+      {value && !recording && (
+        <button
+          type="button"
+          className="l-icon small"
+          disabled={saving}
+          aria-label={'清空绑定 ' + label}
+          title="清空解绑"
+          onClick={() => void commit('')}
+        >
+          <X size={14} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+const webdavInput = (value: WebDavConfig): WebDavConfigInput => ({
+  enabled: value.enabled,
+  url: value.url,
+  remotePath: value.remotePath,
+  username: value.username,
+  autoSync: value.autoSync
+});
+
+const syncLabels = {
+  idle: '等待同步',
+  syncing: '正在同步…',
+  synced: '已同步',
+  conflict: '发现配置冲突，请选择方向',
+  offline: '暂时离线',
+  error: '同步失败'
+};
+
+function ConfigSyncSection({ notify }: { notify: NotifyFn }) {
+  const [config, setConfig] = useState<WebDavConfig | null>(null);
+  const [draft, setDraft] = useState<WebDavConfigInput | null>(null);
+  const [password, setPassword] = useState('');
+  const [clearPassword, setClearPassword] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [confirm, setConfirm] = useState<'push' | 'pull' | 'import' | null>(null);
+
+  async function refresh() {
+    const next = await window.desktop.webdavConfig();
+    setConfig(next);
+    setDraft(webdavInput(next));
+  }
+
+  // On-demand read on mount only — NO 3-second polling!
+  useEffect(() => {
+    let active = true;
+    void window.desktop.webdavConfig().then(
+      next => {
+        if (active) {
+          setConfig(next);
+          setDraft(webdavInput(next));
+        }
+      },
+      reason => {
+        if (active) setError(String(reason));
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function commitWebdav(nextDraft: WebDavConfigInput, pwd = password, clr = clearPassword) {
+    setDraft(nextDraft);
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      const next = await window.desktop.saveWebdavConfig({
+        ...nextDraft,
+        ...(pwd ? { password: pwd } : {}),
+        ...(clr ? { clearPassword: true } : {})
+      });
+      setConfig(next);
+      setDraft(webdavInput(next));
+      if (pwd || clr) {
+        setPassword('');
+        setClearPassword(false);
+      }
+      notify({ ok: true });
+    } catch (reason) {
+      const msg = String(reason);
+      setError(msg);
+      notify({ error: msg });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sync(direction: WebDavSyncDirection) {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    setConfirm(null);
+    try {
+      const result = await window.desktop.syncWebdav(direction);
+      setConfig(result.state);
+      if (result.error) {
+        setError(result.error);
+        notify({ error: result.error });
+      } else {
+        setNotice(result.state.status === 'synced' ? '配置已同步' : '');
+        notify({ ok: true });
+      }
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function transfer(direction: 'export' | 'import') {
+    setBusy(true);
+    setError('');
+    setNotice('');
+    setConfirm(null);
+    try {
+      if (direction === 'export') {
+        const res = await window.desktop.exportConfig();
+        if (res.error) throw Error(res.error);
+        if (res.path) setNotice('已导出至：' + res.path);
+      } else {
+        const res = await window.desktop.importConfig();
+        if (res.error) throw Error(res.error);
+        setNotice('已导入配置');
+        await refresh();
+      }
+      notify({ ok: true });
+    } catch (reason) {
+      const msg = String(reason);
+      setError(msg);
+      notify({ error: msg });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const syncing = busy || config?.status === 'syncing';
+  const disabledSync = syncing || !config?.enabled;
+
+  return (
+    <>
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>本地配置包迁移</span>
+          <span className="r">含偏好设置、快捷键与预设；不含密钥与本机路径</span>
+        </div>
+        <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">导出或导入 JSON 配置文件</div>
+            </div>
+            <button type="button" className="l-btn small" disabled={syncing} onClick={() => void transfer('export')}>
+              <Upload size={13} />
+              <span>导出配置</span>
+            </button>
+            <button
+              type="button"
+              className={confirm === 'import' ? 'l-btn small primary' : 'l-btn small'}
+              disabled={syncing}
+              onClick={() => (confirm === 'import' ? void transfer('import') : setConfirm('import'))}
+            >
+              <Download size={13} />
+              <span>{confirm === 'import' ? '确认选择并覆盖' : '导入配置'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>飞牛 WebDAV 云同步</span>
+          <span className="r">
+            <button type="button" className="l-text-btn" disabled={syncing} onClick={() => void refresh()}>
+              <RefreshCw size={12} />
+              <span>刷新状态</span>
+            </button>
+          </span>
+        </div>
+        <div className="l-set-card">
+          {draft ? (
+            <>
+              <div className="l-set-row">
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">启用 WebDAV 同步</div>
+                  <div className="l-set-row-sub">密码仅加密保存在本机安全存储中</div>
+                </div>
+                <Switch
+                  label="启用飞牛 WebDAV"
+                  value={draft.enabled}
+                  disabled={syncing}
+                  change={() => void commitWebdav({ ...draft, enabled: !draft.enabled })}
+                />
+              </div>
+
+              <div className="l-set-row col">
+                <div className="l-grid-2">
+                  <div className="l-field">
+                    <label htmlFor="webdav-url">服务器地址</label>
+                    <input
+                      id="webdav-url"
+                      className="l-input mono"
+                      placeholder="https://nas.example.com/webdav"
+                      value={draft.url}
+                      disabled={syncing}
+                      onChange={e => setDraft({ ...draft, url: e.target.value })}
+                      onBlur={() => void commitWebdav(draft)}
+                    />
+                  </div>
+                  <div className="l-field">
+                    <label htmlFor="webdav-remotePath">远端路径</label>
+                    <input
+                      id="webdav-remotePath"
+                      className="l-input mono"
+                      placeholder="Lasso/config.json"
+                      value={draft.remotePath}
+                      disabled={syncing}
+                      onChange={e => setDraft({ ...draft, remotePath: e.target.value })}
+                      onBlur={() => void commitWebdav(draft)}
+                    />
+                  </div>
+                  <div className="l-field">
+                    <label htmlFor="webdav-username">用户名</label>
+                    <input
+                      id="webdav-username"
+                      className="l-input mono"
+                      value={draft.username}
+                      disabled={syncing}
+                      onChange={e => setDraft({ ...draft, username: e.target.value })}
+                      onBlur={() => void commitWebdav(draft)}
+                    />
+                  </div>
+                  <div className="l-field">
+                    <div className="l-field-row">
+                      <label htmlFor="webdav-password">密码</label>
+                      {config?.hasPassword && (
+                        <button
+                          type="button"
+                          className="l-text-btn"
+                          onClick={() => void commitWebdav(draft, '', !clearPassword)}
+                        >
+                          {clearPassword ? '取消清除' : '清除密码'}
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      id="webdav-password"
+                      type="password"
+                      autoComplete="new-password"
+                      className="l-input"
+                      value={password}
+                      disabled={syncing}
+                      placeholder={config?.hasPassword ? '已加密保存 · 留空不修改' : '输入 WebDAV 密码'}
+                      onChange={e => setPassword(e.target.value)}
+                      onBlur={() => {
+                        if (password) void commitWebdav(draft, password, false);
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="l-set-row">
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">本地修改后自动防抖推送</div>
+                  <div className="l-set-row-sub">无后台定时轮询；仅在本机配置变更时防抖同步</div>
+                </div>
+                <Switch
+                  label="WebDAV 自动同步"
+                  value={draft.autoSync}
+                  disabled={syncing}
+                  change={() => void commitWebdav({ ...draft, autoSync: !draft.autoSync })}
+                />
+              </div>
+
+              <div className="l-set-row">
+                <div className="l-set-row-main">
+                  <div className="l-set-row-name">{config?.enabled ? syncLabels[config.status ?? 'idle'] : 'WebDAV 未启用'}</div>
+                  <div className="l-set-row-sub">
+                    {config?.lastSyncedAt ? '上次同步：' + new Date(config.lastSyncedAt).toLocaleString('zh-CN') : '尚无同步记录'}
+                    {config?.message ? ` · ${config.message}` : ''}
+                  </div>
+                </div>
+                <div className="l-row">
+                  <button
+                    type="button"
+                    className={confirm === 'push' ? 'l-btn small primary' : 'l-btn small'}
+                    disabled={disabledSync}
+                    onClick={() => (confirm === 'push' ? void sync('push') : setConfirm('push'))}
+                  >
+                    {confirm === 'push' ? '确认上传覆盖' : config?.status === 'conflict' ? '采用本机' : '上传'}
+                  </button>
+                  <button
+                    type="button"
+                    className={confirm === 'pull' ? 'l-btn small primary' : 'l-btn small'}
+                    disabled={disabledSync}
+                    onClick={() => (confirm === 'pull' ? void sync('pull') : setConfirm('pull'))}
+                  >
+                    {confirm === 'pull' ? '确认拉取覆盖' : config?.status === 'conflict' ? '采用远端' : '拉取'}
+                  </button>
+                  <button type="button" className="l-btn small" disabled={disabledSync} onClick={() => void sync('auto')}>
+                    检查同步
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="l-set-row">
+              <span className="l-set-row-sub">正在读取同步状态…</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <p className="l-field-help l-danger" role="alert">
+          {error}
+        </p>
+      )}
+      {notice && (
+        <p className="l-field-help" role="status">
+          {notice}
+        </p>
+      )}
+    </>
+  );
+}
+
+const shortcutsTabs = [
+  ['shortcuts', '全局与局部快捷键'],
+  ['sync', '配置同步与迁移']
+] as const;
+
+export function ShortcutsSyncPane({ state, notify }: { state: ShellState; notify: NotifyFn }) {
+  const { settings } = state;
+  const [sub, setSub] = useSubNav<(typeof shortcutsTabs)[number][0]>('shortcuts');
+
+  async function saveEditorShortcut(action: EditorActionId, shortcut: string) {
+    const next = { ...settings.editorShortcuts, [action]: shortcut };
+    const error = validateEditorShortcuts(next);
     return error ? { error } : window.desktop.saveEditorShortcuts(next);
   }
-  const saveCapture = async (next: Partial<Pick<typeof settings, 'selectionEnabled' | 'clipboardFallback'>>) => setError((await window.desktop.saveCapture({ selectionEnabled: settings.selectionEnabled, clipboardFallback: settings.clipboardFallback, ...next })).error || '');
-  const saveDragSnap = async (enabled: boolean) => setError((await window.desktop.saveWindowDragSnap(enabled)).error || '');
-  const [minutes, setMinutes] = useState(String(settings.memory.idleMinutes));
-  useEffect(()=>setMinutes(String(settings.memory.idleMinutes)),[settings.memory.idleMinutes]);
-  const saveMemory = async (idleMinutes = settings.memory.idleMinutes, enabled = settings.memory.enabled) => {
-    const result = await window.desktop.saveMemory({ enabled, idleMinutes });
-    setError(result.error || '');
-    if (!result.error) setMinutes(String(idleMinutes));
-  };
-  const resident = state.tasks.filter(task => task.residency === 'resident').length, released = state.tasks.length - resident;
-  const captureDot = capture.status === 'active' ? 'complete' : capture.status === 'error' ? 'error' : capture.status === 'permission' ? 'waiting' : 'released';
-  return <>
-    <SubNav scope="general" label="通用设置二级分类" value={sub} options={subTabs} onChange={setSub} />
-    <div ref={bodyRef} className="l-set-body">
-      <SubPane scope="general" id="system" active={sub === 'system'}>
-        <SystemAppearanceSettings settings={settings} />
-        <div className="l-set-row-head l-gap"><h3>划词</h3></div>
-        <ul className="l-group">
-          <li className="col">
-            <div className="l-row">
-              <div className="l-row-label"><span>划词动作条</span><span className={'l-status' + (capture.status === 'error' ? ' error' : '')}><span className={'dot ' + captureDot} />{capture.message}</span></div>
-              <Switch label="划词动作条" value={settings.selectionEnabled} change={() => void saveCapture({ selectionEnabled: !settings.selectionEnabled })} />
+
+  return (
+    <>
+      <SubNav scope="shortcuts" label="快捷键与同步分类" value={sub} options={shortcutsTabs} onChange={setSub} />
+
+      <SubPane scope="shortcuts" id="shortcuts" active={sub === 'shortcuts'}>
+        <p className="l-field-help">点击任意按键胶囊即可录制；按 Esc 取消录制；点击右侧 × 永久清空解绑，重启也不会恢复默认。</p>
+
+        {shortcutGroups.map(group => (
+          <div className="l-set-group" key={group.title}>
+            <div className="l-set-lbl">
+              <span>{group.title}</span>
             </div>
-            {(capture.status === 'permission' || (capture.status !== 'active' && settings.selectionEnabled)) && <div className="l-row">
-              {capture.status === 'permission' && <button className="l-btn small" onClick={() => void window.desktop.act('selection-permission')}>打开系统设置授权</button>}
-              {settings.selectionEnabled && <button className="l-btn small" onClick={() => void window.desktop.act('refresh-capture')}>重新检查</button>}
-            </div>}
-          </li>
-          <li><div className="l-row-label"><span>允许模拟复制取词</span><span>只在辅助功能取不到文字时模拟 ⌘C，可能改动剪贴板。默认关闭。</span></div>
-            <Switch label="允许模拟复制取词" value={settings.clipboardFallback} change={() => void saveCapture({ clipboardFallback: !settings.clipboardFallback })} /></li>
-        </ul>
-        <TranslationServiceSettings translation={settings.translation} />
-        <div id="resident-suite" className="l-set-row-head l-gap"><h3>常驻桌面套件</h3><span>状态栏与全局热键</span></div>
-        <ul className="l-group">
-          <li>
-            <div className="l-row-label"><span>刘海岛与专注看板</span><span>顶部常驻胶囊、番茄钟 / 休息提醒与 Nook 待办联动，紧迫提醒触发四边呼吸光晕。</span></div>
-            <button className="l-btn small" onClick={() => void window.desktop.act('open-island-board')}>展开看板</button>
-          </li>
-          <li><div className="l-row-label"><span>剪贴板历史</span><span>默认 Option+V（⌥V）唤起浮窗，列表左侧显示来源应用图标，支持搜索、筛选与按 ↵ 直接回贴到原窗口。</span></div><span className="l-kbd">{shortcutLabel(settings.actionShortcuts['open-clipboard-history'] || 'Alt+V')}</span><button className="l-btn small" onClick={() => setSub('shortcuts')}>配置快捷键</button></li>
-          <li><div className="l-row-label"><span>独立输入翻译浮窗</span><span>默认 Option+T（⌥T）划词即译或唤起翻译浮窗，支持中 ⇄ 英自动互译、多语种切换、替换原选区、钉为贴图与入便签。</span></div><span className="l-kbd">{shortcutLabel(settings.actionShortcuts['open-translator'] || 'Alt+T')}</span><button className="l-btn small" onClick={() => setSub('shortcuts')}>配置快捷键</button></li>
-          <li>
-            <div className="l-row-label"><span>浮动便签</span><span>在当前屏幕打开便签，自动保存到 ~/Documents/LassoNotes/*.md，支持 Markdown 预览与钉为贴图。</span></div>
-            <span className="l-kbd">⌥N</span>
-            <button className="l-btn small" onClick={() => void window.desktop.act('toggle-edge-notes')}>打开便签</button>
-          </li>
-          <li>
-            <div className="l-row-label"><span>Finder 超级动作面板</span><span>在当前目录新建 .md / .py / .sh 等文件，或用终端、Cursor、VS Code 打开并发送给 AI。</span></div>
-            <span className="l-kbd">⌃⌥F</span>
-            <button className="l-btn small" onClick={() => void window.desktop.act('open-finder-panel')}>唤起面板</button>
-          </li>
-          <li><div className="l-row-label"><span>鼠标拖拽边缘／四角分屏</span><span>左键拖动窗口至屏幕左／右边缘（半屏）、顶部中央（最大化）或四角（1/4 屏）显示陶土色预览框，松手吸附并记忆原尺寸；拖离时自动恢复。</span></div><Switch label="鼠标拖拽分屏" value={settings.windowDragSnap} change={() => void saveDragSnap(!settings.windowDragSnap)} /></li>
-          <li className="col">
-            <div className="l-row-label"><span>窗口分屏与双栏工作区</span><span>⌃⌥ ← / → 左/右半屏 · ⌃⌥ ↑ 最大化 · ⌃⌥ ↓ 居中 · ⌃⌥ ↵ 2:1 双栏布局。</span></div>
-            <div className="l-workspace-actions">
-              <button className="l-btn small" onClick={() => void window.desktop.act('snap-coding-ai')}>2:1 双栏布局</button>
-              <button className="l-btn small" onClick={() => void window.desktop.act('snap-equal-split')}>1:1 双栏布局</button>
+            <div className="l-set-card">
+              {group.ids.map(action => (
+                <ShortcutRow
+                  key={action}
+                  id={'shortcut-' + action}
+                  label={globalActionLabels[action]}
+                  value={settings.actionShortcuts[action] || ''}
+                  save={shortcut => window.desktop.saveActionShortcut(action, shortcut)}
+                  notify={notify}
+                />
+              ))}
             </div>
-          </li>
-        </ul>
-        <div className="l-set-row-head l-gap"><h3>窗口与任务</h3></div>
-        <ul className="l-group">
-          <li><div className="l-row-label"><span>始终置顶</span><span>未置顶时，点击窗外会隐藏小窗；任务继续在后台运行。</span></div>
-            <Switch label="始终置顶" value={state.pinned} change={() => void window.desktop.act('pin')} /></li>
-          <li><div className="l-row-label"><span>{resident} 个驻留 · {released} 个已休眠</span><span>任务休眠后可按原链接或原会话恢复；生成中的任务和网页草稿保留。</span></div></li>
-          <li><div className="l-row-label"><span>网页与账户</span><span>在小窗内登录 ChatGPT、Gemini 一次，以后保持登录。网页仍使用自己的模型、工具和会话。</span></div></li>
-        </ul>
-        <div id="memory-settings" className="l-set-row-head l-gap"><h3>内存</h3></div>
-        <ul className="l-group">
-          <li><div className="l-row-label"><span>闲置休眠</span><span>隐藏或最小化后开始计时，返回时恢复；正在处理的操作保持运行。</span></div><Switch label="闲置休眠" value={settings.memory.enabled} change={() => void saveMemory(undefined, !settings.memory.enabled)} /></li>
-          <li className="col"><div className="l-field"><label htmlFor="memory-minutes">休眠时间（分钟）</label>
-            <Segmented label="闲置休眠时间" value={String(settings.memory.idleMinutes)} options={[5,15,30,60].map(value => [String(value), String(value)] as const)} onChange={value => void saveMemory(Number(value))} />
-            <div className="l-row"><input id="memory-minutes" className="l-input mono" type="number" min="1" max="1440" value={minutes} onChange={event => setMinutes(event.target.value)} /><button className="l-btn small" onClick={() => void saveMemory(Number(minutes))}>应用</button></div>
-            <p className="l-field-help">可自定义 1–1440 分钟，默认 30 分钟。修改后按已有闲置时间重新计算；关闭开关可保持驻留。</p>
-          </div></li>
-        </ul>
-        <button className="l-btn danger l-quit" onClick={() => void window.desktop.act('quit')}>退出 Lasso</button>
+          </div>
+        ))}
+
+        <div className="l-set-group">
+          <div className="l-set-lbl">
+            <span>截图编辑器局部快捷键</span>
+            <span className="r">仅在截图与贴图编辑时生效，支持单键</span>
+          </div>
+          <div className="l-set-card">
+            {editorActionIds.map(action => (
+              <ShortcutRow
+                key={action}
+                id={'editor-shortcut-' + action}
+                label={editorActionLabels[action]}
+                value={settings.editorShortcuts[action]}
+                local
+                save={shortcut => saveEditorShortcut(action, shortcut)}
+                notify={notify}
+              />
+            ))}
+          </div>
+        </div>
       </SubPane>
-      <SubPane scope="general" id="shortcuts" active={sub === 'shortcuts'}>
-        <div id="global-shortcuts" className="l-set-row-head"><h3>全局动作快捷键</h3><span>F1–F24 或组合键 · 立即保存</span></div>
-        <ul className="l-group">
-          {globalActionIds.map(action => <ShortcutField key={action} id={'shortcut-' + action} label={globalActionLabels[action]} help={actionHelp[action]} value={settings.actionShortcuts[action] || ''} save={shortcut => window.desktop.saveActionShortcut(action, shortcut)} error={action === 'open-launcher' ? state.shortcutError : null} />)}
-        </ul>
-        <div id="editor-shortcuts" className="l-set-row-head l-gap"><h3>编辑器局部快捷键</h3><span>支持单键 · 立即保存</span></div>
-        <p className="l-field-help">仅在截图编辑器与贴图编辑时生效。点击录制，按 Esc 取消；右侧 × 清空绑定。</p>
-        <ul className="l-group">{editorActionIds.map(action => <ShortcutField key={action} id={'editor-shortcut-' + action} label={editorActionLabels[action]} value={settings.editorShortcuts[action]} local save={shortcut => saveEditor(action, shortcut)} />)}</ul>
-        <div id="ignored-apps" className="l-set-row-head l-gap"><h3>忽略应用</h3><button className="l-text-btn" disabled={ignoredSaving} onClick={() => void addIgnored()}>选择忽略应用…</button></div>
-        <p className="l-field-help">在这些应用中暂停所选功能。窗口候选只过滤截图可选窗口，修改后立即保存。</p>
-        <ul className="l-group">{settings.ignoredApps.length ? settings.ignoredApps.map((rule, index) => <li className="col" key={rule.bundleId}>
-          <div className="l-row"><div className="l-row-label"><span>{rule.name}</span><span className="mono">{rule.bundleId}</span></div><Switch label={'启用忽略 ' + rule.name} value={rule.enabled} disabled={ignoredSaving} change={() => updateIgnored(index, { enabled: !rule.enabled })} /><button className="l-icon" aria-label={'删除忽略应用 ' + rule.name} disabled={ignoredSaving} onClick={() => void saveIgnored(settings.ignoredApps.filter((_, i) => i !== index))}><X size={14} /></button></div>
-          <div className="l-ignored-scopes">{ignoredScopes.map(([scope, label]) => <button key={scope} className="l-btn small" role="checkbox" aria-label={`${rule.name}：忽略${label}`} aria-checked={rule.scopes.includes(scope)} disabled={ignoredSaving} onClick={() => updateIgnored(index, { scopes: rule.scopes.includes(scope) ? rule.scopes.filter(value => value !== scope) : [...rule.scopes, scope] })}><Check size={14} aria-hidden="true" />{label}</button>)}</div>
-        </li>) : <li><p className="l-field-help">尚未添加忽略应用</p></li>}</ul>
-        {ignoredError && <p className="l-field-help error" role="alert">{ignoredError}</p>}
+
+      <SubPane scope="shortcuts" id="sync" active={sub === 'sync'}>
+        <ConfigSyncSection notify={notify} />
       </SubPane>
-      <SubPane scope="general" id="editor" active={sub === 'editor'}>
-        <EditorScriptSettings settings={settings} />
-      </SubPane>
-      <SubPane scope="general" id="sync" active={sub === 'sync'}>
-        <ConfigSyncSettings />
-      </SubPane>
-      {error && <p className="l-field-help error" role="alert">{error}</p>}
-    </div>
-  </>;
+    </>
+  );
 }

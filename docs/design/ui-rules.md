@@ -1,65 +1,50 @@
 # Lasso 界面规则
 
-所有界面改动都要遵守本文。`npm run build` 会运行 `scripts/check-ui.mjs`，静态检查其中能机器判断的部分；其余靠 `npm run ui:shots` 截图自查。视觉基准是 [确认原型](index.html)（`docs/design/v2/lasso.css` 是令牌的源头）。
+所有界面改动都要遵守本文。`npm run build` 会运行 `scripts/check-ui.mjs`，静态检查其中能机器判断的部分；其余靠 `npm run ui:shots` 截图自查。视觉基准是 [`docs/design/v4/index.html`](v4/index.html) 与 [`docs/design/v4/v4.css`](v4/v4.css)。
 
 ## 气质
 
-纸上的套索：暖白纸面、墨色文字、一种强调色（陶土色）、衬线字体。克制、安静、贴近内容。不要渐变、霓虹、玻璃拟态、彩色阴影或大圆角卡片堆叠，也不要 emoji 和装饰性插图。
+纸上的套索：暖白纸面（`#FAF9F5`）、墨色文字（`#141413`）、克制的陶土色强调（`#D97757`）、衬线标题与长文 + 无衬线控件。克制、安静、贴近内容。不要渐变、霓虹、玻璃拟态、彩色阴影或大圆角卡片堆叠，也不要 emoji 和装饰性插图。
 
-## 颜色
+## 颜色与陶土色预算
 
-- 只用 `src/renderer/styles/tokens.css` 里的令牌：纸面 `--bg` `--surface` `--sunken` `--sand` `--oat` `--desk`，墨色 `--ink` … `--ink-6`，线条 `--line*`，强调 `--clay*`，语义色 `--olive` `--danger*`。
+- 只用 `src/renderer/styles/tokens.css` 里的令牌：纸面 `--bg` `--surface` `--sunken` `--sand` `--oat` `--desk`，墨色 `--ink` … `--ink-6`，线条 `--line*`，强调 `--clay*`，语义色 `--olive` `--danger*`，墨底色 `--on-ink*`。
 - 需要透明度时写成令牌底色加 alpha，例如 `rgba(20, 20, 19, 0.5)`（ink）、`rgba(250, 249, 245, 0.1)`（ivory）。检查脚本只认令牌底色、纯白和纯黑。
-- 缺少某个颜色时，先在 tokens.css 里加一个语义令牌，再引用它。不要在组件里写十六进制色值。TSX 里不写颜色，通过 class 引用。
-- **交互一律用陶土色回应：**
-  - 浅色表面：悬停用 `--clay-wash`，选中或按下用 `--clay-wash-2`，文字用 `--clay-ink`，描边用 `--clay-line`。
-  - 墨色表面（动作条、贴图工具条、截图提示条）：悬停或选中是实心 `--clay` 配白字，按下是 `--clay-press`，激活态是陶土色文字。不要在墨色上叠半透明陶土，会发脏。
-  - 主按钮是墨色，悬停变陶土色。焦点环是 2px 陶土色（全局 `:focus-visible`）。
-- 陶土色要用得足：当前项、开关、进度和高亮都用它。灰色悬停显得平淡，不要用。
+- 缺少某个颜色时，先在 `tokens.css` 里加语义令牌，再引用它。不要在组件里写十六进制色值。TSX 里不写颜色，通过 class 引用。
+- **一屏最多一处实心陶土色（`--clay`）：**
+  - 实心 `--clay` 只给当前面板唯一的「现在就做这件事」主按钮（如发送、复制译文、开始生成）或高优状态（如剪切待移条、专注倒计时）。
+  - 开关（`.l-switch`）和复选框打开态一律使用 `--ink`（墨色），分段控件当前项使用白色纸片（`--surface`）落于 `--sand` 底槽，不用陶土色抢焦点。
+- **交互反馈：**
+  - 浅色纸面：悬停用 `--clay-wash` + `--clay-ink`，选中或按下用 `--clay-wash-2`，描边用 `--clay-line`。不用灰色悬停。
+  - 墨色表面（动作条、刘海看板、访达面板、截图与贴图工具条）：悬停是实心 `--clay` 配白字，按下是 `--clay-press`，激活开关是 `--clay` 图标/文字。不要在墨色上叠半透明陶土。
 
-## 字体
+## 字体分工（v4 核心规则）
 
-- `font-family` 只能写 `var(--font-display | --font-text | --font-ui | --font-mono)`。用户可以在设置里改字体，所以不要写死字体名。
-- 数字、尺寸、快捷键、代码用 `.mono` / `--font-mono`。
-- 字号阶梯：界面 12.5 / 13.5 / 14px，标题用 display 字体，不用粗体堆层级。
+- `font-family` 只能写 `var(--font-display | --font-text | --font-ui | --font-mono)`。用户可以在设置里改字体，不要写死字体名。
+- **`--font-display` / `--font-text`（衬线，默认 `Anthropic Serif Text`）**：只用于页面大标题（18–26px，`font-weight: 400`）、空状态主标题、以及 AI 回答正文和翻译译文（15–16px，行高 1.75，永不加粗）。
+- **`--font-ui`（无衬线，默认 `Anthropic Sans`）**：用于全部按钮、标签、菜单、列表、表单、状态说明（12 / 12.5 / 13.5 / 14px）。
+- **`--font-mono`（等宽，默认 `JetBrains Mono`）**：用于数字、尺寸、计时、耗时、快捷键、路径与代码（`tabular-nums`）。
 
 ## 组件与图标
 
-- **先复用**：`Segmented`（滑块分段控件）、`Glide`（共享 layoutId 的滑动高亮）、`Switch`（`.l-switch` 开关，`src/renderer/Switch.tsx`）、`SaveBar`（`.l-save-bar` 设置保存栏，`src/renderer/SaveBar.tsx`）、`.l-btn`、`.l-ghost`、`.l-banner`、`Badge`、`BrandMark`。新写组件之前先在 `src/renderer` 里搜一遍有没有现成的。
+- **先复用**：`Segmented`（滑块分段控件）、`Glide`（共享 layoutId 的滑动高亮）、`Switch`（`.l-switch` 开关，`src/renderer/Switch.tsx`）、`.l-btn`、`.l-ghost`、`Badge`、`BrandMark`。
 - 图标只用 `lucide-react`，按钮里统一 14–16px、描边 1.5–1.6。不要写内联 `<svg>`；品牌标记用 `BrandMark`。
-- **渠道图标只用官方素材**，每个渠道一个文件：`src/renderer/assets/targets/<target>.png|svg`。
-  - 来源优先级：本机官方 App 的资源（`.icns` / `Resources/*.png`）高于官方网站或官方仓库。
-  - PNG 裁到图标自身的轮廓（macOS 图标去掉四周约 10% 的透明边），64px；SVG 原样保留，只允许收紧 viewBox。
-  - 新增渠道时，在 `targetIcons`（`src/renderer/targets.tsx`）里补上，漏掉会通不过类型检查。不要自己设计字母徽标。
-- **不用系统原生菜单和对话框：**
-  - 菜单、确认、选项都在窗口内绘制。动作条的 ··· 是墨色菜单，窗口在空闲一侧临时变高；贴图的 ··· 是第二行墨色工具条。
-  - 需要确认时用原地二次确认（参考截图编辑器的「再点一次清除标注」），不用 `confirm()`。
-  - 例外只有托盘菜单和应用菜单栏本身。
-- 图标按钮必须有 `aria-label`，悬停提示用组件内的提示卡或 `data-tip`。不依赖原生 `title` 提示传达关键信息。
+- **渠道图标只用官方素材**，放在 `src/renderer/assets/targets/<target>.png|svg`；API 渠道使用 `Zap` / `Image` 图标。
+- **不用系统原生菜单、`<select>` 和对话框：**
+  - 菜单、下拉选择、确认都在窗口内绘制。需要确认时用原地二次确认（点一次变危险色，再点一次执行），不用 `confirm()` / `alert()` / `prompt()`。
+  - 例外只有系统菜单栏托盘菜单和应用菜单栏本身。
+- 图标按钮必须有 `aria-label`。
 
-## 布局
+## 布局与动效
 
-- 关键状态、错误、待办直接可见；次要信息按需展开。重复条目合并，没用的信息删掉。不要用折叠来掩盖冗余。
-- 圆角：胶囊和工具条 10–13px，按钮 7–9px，卡片 12px 左右。阴影用 `--shadow-*` 令牌；墨色浮层用现有的「内描边 + 下方柔影」写法。
-- 浮层（工具条、菜单、提示）不能超出屏幕或窗口：靠近边缘时翻到另一侧，或者贴边内收。动作条、截图工具栏已有现成的定位逻辑，照着用。
-- 框选与智能区域截图保持「原地」编辑；全屏、窗口、前台窗口及滚动截图使用独立结果窗口，复用剪贴板图片和贴图的编辑器。原地截图默认显示选区手柄；独立结果窗口默认不显示裁剪手柄，点击裁剪工具后才显示。切换窗口形态前先隐藏，图片就绪后一次显示，禁止可见的全屏缩窗动画。
-
-## 动效
-
-- 用 `motion/react` 和 `src/renderer/motion.tsx` 里的预设：`spring`（520/38）、`rise`、`pop`、`collapse`。根节点已包了 `MotionConfig reducedMotion="user"`。
-- motion 只负责出现/消失、布局变化和滑动高亮。悬停、按下和颜色过渡交给 CSS，时长用 `--t-fast` / `--t-base` / `--t-slow`，缓动用 `--ease-out`。
-- 同一元素不要同时挂 CSS keyframes 和 motion 动画。出现时位移不超过 6px，缩放不小于 0.94。
-
-## 原生截图界面
-
-- 截图选区由 AppKit / Core Animation 绘制，复用同一份颜色令牌、字体配置和 Lucide 图标资源；构建时生成原生主题与图标，不另行维护一套色值。
-- 原生界面内绘制模式选择、提示、重试与取消，不使用系统弹出菜单。坐标、放大镜和拖框直接更新，不增加位置过渡。
-- 原生冻结画面保持到编辑器图片、背景和画布就绪，随后一次交接；框选和智能区域继续原地编辑。
-- `ui:shots` 的选区场景直接渲染正式原生窗口，编辑器等场景仍由 Renderer 截图。
+- 关键状态、错误、待办直接可见；次要信息按需展开，无用信息删除。
+- 圆角：窗口 12–14px，胶囊和工具条 10–13px，按钮 7–8px，卡片 10–12px。阴影用 `--shadow-*` 令牌。
+- 浮层（工具条、菜单、提示）靠近边缘时翻到另一侧或贴边内收，不超出窗口或屏幕。
+- 动效用 `motion/react` 和 `src/renderer/motion.tsx` 预设（`spring`、`rise`、`pop`、`collapse`）；悬停、按下和颜色过渡交给 CSS（`--t-fast` / `--t-base` / `--t-slow`、`--ease-out`）。
 
 ## 自查流程（每次改界面都要做）
 
 1. `npm run build`：类型检查、UI 规则检查和构建都要通过。
-2. `npm run ui:shots`：截取主窗口、指令面板、设置、动作条及菜单、截图覆盖层（区域/窗口）、原地编辑器、窗口编辑器、贴图（静止/悬停/选项），保存到 `outputs/ui-shots/`。逐张打开查看改动涉及的界面，对照本文检查颜色、对齐、溢出和截断。
-3. 如果新增了界面或状态，把它加进 `scripts/ui-shots/run.mjs`，让下一次截图也能覆盖到。
-4. 报告时说明哪些界面截图看过，哪些只做了静态检查。真实屏幕录制、划词和网页交互这类必须在打包版里手动验收的部分，要明确写出来。
+2. `npm run ui:shots`：截取全部窗口与状态保存到 `outputs/ui-shots/`，逐张打开对照 v4 设计稿检查字体分工、陶土色克制、对齐和截断。
+3. 新增界面或状态同步补进 `scripts/ui-shots/run.mjs`。
+4. 报告时区分截图实测与需在打包版手动验收的系统能力（屏幕录制、划词、网页交互、跨应用粘贴）。

@@ -11,12 +11,18 @@ export interface MediaServiceState { jobs: MediaJob[]; reference: MediaReference
 export interface ImageRequest extends ImageOptions { connectionId?: string; requestId: string; prompt: string; presetId: string; presetName: string; referenceId?: string }
 
 export interface NormalizedMediaImage { png: Buffer; width: number; height: number; thumbnail: string }
+export type ChatMessageContentPart = { type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } };
+export interface ChatCompletionMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string | ChatMessageContentPart[];
+}
+
 export interface MediaServiceAdapters {
   /** The host supplies Electron safeStorage; no credential crosses into the renderer. */
   secrets: { available(): boolean; encrypt(value: string): Buffer; decrypt(value: Buffer): string };
   normalizeImage(buffer: Buffer): NormalizedMediaImage;
   changed: (state: MediaServiceState) => void;
-  references?: () => { presets: readonly Preset[]; translation: Settings['translation']; vision: Settings['vision'] };
+  references?: () => { presets: readonly Preset[]; translation: Settings['translation']; vision: Settings['vision']; defaultApiChat?: Settings['defaultApiChat'] };
 }
 type SavedConnection = Omit<ApiConnection, 'hasCredential'> & { credential?: string };
 interface SavedConfig { schemaVersion: 3; connections: SavedConnection[] }
@@ -131,6 +137,7 @@ export class MediaService {
     for (const preset of references?.presets || []) if (preset.target === 'api' && preset.connectionId === id) usedBy.push(`预设「${preset.name}」`);
     if (references?.translation.connectionId === id) usedBy.push('翻译服务');
     if (references?.vision.connectionId === id) usedBy.push('视觉服务');
+    if (references?.defaultApiChat?.connectionId === id) usedBy.push('默认 API 对话');
     if (usedBy.length) throw Error('此 API 连接仍被' + usedBy.join('、') + '引用，请先修改绑定');
     this.persistConnections(this.config.connections.filter(connection => connection.id !== id));
     return this.connections();
@@ -203,34 +210,34 @@ export class MediaService {
     return models;
   }
 
-  /** Fast direct SSE chat completion for inline translation, polishing and explanation presets. */
-  async streamChat(
-    input: { connectionId?: string; model?: string; prompt: string; signal?: AbortSignal },
+  /** Multi-turn SSE chat completion with optional vision image attachments. */
+  async streamChatMessages(
+    input: { connectionId?: string; model?: string; messages: ChatCompletionMessage[]; signal?: AbortSignal },
     onDelta: (text: string, firstTokenMs: number) => void
   ): Promise<{ text: string; model: string; firstTokenMs: number }> {
     const connectionId = input.connectionId?.trim();
     const model = input.model?.trim();
-    if (!connectionId || !model) throw Error('请先选择 API 连接与模型');
+    if (!connectionId || !model) throw Error('请先在「设置 → 模型与 API 连接」中配置连接并选择模型');
     const config = this.savedConnection(connectionId)!;
-    if (!config.baseURL) throw Error('请先在「设置 → 预设」中编辑 API 预设，填写并保存 API 地址与密钥');
+    if (!config.baseURL) throw Error('请先在「设置 → 模型与 API 连接」中填写 Base URL 与密钥');
     const headers: Record<string, string> = { ...this.headers(config), 'Content-Type': 'application/json', Accept: 'text/event-stream' };
     const started = performance.now();
     let firstTokenMs = 0;
-    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(60000)]) : AbortSignal.timeout(60000);
+    const signal = input.signal ? AbortSignal.any([input.signal, AbortSignal.timeout(90000)]) : AbortSignal.timeout(90000);
     const response = await this.fetchOnce(
       this.endpoint('chat/completions', config),
       {
         method: 'POST',
         headers,
-        body: JSON.stringify({ model, stream: true, messages: [{ role: 'user', content: input.prompt }] }),
+        body: JSON.stringify({ model, stream: true, messages: input.messages }),
         signal
       },
-      '快速 API 请求'
+      'API 对话请求'
     );
-    if (!response.ok) throw await this.responseError('快速 API 请求失败', response, config);
+    if (!response.ok) throw await this.responseError('API 对话请求失败', response, config);
     const contentType = response.headers.get('content-type') || '';
     if (!contentType.includes('text/event-stream') || !response.body) {
-      const bytes = await this.readLimited(response, 4 * 1024 * 1024, '读取快速 API 响应');
+      const bytes = await this.readLimited(response, 4 * 1024 * 1024, '读取 API 对话响应');
       const payload = JSON.parse(bytes.toString('utf8')) as { choices?: { message?: { content?: unknown } }[] };
       const text = typeof payload.choices?.[0]?.message?.content === 'string' ? payload.choices[0].message.content.trim() : '';
       if (!text) throw Error('服务未返回有效文本内容');
@@ -272,6 +279,17 @@ export class MediaService {
     if (!text) throw Error('服务未返回有效文本内容');
     if (!firstTokenMs) firstTokenMs = Math.round(performance.now() - started);
     return { text, model, firstTokenMs };
+  }
+
+  /** Fast direct SSE chat completion for inline presets. */
+  async streamChat(
+    input: { connectionId?: string; model?: string; prompt: string; signal?: AbortSignal },
+    onDelta: (text: string, firstTokenMs: number) => void
+  ): Promise<{ text: string; model: string; firstTokenMs: number }> {
+    return this.streamChatMessages(
+      { connectionId: input.connectionId, model: input.model, messages: [{ role: 'user', content: input.prompt }], signal: input.signal },
+      onDelta
+    );
   }
 
   /** Accept an explicitly selected local image or the editor's final composited PNG. */

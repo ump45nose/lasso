@@ -1,12 +1,88 @@
 import { captureModeLabels, captureModes, type CaptureMode } from './capture';
 
-export type GlobalActionId = CaptureMode | 'repeat-last' | 'custom-capture' | 'scroll-capture' | 'delay-3s' | 'delay-5s' | 'delay-10s' | 'pin-clipboard' | 'open-launcher' | 'open-clipboard-history' | 'open-translator';
-export const globalActionIds: GlobalActionId[] = [...captureModes, 'repeat-last', 'custom-capture', 'scroll-capture', 'delay-3s', 'delay-5s', 'delay-10s', 'pin-clipboard', 'open-launcher', 'open-clipboard-history', 'open-translator'];
+export type GlobalActionId =
+  | CaptureMode
+  | 'repeat-last'
+  | 'scroll-capture'
+  | 'delay-3s'
+  | 'delay-5s'
+  | 'delay-10s'
+  | 'pin-clipboard'
+  | 'open-launcher'
+  | 'open-translator'
+  | 'open-clipboard-history'
+  | 'toggle-notes'
+  | 'open-finder-panel'
+  | 'snap-left-half'
+  | 'snap-right-half'
+  | 'snap-maximize'
+  | 'snap-center'
+  | 'snap-left-third'
+  | 'snap-center-third'
+  | 'snap-right-third'
+  | 'snap-left-two-thirds'
+  | 'snap-right-two-thirds'
+  | 'snap-coding-ai'
+  | 'snap-equal-split'
+  | 'snap-prev-display'
+  | 'snap-next-display';
+
+export const globalActionIds: GlobalActionId[] = [
+  ...captureModes,
+  'repeat-last',
+  'scroll-capture',
+  'delay-3s',
+  'delay-5s',
+  'delay-10s',
+  'pin-clipboard',
+  'open-launcher',
+  'open-translator',
+  'open-clipboard-history',
+  'toggle-notes',
+  'open-finder-panel',
+  'snap-left-half',
+  'snap-right-half',
+  'snap-maximize',
+  'snap-center',
+  'snap-left-third',
+  'snap-center-third',
+  'snap-right-third',
+  'snap-left-two-thirds',
+  'snap-right-two-thirds',
+  'snap-coding-ai',
+  'snap-equal-split',
+  'snap-prev-display',
+  'snap-next-display'
+];
+
 export const globalActionLabels: Record<GlobalActionId, string> = {
-  ...captureModeLabels, 'repeat-last': '重复上次截图', 'custom-capture': '自定义截图', 'scroll-capture': '滚动截图',
-  'delay-3s': '延时 3 秒截图', 'delay-5s': '延时 5 秒截图', 'delay-10s': '延时 10 秒截图',
-  'pin-clipboard': '贴出剪贴板图片', 'open-launcher': '唤起小窗', 'open-clipboard-history': '剪贴板历史', 'open-translator': '输入翻译'
+  ...captureModeLabels,
+  'repeat-last': '重截上次区域',
+  'scroll-capture': '滚动长截图',
+  'delay-3s': '延时 3 秒截图',
+  'delay-5s': '延时 5 秒截图',
+  'delay-10s': '延时 10 秒截图',
+  'pin-clipboard': '贴出剪贴板内容',
+  'open-launcher': '打开 AI 对话窗',
+  'open-translator': '输入翻译',
+  'open-clipboard-history': '剪贴板历史',
+  'toggle-notes': '浮动便签',
+  'open-finder-panel': '访达动作面板',
+  'snap-left-half': '窗口左半屏',
+  'snap-right-half': '窗口右半屏',
+  'snap-maximize': '窗口最大化',
+  'snap-center': '窗口居中',
+  'snap-left-third': '窗口左 1/3',
+  'snap-center-third': '窗口中 1/3',
+  'snap-right-third': '窗口右 1/3',
+  'snap-left-two-thirds': '窗口左 2/3',
+  'snap-right-two-thirds': '窗口右 2/3',
+  'snap-coding-ai': '2:1 双栏分屏',
+  'snap-equal-split': '1:1 双栏分屏',
+  'snap-prev-display': '移至左显示器',
+  'snap-next-display': '移至右显示器'
 };
+
 export type EditorActionId = 'text-select' | 'select' | 'arrow' | 'line' | 'rectangle' | 'ellipse' | 'pen' | 'highlight' | 'text' | 'number' | 'redact' | 'mosaic' | 'blur' | 'crop' | 'picker' | 'copy' | 'save' | 'quick-save' | 'pin';
 export const editorActionIds: EditorActionId[] = ['text-select', 'select', 'arrow', 'line', 'rectangle', 'ellipse', 'pen', 'highlight', 'text', 'number', 'redact', 'mosaic', 'blur', 'crop', 'picker', 'copy', 'save', 'quick-save', 'pin'];
 export const editorActionLabels: Record<EditorActionId, string> = {

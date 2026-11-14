@@ -2,15 +2,16 @@ import { app, clipboard, ClipboardItem, ipcMain, nativeImage, screen } from 'ele
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { ClipboardEntry, ClipboardWindowState, IslandAPI } from '../shared/contracts';
+import type { ClipboardEntry, ClipboardWindowState, IslandAPI, Settings } from '../shared/contracts';
 import { applicationIcon } from './app-icons';
 import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
 
+const WIN_W = 708, WIN_H = 508;
 const SENSITIVE_APPS = /^(?:com\.agilebits\.onepassword(?:[0-9]|\.|$)|com\.1password(?:\.|$)|com\.bitwarden(?:\.|$)|com\.apple\.Passwords$|com\.apple\.keychainaccess$|org\.keepassxc\.keepassxc$|com\.lastpass(?:\.|$)|com\.keepassx(?:\.|$))/i;
 
 /** Both copy translation and history must apply this before reading clipboard payloads. */
@@ -21,7 +22,10 @@ export interface ClipboardHistoryPanelDeps {
   check: (event: IpcMainEvent | IpcMainInvokeEvent) => void;
   pinImage: (image: NativeImage, title?: string) => Promise<void>;
   pinText: (text: string, title?: string) => Promise<void>;
-  noteText: (text: string) => void | Promise<void>;
+  noteText: (text: string, sourceApp?: string) => void | Promise<void>;
+  translateText: (text: string) => void;
+  askAi: (payload: { kind: 'text'; text: string } | { kind: 'image'; imagePath: string }) => void;
+  settings: () => Settings;
   onCopy?: (event: ClipboardCopyEvent) => void;
   ax?: Partial<NativeAx>;
 }
@@ -42,13 +46,17 @@ export class ClipboardHistoryPanel {
     this.ax = deps.ax ?? (process.env.LASSO_DATA_ROOT ? {} : nativeAx());
     mkdirSync(this.directory, { recursive: true, mode: 0o700 });
     this.state = { entries: this.loadEntries(), pinnedOnTop: false, fonts };
-    this.window = createIslandWindow(420, 500, { focusable: true });
+    this.window = createIslandWindow(WIN_W, WIN_H, { focusable: true });
+    this.window.setMovable(true);
     this.window.setAlwaysOnTop(false);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.window.on('close', event => { event.preventDefault(); this.close(); });
     this.window.on('blur', () => { if (!this.state.pinnedOnTop) this.close(); });
     this.window.webContents.on('before-input-event', (event, input) => {
-      if (input.type === 'keyDown' && (input.key === 'Escape' || input.meta && input.key.toLowerCase() === 'w')) { event.preventDefault(); this.close(); }
+      if (input.type === 'keyDown' && (input.key === 'Escape' || (input.meta && input.key.toLowerCase() === 'w'))) {
+        event.preventDefault();
+        this.close();
+      }
     });
     const { check } = deps;
     ipcMain.handle('clipboard-history:state', event => { check(event); return this.snapshot(); });
@@ -62,6 +70,11 @@ export class ClipboardHistoryPanel {
     }
   }
 
+  private maxItems(): number {
+    const raw = this.deps.settings().clipboardMaxItems;
+    return typeof raw === 'number' && raw >= 20 ? Math.min(1000, Math.round(raw)) : 200;
+  }
+
   snapshot(): ClipboardWindowState { return structuredClone(this.state); }
 
   open(sourcePid?: number) {
@@ -71,7 +84,10 @@ export class ClipboardHistoryPanel {
       this.targetPid = Number.isInteger(pid) && pid > 0 && pid !== process.pid ? pid : 0;
     }
     const cursor = screen.getCursorScreenPoint(), area = screen.getDisplayNearestPoint(cursor).workArea;
-    this.window.setPosition(Math.round(Math.max(area.x, Math.min(cursor.x - 210, area.x + area.width - 420))), Math.round(Math.max(area.y, Math.min(cursor.y + 12, area.y + area.height - 500))));
+    this.window.setPosition(
+      Math.round(Math.max(area.x, Math.min(cursor.x - WIN_W / 2, area.x + area.width - WIN_W))),
+      Math.round(Math.max(area.y, Math.min(cursor.y + 12, area.y + area.height - WIN_H)))
+    );
     this.window.show();
     this.window.focus();
     this.publish();
@@ -90,7 +106,7 @@ export class ClipboardHistoryPanel {
       }
     }
     this.state.entries.unshift(entry);
-    const removed = this.state.entries.splice(200);
+    const removed = this.state.entries.splice(this.maxItems());
     this.persist();
     this.removeImages(removed);
     this.publish();
@@ -111,7 +127,8 @@ export class ClipboardHistoryPanel {
       imagePath,
       imageWidth: size.width,
       imageHeight: size.height,
-      imageThumbnail: image.resize({ width: Math.min(160, size.width) }).toDataURL(),
+      imageBytes: png.byteLength,
+      imageThumbnail: image.resize({ width: Math.min(640, size.width) }).toDataURL(),
       sourceBundleId: 'local.mac-ai-prompt',
       sourceAppName: 'Lasso',
       sourceAppIcon: applicationIcon('local.mac-ai-prompt'),
@@ -162,8 +179,10 @@ export class ClipboardHistoryPanel {
       const timestamp = Date.now(), id = randomUUID();
       const bundleId = isSelf ? 'local.mac-ai-prompt' : source.bundleId;
       const appName = isSelf ? 'Lasso' : source.name;
-      const common = { id, text: '', preview: '', charCount: 0, lineCount: 0, sourceBundleId: bundleId,
-        sourceAppName: appName, sourceAppIcon: applicationIcon(bundleId), createdAt: timestamp, favorite: false };
+      const common = {
+        id, text: '', preview: '', charCount: 0, lineCount: 0, sourceBundleId: bundleId,
+        sourceAppName: appName, sourceAppIcon: applicationIcon(bundleId), createdAt: timestamp, favorite: false
+      };
       const items = await clipboard.read();
       if (!this.copyStillCurrent(meta.changeCount)) return null;
       const files = await this.readFiles(items);
@@ -171,16 +190,26 @@ export class ClipboardHistoryPanel {
       let entry: ClipboardEntry;
       if (files.length) {
         const text = files.join('\n');
-        entry = { ...common, kind: 'files', files, text, preview: files.map(file => basename(file)).join('、'), charCount: text.length, lineCount: files.length };
+        const label = files.length === 1 ? basename(files[0]) : `${basename(files[0])} 等 ${files.length} 个文件`;
+        entry = { ...common, kind: 'files', files, text, preview: label, charCount: text.length, lineCount: files.length };
       } else if (items.some(item => item.types.some(type => type.startsWith('image/')))) {
         const type = items.some(item => item.types.includes('image/png')) ? 'image/png' : items.flatMap(item => item.types).find(type => type.startsWith('image/'))!;
         const image = nativeImage.createFromBuffer(await this.readData(items, type));
         if (image.isEmpty()) return null;
+        const png = image.toPNG();
         const size = image.getSize(), imagePath = join(this.directory, `${id}.png`);
-        entry = { ...common, kind: 'image', preview: `图片 ${size.width} × ${size.height}`, imagePath,
-          imageWidth: size.width, imageHeight: size.height, imageThumbnail: image.resize({ width: Math.min(160, size.width) }).toDataURL() };
+        entry = {
+          ...common,
+          kind: 'image',
+          preview: `图片 ${size.width} × ${size.height}`,
+          imagePath,
+          imageWidth: size.width,
+          imageHeight: size.height,
+          imageBytes: png.byteLength,
+          imageThumbnail: image.resize({ width: Math.min(640, size.width) }).toDataURL()
+        };
         if (!this.copyStillCurrent(meta.changeCount)) return null;
-        writeFileSync(imagePath, image.toPNG(), { mode: 0o600 });
+        writeFileSync(imagePath, png, { mode: 0o600 });
       } else {
         const text = (await this.readData(items, 'text/plain')).toString('utf8');
         if (!text.trim()) return null;
@@ -198,9 +227,16 @@ export class ClipboardHistoryPanel {
   async act(req: Parameters<IslandAPI['clipboardAct']>[0]): Promise<{ error: string | null }> {
     try {
       if (!req || typeof req.action !== 'string') throw Error('剪贴板操作无效');
+      if (req.action === 'set-pinned') {
+        this.state.pinnedOnTop = Boolean(req.pinned);
+        this.window.setAlwaysOnTop(this.state.pinnedOnTop, 'floating');
+        this.publish();
+        return { error: null };
+      }
       if (req.action === 'clear-all') {
-        const removed = this.state.entries;
-        this.state.entries = [];
+        const nonFav = this.state.entries.filter(e => !e.favorite);
+        const removed = nonFav.length > 0 ? nonFav : this.state.entries;
+        this.state.entries = nonFav.length > 0 ? this.state.entries.filter(e => e.favorite) : [];
         this.persist();
         this.removeImages(removed);
         this.publish();
@@ -208,10 +244,16 @@ export class ClipboardHistoryPanel {
       }
       const entry = this.state.entries.find(item => item.id === req.id);
       if (!entry) throw Error('剪贴板条目不存在');
-      if (req.action === 'copy' || req.action === 'paste') {
-        if (req.action === 'paste' && !this.targetPid) throw Error('没有可回贴的原应用');
-        await this.writeEntry(entry);
-        if (req.action === 'paste') {
+      if (req.action === 'copy' || req.action === 'paste' || req.action === 'paste-plain') {
+        if ((req.action === 'paste' || req.action === 'paste-plain') && !this.targetPid) throw Error('没有可回贴的原应用');
+        if (req.action === 'paste-plain') {
+          ++this.writing;
+          try { await clipboard.writeText(entry.text || entry.preview); }
+          finally { this.ignoreCurrentCopy(); --this.writing; }
+        } else {
+          await this.writeEntry(entry);
+        }
+        if (req.action === 'paste' || req.action === 'paste-plain') {
           this.close();
           if (!this.ax.pasteToProcess?.(this.targetPid)) throw Error('未能回贴到原应用，请检查辅助功能权限');
         }
@@ -231,13 +273,39 @@ export class ClipboardHistoryPanel {
         const content = entry.kind === 'image' && entry.imagePath
           ? `![${entry.preview}](data:image/png;base64,${readFileSync(entry.imagePath).toString('base64')})`
           : entry.text;
-        await this.deps.noteText(content);
-      } else throw Error('不支持的剪贴板操作');
+        await this.deps.noteText(content, entry.sourceAppName);
+      } else if (req.action === 'translate') {
+        if (!entry.text.trim()) throw Error('当前条目没有可翻译的文本');
+        if (!this.state.pinnedOnTop) this.close();
+        this.deps.translateText(entry.text);
+      } else if (req.action === 'ask-ai') {
+        if (!this.state.pinnedOnTop) this.close();
+        if (entry.kind === 'image' && entry.imagePath && existsSync(entry.imagePath)) {
+          this.deps.askAi({ kind: 'image', imagePath: entry.imagePath });
+        } else if (entry.text.trim()) {
+          this.deps.askAi({ kind: 'text', text: entry.text });
+        } else {
+          throw Error('当前条目为空');
+        }
+      } else {
+        throw Error('不支持的剪贴板操作');
+      }
       return { error: null };
-    } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
-  updateFonts(fonts: ClipboardWindowState['fonts']) { this.state.fonts = fonts; this.publish(); }
+  updateSettings(settings: Settings) {
+    this.state.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    const max = this.maxItems();
+    if (this.state.entries.length > max) {
+      const removed = this.state.entries.splice(max);
+      this.persist();
+      this.removeImages(removed);
+    }
+    this.publish();
+  }
 
   destroy() {
     if (this.timer) clearInterval(this.timer);
@@ -283,20 +351,38 @@ export class ClipboardHistoryPanel {
         await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(image.toPNG())], { type: 'image/png' }) })]);
       } else if (entry.kind === 'files' && entry.files?.length) {
         await clipboard.write([new ClipboardItem({ 'text/uri-list': entry.files.map(file => pathToFileURL(file).href).join('\r\n') })]);
-      } else await clipboard.writeText(entry.text);
+      } else {
+        await clipboard.writeText(entry.text);
+      }
     } finally { this.ignoreCurrentCopy(); --this.writing; }
   }
 
   private loadEntries(): ClipboardEntry[] {
     if (!existsSync(this.statePath)) return [];
-    const entries: unknown = JSON.parse(readFileSync(this.statePath, 'utf8'));
-    if (!Array.isArray(entries)) throw Error('剪贴板历史文件格式无效');
-    return entries.filter((entry): entry is ClipboardEntry => entry && /^[a-f0-9-]{36}$/.test(entry.id) && ['text', 'image', 'files'].includes(entry.kind) && typeof entry.text === 'string')
-      .slice(0, 200).filter(entry => entry.kind !== 'image' || entry.imagePath === join(this.directory, `${entry.id}.png`) && existsSync(entry.imagePath));
+    try {
+      const entries: unknown = JSON.parse(readFileSync(this.statePath, 'utf8'));
+      if (!Array.isArray(entries)) return [];
+      return entries
+        .filter((entry): entry is ClipboardEntry => Boolean(entry && /^[a-f0-9-]{36}$/.test(entry.id) && ['text', 'image', 'files'].includes(entry.kind) && typeof entry.text === 'string'))
+        .slice(0, 1000)
+        .filter(entry => entry.kind !== 'image' || (entry.imagePath === join(this.directory, `${entry.id}.png`) && existsSync(entry.imagePath)))
+        .map(entry => {
+          if (entry.kind === 'image' && entry.imagePath && !entry.imageBytes && existsSync(entry.imagePath)) {
+            return { ...entry, imageBytes: statSync(entry.imagePath).size };
+          }
+          return entry;
+        });
+    } catch {
+      return [];
+    }
   }
 
   private removeImages(entries: ClipboardEntry[]) {
-    for (const entry of entries) if (entry.kind === 'image' && entry.imagePath === join(this.directory, `${entry.id}.png`) && existsSync(entry.imagePath)) unlinkSync(entry.imagePath);
+    for (const entry of entries) {
+      if (entry.kind === 'image' && entry.imagePath === join(this.directory, `${entry.id}.png`) && existsSync(entry.imagePath)) {
+        unlinkSync(entry.imagePath);
+      }
+    }
   }
 
   private persist() { writeFileAtomic(this.statePath, JSON.stringify(this.state.entries)); }

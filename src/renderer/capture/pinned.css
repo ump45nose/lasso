@@ -21,6 +21,10 @@
 .pin-bar button[aria-pressed="true"], .pin-bar button[aria-selected="true"], .pin-thumbnail-actions button[aria-pressed="true"] { color: var(--clay); }
 .pin-bar button[aria-pressed="true"]:hover, .pin-bar button[aria-selected="true"]:hover { color: var(--surface); }
 .pin-options { top: 48px; width: min(320px, calc(100% - 16px)); max-width: none; height: auto; max-height: calc(100% - 56px); padding: 4px; display: block; overflow: auto; scrollbar-width: thin; }
+.pin-preset-mi { display: flex; width: 100%; justify-content: flex-start; gap: 8px; padding: 0 9px; height: 30px; }
+.pin-preset-mi span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.pin-preset-mi small { margin-left: auto; font-size: 11px; color: rgba(250, 249, 245, 0.5); }
+.pin-preset-mi:hover small { color: #FFFFFF; }
 .pin-option-row { display: flex; flex-wrap: wrap; gap: 1px; }
 .pin-control { display: flex; align-items: center; gap: 7px; padding: 4px 6px; min-height: 32px; font-size: 12px; }
 .pin-control > span:first-child { min-width: 36px; }

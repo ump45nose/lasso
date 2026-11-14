@@ -1,4 +1,4 @@
-/* Lasso design tokens · 纸上的套索. Source of truth: docs/design/v2/lasso.css. */
+/* Lasso design tokens · 纸上的套索 (v4). Source of truth: docs/design/v4/v4.css. */
 :root {
   color-scheme: light;
   /* Ground and paper */
@@ -18,36 +18,42 @@
   --ink-5: #9C9A92;
   --ink-6: #C2C0B6;
   --track: #D1CFC5;
-  --line: rgba(31, 30, 29, 0.12);
-  --line-strong: rgba(31, 30, 29, 0.22);
+  --line: rgba(31, 30, 29, 0.11);
+  --line-strong: rgba(31, 30, 29, 0.2);
   --line-heavy: rgba(31, 30, 29, 0.32);
   /* The one accent */
   --clay: #D97757;
   --clay-ink: #A4502F;
   --clay-press: #C2603F;
-  --marker: rgba(217, 119, 87, 0.3);
+  --marker: rgba(217, 119, 87, 0.28);
   --clay-halo: rgba(217, 119, 87, 0.22);
-  /* Hover and selection tints: interaction always answers in clay. */
+  /* Hover and selection tints: interaction answers in clay wash on paper, solid clay on ink. */
   --clay-wash: rgba(217, 119, 87, 0.1);
   --clay-wash-2: rgba(217, 119, 87, 0.17);
-  --clay-line: rgba(217, 119, 87, 0.5);
-  /* Semantic */
+  --clay-line: rgba(217, 119, 87, 0.48);
+  /* Semantic & Ink surface tokens */
   --olive: #5C6E45;
   --danger: #B3412E;
   --danger-wash: #F8E7E1;
   --on-ink: #FAF9F5;
-  /* Type: every role defaults to serif; code stays monospace. fonts.ts overrides these from settings. */
+  --on-ink-2: rgba(250, 249, 245, 0.72);
+  --on-ink-3: rgba(250, 249, 245, 0.46);
+  --on-ink-line: rgba(250, 249, 245, 0.12);
+  --on-ink-wash: rgba(250, 249, 245, 0.08);
+  /* Typography: Serif for headings & long-form prose; Sans for UI controls; Mono for metrics & code. */
   --serif-fallback: 'Newsreader Variable', 'Songti SC', 'STSong', Georgia, serif;
+  --sans-fallback: 'PingFang SC', -apple-system, 'Helvetica Neue', sans-serif;
   --mono-fallback: 'SF Mono', Menlo, monospace;
   --font-display: 'Anthropic Serif Text', 'Anthropic Serif', var(--serif-fallback);
   --font-text: 'Anthropic Serif Text', 'Anthropic Serif', var(--serif-fallback);
-  --font-ui: 'Anthropic Serif Text', 'Anthropic Serif', var(--serif-fallback);
+  --font-ui: 'Anthropic Sans', var(--sans-fallback);
   --font-mono: 'JetBrains Mono', var(--mono-fallback);
   /* Elevation */
   --shadow-tab: 0 1px 2px rgba(20, 20, 19, 0.06);
-  --shadow-card: 0 8px 24px -14px rgba(20, 20, 19, 0.3);
-  --shadow-window: 0 28px 60px -24px rgba(20, 20, 19, 0.4), 0 2px 8px rgba(20, 20, 19, 0.08);
+  --shadow-card: 0 8px 24px -14px rgba(20, 20, 19, 0.28);
+  --shadow-window: 0 28px 60px -24px rgba(20, 20, 19, 0.38), 0 2px 8px rgba(20, 20, 19, 0.08);
   --shadow-float: 0 30px 70px -20px rgba(20, 20, 19, 0.38), 0 4px 14px rgba(20, 20, 19, 0.08);
+  --shadow-ink: 0 18px 42px -14px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.24), inset 0 0 0 1px rgba(250, 249, 245, 0.11);
   /* Motion */
   --ease-out: cubic-bezier(.22, .68, 0, 1);
   --t-fast: 120ms;
@@ -57,12 +63,12 @@
 
 * { box-sizing: border-box; }
 html, body { background: var(--bg); color: var(--ink); }
-body { margin: 0; font-family: var(--font-ui); font-size: 14px; line-height: 1.5; font-synthesis: none; -webkit-font-smoothing: antialiased; }
+body { margin: 0; font-family: var(--font-ui); font-size: 13.5px; line-height: 1.5; font-synthesis: none; -webkit-font-smoothing: antialiased; }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
-button:disabled { cursor: default; opacity: .45; }
+button:disabled { cursor: default; opacity: .42; }
 :focus-visible { outline: 2px solid var(--clay); outline-offset: 2px; }
-code, .mono { font-family: var(--font-mono); }
+code, .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { border: 3px solid transparent; border-radius: 6px; background: rgba(20, 20, 19, 0.16) padding-box; }
 ::-webkit-scrollbar-thumb:hover { background-color: rgba(20, 20, 19, 0.28); }

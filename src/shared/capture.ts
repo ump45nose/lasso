@@ -1,4 +1,4 @@
-import type { DesktopAPI, Settings } from './contracts';
+import type { DesktopAPI, Preset, Settings } from './contracts';
 import type { ScreenshotSettings } from './screenshot-settings';
 import type { CaptureDisplayBinding } from './capture-efficiency';
 import type { RegionPreset } from './capture-regions';
@@ -43,17 +43,18 @@ export interface ScrollCaptureState { status: 'running' | 'paused' | 'review'; w
 type ScrollSimpleAction = 'pause' | 'resume' | 'finish' | 'cancel' | 'undo' | 'edit';
 export type ScrollCaptureAction = ScrollSimpleAction | { type: ScrollSimpleAction } | { type: 'direction'; direction: ScrollDirection } | { type: 'remove-segment'; index: number } | { type: 'adjust-seam'; index: number; delta: number };
 export interface EditableRegion { display:CaptureDisplayBinding; sourceSize:{width:number;height:number}; initialCrop:CaptureRect; currentCrop:CaptureRect; ratio:number|null }
-export interface ScreenshotState { screenshotSettings?: ScreenshotSettings; toolbarTools?: string[]; mouseActions?: Settings['mouseActions']; checkpoint?: EditorCheckpoint; editableRegion?:EditableRegion; copyIntent?:number; captureKind?: ScreenshotKind; presentation?: 'inline' | 'window'; pixelScale?: { x: number; y: number }; saveFormat?: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string>; outputStatus?: string; outputError?: string; id: string; editId: string; imageCrop?: CaptureRect; imageFrame?: string; backdropFrame?: string; placement?: CaptureRect; mode?: 'rect' | 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
-export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean; editing?: boolean; editId?: string; kind?: PinKind; title?: string; groupId?: string; locked?: boolean; thumbnail?: boolean; zoomPercent?: number; wheelAction?: PinWheelAction; groups?: PinGroup[]; payload?: PinContentPayload }
-export interface PinSource { screenshotSettings?: ScreenshotSettings; toolbarTools?: string[]; mouseActions?: Settings['mouseActions']; editId: string; width: number; height: number; bgra: Uint8Array; annotations: AnnotationSnapshot; pixelScale?: { x: number; y: number }; saveFormat: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string> }
+export type EditorPresetSummary = Pick<Preset, 'id' | 'name' | 'target' | 'kind'>;
+export interface ScreenshotState { presets?: EditorPresetSummary[]; regionPresets?: RegionPreset[]; screenshotSettings?: ScreenshotSettings; toolbarTools?: string[]; mouseActions?: Settings['mouseActions']; checkpoint?: EditorCheckpoint; editableRegion?:EditableRegion; copyIntent?:number; captureKind?: ScreenshotKind; presentation?: 'inline' | 'window'; pixelScale?: { x: number; y: number }; saveFormat?: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string>; outputStatus?: string; outputError?: string; id: string; editId: string; imageCrop?: CaptureRect; imageFrame?: string; backdropFrame?: string; placement?: CaptureRect; mode?: 'rect' | 'area' | 'window' | 'scroll'; windows?: CaptureWindow[]; width: number; height: number; pixelWidth: number; pixelHeight: number; candidates: RegionCandidate[]; phase: 'selecting' | 'result' | 'scrolling' | 'review'; scroll?: ScrollCaptureState; selection: CaptureRect | null; origin?: 'screen' | 'clipboard' | 'pin'; pinId?: string; annotations?: AnnotationSnapshot }
+export interface PinState { id: string; revision: number; image: string; width: number; height: number; lines: OCRLine[]; status: string; topmost: boolean; opacity: number; passthrough: boolean; editing?: boolean; editId?: string; kind?: PinKind; title?: string; groupId?: string; locked?: boolean; thumbnail?: boolean; zoomPercent?: number; wheelAction?: PinWheelAction; groups?: PinGroup[]; payload?: PinContentPayload; presets?: EditorPresetSummary[] }
+export interface PinSource { presets?: EditorPresetSummary[]; screenshotSettings?: ScreenshotSettings; toolbarTools?: string[]; mouseActions?: Settings['mouseActions']; editId: string; width: number; height: number; bgra: Uint8Array; annotations: AnnotationSnapshot; pixelScale?: { x: number; y: number }; saveFormat: ScreenshotOutputFormat; annotationMemory?: AnnotationStyleMemory; editorShortcuts?: Record<string, string> }
 export type PinAction = 'recognize' | 'edit' | 'image' | 'copy' | 'close' | 'hide' | 'topmost' | 'opacity' | 'zoom-in' | 'zoom-out' | 'passthrough' | 'lock' | 'thumbnail' | 'reset-zoom' | 'save' | 'quick-save' | 'copy-file' | 'copy-path';
 /** Pin opacity steps; the options row cycles through them. */
 export const pinOpacities = [1, 0.85, 0.65, 0.4];
 export interface PinAPI {
   state(): Promise<PinState>;
   onState(callback: (state: PinState) => void): () => void;
-  action(action: PinAction): Promise<{error: string | null}>;
-  text(text: string, send: boolean, revision: number): Promise<{error: string | null}>;
+  action(action: PinAction, presetId?: string): Promise<{error: string | null}>;
+  text(text: string, send: boolean, revision: number, presetId?: string): Promise<{error: string | null}>;
   fastText(text: string, revision: number, rect?: CaptureRect): Promise<{ error: string | null }>;
   noteText(text: string, revision: number): Promise<{ error: string | null }>;
   source(): Promise<PinSource>;
@@ -89,7 +90,7 @@ export interface ScreenshotAPI {
   state(): Promise<ScreenshotState | null>;
   onState(callback: (state: ScreenshotState | null) => void): () => void;
   scrollAction(action: ScrollCaptureAction): Promise<{error: string | null}>;
-  action(action: 'cancel' | 'reselect' | 'screen' | 'retry'): Promise<{ error: string | null }>;
+  action(action: 'cancel' | 'reselect' | 'screen' | 'retry' | 'start-recording'): Promise<{ error: string | null }>;
   recognize(request: OCRRequest): Promise<OCRResult>;
   analyze(request: { id: string; revision: number; kind: IntelligenceKind; targetLanguage?: string; png: Uint8Array; crop: CaptureRect; lines?: OCRLine[] }): Promise<{ result: IntelligenceResult | null; error: string | null }>;
   visionLanguage(): Promise<string>;
@@ -98,10 +99,10 @@ export interface ScreenshotAPI {
   exportTable(rows: string[][]): Promise<{ path: string | null; error: string | null }>;
   pinFormula(latex: string): Promise<{ error: string | null }>;
   invalidateOCR(request: {id: string; revision: number}): void;
-  export(frame: CaptureFrame, action: ExportAction, format: ScreenshotOutputFormat, contentMode?: ScreenshotExportContentMode): Promise<{error: string | null}>;
+  export(frame: CaptureFrame, action: ExportAction, format: ScreenshotOutputFormat, contentMode?: ScreenshotExportContentMode, presetId?: string): Promise<{error: string | null}>;
   saveAnnotationMemory(memory: AnnotationStyleMemory): Promise<void>;
   copyText(request: {id: string; revision: number; text: string}): Promise<void>;
-  sendText(request: {id: string; revision: number; text: string}): Promise<{error: string | null}>;
+  sendText(request: {id: string; revision: number; text: string; presetId?: string}): Promise<{error: string | null}>;
   fastText(id: string, revision: number, text: string, rect?: CaptureRect): Promise<{ error: string | null }>;
   noteText(id: string, revision: number, text: string): Promise<{ error: string | null }>;
 }

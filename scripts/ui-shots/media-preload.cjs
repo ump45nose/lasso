@@ -2,7 +2,15 @@
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('media', {
   state: () => ipcRenderer.invoke('ui-shots:media-state'),
-  onState: callback => { const fn = (_event, value) => callback(value); ipcRenderer.on('media:changed', fn); return () => ipcRenderer.removeListener('media:changed', fn); },
+  onState: callback => {
+    const fn = (_event, value) => callback(value);
+    ipcRenderer.on('media:changed', fn);
+    return () => ipcRenderer.removeListener('media:changed', fn);
+  },
+  selectPreset: presetId => ipcRenderer.invoke('ui-shots:media-preset', presetId),
+  pickReference: () => ipcRenderer.invoke('ui-shots:media-pick'),
+  addReferenceBytes: () => ipcRenderer.invoke('ui-shots:media-pick'),
+  setPinned: pinned => ipcRenderer.invoke('ui-shots:media-pin', pinned),
   setReference: id => ipcRenderer.invoke('ui-shots:media-reference', id),
   restore: (id, edit, imageId) => ipcRenderer.invoke('ui-shots:media-restore', id, edit, imageId),
   choosePreset: async () => {},

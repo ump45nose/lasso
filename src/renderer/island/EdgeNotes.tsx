@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ChevronDown, Eye, FileText, Lock, PenLine, Pin, Plus, Search, Trash2, Unlock, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, FileText, Lock, LockOpen, Pin, Plus, Search, Trash2, X } from 'lucide-react';
 import type { EdgeNotesState, IslandAPI } from '../../shared/contracts';
 import { useFonts } from '../fonts';
+import { Segmented } from '../motion';
+import { shortcutLabel } from '../targets';
 import './island.css';
 
 declare global {
@@ -13,16 +15,26 @@ declare global {
 }
 
 const SCRATCHPAD = 'Scratchpad.md';
+const MODE_OPTIONS = [
+  ['edit', '编辑'],
+  ['preview', '预览']
+] as const;
+
+function formatShortDate(ts?: number): string {
+  if (!ts) return '';
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 
 export function EdgeNotes() {
   const [state, setState] = useState<EdgeNotesState | null>(null);
   const [draft, setDraft] = useState('');
-  const [isEditing, setIsEditing] = useState(false);
+  // v4 B6: persistent edit mode by default — blur saves without leaving edit mode!
+  const [isEditing, setIsEditing] = useState(true);
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
-  const [creating, setCreating] = useState(false);
-  const [newName, setNewName] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const activeFileRef = useRef(SCRATCHPAD);
@@ -31,16 +43,10 @@ export function EdgeNotes() {
   const pendingRef = useRef<{ file: string; content: string } | null>(null);
   const savesRef = useRef<{ file: string; content: string; done: Promise<void> }[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const newInputRef = useRef<HTMLInputElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useFonts(state?.fonts);
-
-  useEffect(() => {
-    if (isEditing) {
-      textareaRef.current?.focus();
-    }
-  }, [isEditing]);
 
   const flushSave = useCallback(async function savePending() {
     if (timerRef.current) {
@@ -50,7 +56,6 @@ export function EdgeNotes() {
     if (pendingRef.current) {
       const { file, content } = pendingRef.current;
       const existing = savesRef.current.find(save => save.file === file && save.content === content);
-      // Keep the draft until its state echo confirms this exact content was saved.
       const done = existing?.done ?? window.island.saveNote(file, content);
       if (!existing) savesRef.current.push({ file, content, done });
       await done;
@@ -73,25 +78,36 @@ export function EdgeNotes() {
       if (ownSave) savesRef.current.splice(savedIndex, 1);
       if (currentFile && pending?.file === nextFile && !ownSave && previous.file === nextFile && nextContent.startsWith(previous.content)) {
         const appended = nextContent.slice(previous.content.length);
-        if (appended) { pending.content += appended; setDraft(pending.content); }
+        if (appended) {
+          pending.content += appended;
+          setDraft(pending.content);
+        }
       }
       if (currentFile) savedContentRef.current = { file: nextFile, content: nextContent };
       if (ownSave && pending?.file === nextFile && pending.content === nextContent) {
         pendingRef.current = null;
         setSaving(false);
-        if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+        if (timerRef.current) {
+          clearTimeout(timerRef.current);
+          timerRef.current = null;
+        }
       } else if (currentFile && pending?.file === nextFile && (!next.open || !timerRef.current)) {
-        // A late append can arrive after flush; resend the merged draft immediately.
         void flushSave();
       }
-      if (!currentFile) return;
+      if (!currentFile && activeFileRef.current !== SCRATCHPAD) return;
+      activeFileRef.current = nextFile;
       setState(next);
       if (!pendingRef.current || pendingRef.current.file !== nextFile) setDraft(nextContent);
     };
     const stop = window.island.onNotesState(sync);
-    void window.island.getNotesState().then(sync);
+    void window.island.getNotesState().then(initial => {
+      activeFileRef.current = initial.activeFile;
+      savedContentRef.current = { file: initial.activeFile, content: initial.content };
+      setState(initial);
+      setDraft(initial.content);
+    });
     return () => {
-      flushSave();
+      void flushSave();
       stop();
     };
   }, [flushSave]);
@@ -103,16 +119,22 @@ export function EdgeNotes() {
         await flushSave();
         setPickerOpen(false);
         window.island.setNotesOpen(false);
+      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'e') {
+        event.preventDefault();
+        await flushSave();
+        setIsEditing(prev => {
+          const next = !prev;
+          if (next) setTimeout(() => textareaRef.current?.focus(), 20);
+          return next;
+        });
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
         event.preventDefault();
-        flushSave();
+        await flushSave();
         setPickerOpen(true);
-        setCreating(true);
-        setTimeout(() => newInputRef.current?.focus(), 20);
+        setTimeout(() => searchInputRef.current?.focus(), 20);
       } else if (event.key === 'Escape' && pickerOpen) {
         event.preventDefault();
         setPickerOpen(false);
-        setCreating(false);
         setConfirmDelete(null);
       }
     };
@@ -124,14 +146,16 @@ export function EdgeNotes() {
   let checkboxCounter = 0;
   const activeFile = state.activeFile;
   const q = query.trim().toLowerCase();
-  const files = state.files.filter(f => f !== SCRATCHPAD && (!q || f.toLowerCase().includes(q)));
+  const otherNotes = state.notes.filter(n => n.fileName !== SCRATCHPAD && (!q || n.fileName.toLowerCase().includes(q)));
   const showScratchpad = !q || SCRATCHPAD.toLowerCase().includes(q) || '随手记'.includes(q);
   const lineCount = draft ? draft.split('\n').length : 1;
+  const hotkeyLabel = state.shortcut ? shortcutLabel(state.shortcut) : '';
 
   function applyNote(next: EdgeNotesState) {
     activeFileRef.current = next.activeFile;
     savedContentRef.current = { file: activeFileRef.current, content: next.content };
-    setState(next); setDraft(next.content);
+    setState(next);
+    setDraft(next.content);
   }
 
   function onEdit(nextContent: string) {
@@ -153,36 +177,35 @@ export function EdgeNotes() {
       count++;
       return match;
     });
-    if (next !== draft) {
-      onEdit(next);
-    }
+    if (next !== draft) onEdit(next);
   }
 
   function pickNote(fileName: string) {
-    flushSave();
+    void flushSave();
     fileRequestRef.current++;
     activeFileRef.current = fileName;
     const found = state?.notes.find(n => n.fileName === fileName);
     if (found && state) applyNote({ ...state, activeFile: fileName, content: found.content });
     setConfirmDelete(null);
     setPickerOpen(false);
-    setCreating(false);
-    setIsEditing(false);
+    setQuery('');
     void window.island.selectNote(fileName);
   }
 
-  async function submitCreate(event?: React.FormEvent) {
-    event?.preventDefault();
+  async function handleCreateNote(customTitle?: string) {
     const request = ++fileRequestRef.current;
     await flushSave();
     if (request !== fileRequestRef.current) return;
-    const title = newName.trim();
-    setNewName('');
-    setCreating(false);
+    const title = (customTitle ?? query).trim();
+    setQuery('');
     setPickerOpen(false);
+    setIsEditing(true);
     await window.island.createNote(title || undefined);
     const next = await window.island.getNotesState();
-    if (request === fileRequestRef.current) applyNote(next);
+    if (request === fileRequestRef.current) {
+      applyNote(next);
+      setTimeout(() => textareaRef.current?.focus(), 20);
+    }
   }
 
   async function onDelete(event: React.MouseEvent, fileName: string) {
@@ -200,137 +223,162 @@ export function EdgeNotes() {
   }
 
   return (
-    <div className="en-stage">
-      <section className="en-raycast-win" aria-label="Raycast 风格浮动便签">
-        <header className="en-topbar">
+    <div className="en-stage" onClick={() => pickerOpen && setPickerOpen(false)}>
+      <section className={'en-win' + (!state.focused ? ' blurred' : '')} aria-label="浮动便签">
+        <header className="en-wbar">
+          <div className="en-picker-wrap" onClick={e => e.stopPropagation()}>
+            <button
+              type="button"
+              className={'en-switch' + (pickerOpen ? ' open' : '')}
+              aria-label="切换或搜索笔记"
+              aria-expanded={pickerOpen}
+              onClick={() => {
+                setPickerOpen(o => !o);
+                setConfirmDelete(null);
+                setTimeout(() => searchInputRef.current?.focus(), 20);
+              }}
+            >
+              <FileText size={15} />
+              <span className="trunc">{activeFile}</span>
+              {pickerOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+
+            {pickerOpen && (
+              <div className="en-menu" role="menu" aria-label="本地笔记列表">
+                <label className="en-menu-search">
+                  <Search size={14} />
+                  <input
+                    ref={searchInputRef}
+                    type="search"
+                    aria-label="搜索或新建笔记"
+                    placeholder="搜索或新建笔记"
+                    value={query}
+                    onChange={e => setQuery(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && query.trim() && otherNotes.length === 0 && !showScratchpad) {
+                        e.preventDefault();
+                        void handleCreateNote(query);
+                      }
+                    }}
+                  />
+                </label>
+
+                <div className="en-menu-list">
+                  {showScratchpad && (
+                    <div
+                      role="menuitem"
+                      tabIndex={0}
+                      className={'en-mi' + (activeFile === SCRATCHPAD ? ' active' : '')}
+                      onClick={() => pickNote(SCRATCHPAD)}
+                    >
+                      <Pin size={14} className="en-mi-ic" />
+                      <span className="trunc">{SCRATCHPAD}</span>
+                      <span className="en-mi-sub">随手记</span>
+                      {activeFile === SCRATCHPAD && <Check size={14} className="en-mi-r clay" />}
+                    </div>
+                  )}
+
+                  {otherNotes.map(note => {
+                    const selected = activeFile === note.fileName;
+                    const armed = confirmDelete === note.fileName;
+                    return (
+                      <div
+                        key={note.fileName}
+                        role="menuitem"
+                        tabIndex={0}
+                        className={'en-mi' + (selected ? ' active' : '')}
+                        onClick={() => pickNote(note.fileName)}
+                      >
+                        <FileText size={14} className="en-mi-ic" />
+                        <span className="trunc grow">{note.fileName}</span>
+                        {!armed && note.updatedAt && <span className="en-mi-date mono">{formatShortDate(note.updatedAt)}</span>}
+                        <button
+                          type="button"
+                          className={'en-mi-del' + (armed ? ' armed' : '')}
+                          aria-label={armed ? `确认删除 ${note.fileName}` : `删除 ${note.fileName}`}
+                          onClick={e => void onDelete(e, note.fileName)}
+                        >
+                          <Trash2 size={13} />
+                          {armed && <span>确认删除？</span>}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <div className="en-msep" />
+                <button type="button" className="en-mi" onClick={() => void handleCreateNote()}>
+                  <Plus size={14} className="en-mi-ic" />
+                  <span>{query.trim() ? `新建「${query.trim()}」` : '新建笔记'}</span>
+                  <kbd className="en-kbd en-mi-r">⌘N</kbd>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <span className="grow" />
+
+          <Segmented
+            label="编辑与预览切换"
+            value={isEditing ? 'edit' : 'preview'}
+            options={MODE_OPTIONS}
+            onChange={mode => {
+              void flushSave();
+              const nextEdit = mode === 'edit';
+              setIsEditing(nextEdit);
+              if (nextEdit) setTimeout(() => textareaRef.current?.focus(), 20);
+            }}
+          />
+
           <button
             type="button"
-            className={'en-picker-btn' + (pickerOpen ? ' open' : '')}
-            aria-label="切换或搜索便签"
-            aria-expanded={pickerOpen}
-            onClick={() => { setPickerOpen(o => !o); setConfirmDelete(null); }}
+            className="en-ib"
+            aria-label="新建笔记"
+            title="新建笔记 ⌘N"
+            onClick={() => void handleCreateNote('')}
           >
-            <span className="en-clay-dot" />
-            <span className="en-picker-name">{activeFile === SCRATCHPAD ? `${SCRATCHPAD} · 随手记` : activeFile}</span>
-            <ChevronDown size={13} />
+            <Plus size={15} />
           </button>
 
-          <div className="en-actions">
-            <button
-              type="button"
-              className={'en-icon-btn' + (isEditing ? ' active' : '')}
-              aria-label={isEditing ? '切到预览 (Esc / ⌘Enter)' : '编辑源码'}
-              data-tip={isEditing ? '切到预览 (Esc / ⌘Enter)' : '编辑源码'}
-              onClick={() => {
-                if (isEditing) {
-                  void flushSave();
-                  setIsEditing(false);
-                } else {
-                  setIsEditing(true);
-                }
-              }}
-            >
-              {isEditing ? <Eye size={13} /> : <PenLine size={13} />}
-              <span>{isEditing ? '预览' : '编辑'}</span>
-            </button>
-            <button
-              type="button"
-              className={'en-icon-btn' + (creating ? ' active' : '')}
-              aria-label="新建笔记"
-              data-tip="新建笔记 (⌘N)"
-              onClick={() => {
-                if (pickerOpen && creating && newName.trim()) void submitCreate();
-                else { flushSave(); setPickerOpen(true); setCreating(true); setTimeout(() => newInputRef.current?.focus(), 20); }
-              }}
-            >
-              <Plus size={14} />
-            </button>
-            <button
-              type="button"
-              className="en-icon-btn"
-              aria-label="撕下为贴图"
-              data-tip="撕下为贴图"
-              onClick={() => { flushSave(); void window.island.pinNoteToDesktop(activeFile); }}
-            >
-              <Pin size={14} />
-            </button>
-            <button
-              type="button"
-              className={'en-icon-btn' + (state.pinnedOnTop ? ' active' : '')}
-              aria-label="置顶常驻开关"
-              aria-pressed={state.pinnedOnTop}
-              onClick={() => void window.island.setNotesPinned(!state.pinnedOnTop).then(next => next && setState(next))}
-            >
-              {state.pinnedOnTop ? <Lock size={13} /> : <Unlock size={13} />}
-              <span>{state.pinnedOnTop ? '已置顶' : '置顶'}</span>
-            </button>
-            <button
-              type="button"
-              className="en-icon-btn"
-              aria-label="关闭便签"
-              onClick={() => { flushSave(); setPickerOpen(false); window.island.setNotesOpen(false); }}
-            >
-              <X size={14} />
-            </button>
-          </div>
+          <button
+            type="button"
+            className="en-ib"
+            aria-label="钉为桌面贴图"
+            title="钉为桌面贴图"
+            onClick={() => {
+              void flushSave();
+              void window.island.pinNoteToDesktop(activeFile);
+            }}
+          >
+            <Pin size={14} />
+          </button>
+
+          <button
+            type="button"
+            className={'en-ib' + (state.pinnedOnTop ? ' on' : '')}
+            aria-label={state.pinnedOnTop ? '取消置顶' : '置顶'}
+            aria-pressed={state.pinnedOnTop}
+            title={state.pinnedOnTop ? '已置顶' : '置顶'}
+            onClick={() => void window.island.setNotesPinned(!state.pinnedOnTop).then(next => next && setState(next))}
+          >
+            {state.pinnedOnTop ? <Lock size={14} /> : <LockOpen size={14} />}
+          </button>
+
+          <button
+            type="button"
+            className="en-ib"
+            aria-label="关闭便签"
+            onClick={() => {
+              void flushSave();
+              setPickerOpen(false);
+              window.island.setNotesOpen(false);
+            }}
+          >
+            <X size={15} />
+          </button>
         </header>
 
-        {pickerOpen && (
-          <div className="en-dropdown" role="menu" aria-label="本地笔记列表">
-            <div className="en-search-wrap">
-              <Search size={13} className="en-search-icon" />
-              <input
-                type="search"
-                className="en-search"
-                aria-label="搜索笔记"
-                placeholder="搜索本地 .md 笔记…"
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-              />
-            </div>
-
-            <div className="en-note-list">
-              {showScratchpad && (
-                <div role="menuitem" tabIndex={0} className={'en-note-row' + (activeFile === SCRATCHPAD ? ' active' : '')} onClick={() => pickNote(SCRATCHPAD)}>
-                  <span className="en-note-row-main"><FileText size={13} /><span>{SCRATCHPAD}</span></span>
-                  <span className="en-note-pin-badge mono">置顶</span>
-                </div>
-              )}
-              {files.map(file => (
-                <div key={file} role="menuitem" tabIndex={0} className={'en-note-row' + (activeFile === file ? ' active' : '')} onClick={() => pickNote(file)}>
-                  <span className="en-note-row-main"><FileText size={13} /><span>{file}</span></span>
-                  <button
-                    type="button"
-                    className={'en-del-btn mono' + (confirmDelete === file ? ' armed' : '')}
-                    aria-label={confirmDelete === file ? `确认删除 ${file}` : `删除 ${file}`}
-                    onClick={e => void onDelete(e, file)}
-                  >
-                    <Trash2 size={12} />
-                    <span>{confirmDelete === file ? '确认删除？' : '删除'}</span>
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            <form className={'en-create-row' + (creating ? ' active' : '')} onSubmit={e => void submitCreate(e)}>
-              <input
-                ref={newInputRef}
-                type="text"
-                className="en-new-input"
-                aria-label="新建笔记名称"
-                placeholder="输入新笔记名称，回车创建…"
-                value={newName}
-                onFocus={() => setCreating(true)}
-                onChange={e => { setCreating(true); setNewName(e.target.value); }}
-              />
-              <button type="submit" className="en-new-submit" aria-label="确认新建笔记">
-                <Plus size={13} /><span>新建</span>
-              </button>
-            </form>
-          </div>
-        )}
-
-        <div className="en-body" onPointerDown={() => pickerOpen && setPickerOpen(false)}>
+        <div className="en-body">
           {isEditing ? (
             <textarea
               ref={textareaRef}
@@ -339,88 +387,83 @@ export function EdgeNotes() {
               value={draft}
               onChange={e => onEdit(e.target.value)}
               onBlur={() => {
+                // B6 rule: blur ONLY saves, never exits edit mode or resets cursor/scroll!
                 void flushSave();
-                setIsEditing(false);
-              }}
-              onKeyDown={e => {
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  void flushSave();
-                  setIsEditing(false);
-                } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-                  e.preventDefault();
-                  void flushSave();
-                  setIsEditing(false);
-                }
               }}
               placeholder="随手记录灵感、命令片段或待办… 自动保存为本地 Markdown"
             />
           ) : (
-            <div
-              className="en-markdown-preview"
-              role="region"
-              aria-label="Markdown 预览正文"
-              onClick={e => {
-                const target = e.target as HTMLElement;
-                if (target.tagName.toLowerCase() === 'input' || target.closest('a')) return;
-                setIsEditing(true);
-              }}
-            >
+            <div className="en-render" role="region" aria-label="Markdown 预览">
               {draft.trim() ? (
                 <Markdown
                   remarkPlugins={[remarkGfm]}
                   components={{
-                    input: ({ node, ...props }) => {
+                    input: ({ ...props }) => {
                       if (props.type === 'checkbox') {
                         const idx = checkboxCounter++;
+                        const checked = Boolean(props.checked);
                         return (
-                          <input
-                            type="checkbox"
-                            checked={Boolean(props.checked)}
-                            className="en-md-checkbox"
-                            aria-label="切换待办任务状态"
-                            onClick={e => e.stopPropagation()}
-                            onChange={e => {
+                          <button
+                            type="button"
+                            role="checkbox"
+                            aria-checked={checked}
+                            aria-label="切换待办状态"
+                            className={'en-chk' + (checked ? ' on' : '')}
+                            onClick={e => {
                               e.stopPropagation();
                               toggleTaskCheckbox(idx);
                             }}
-                          />
+                          >
+                            {checked && <Check size={11} />}
+                          </button>
                         );
                       }
                       return <input {...props} />;
                     },
-                    a: ({ node, href, children, ...props }) => {
-                      return (
-                        <a
-                          href={href}
-                          target="_blank"
-                          rel="noreferrer"
-                          onClick={e => {
-                            e.stopPropagation();
-                          }}
-                          {...props}
-                        >
-                          {children}
-                        </a>
-                      );
-                    }
+                    a: ({ href, children, ...props }) => (
+                      <a href={href} target="_blank" rel="noreferrer" {...props}>
+                        {children}
+                      </a>
+                    )
                   }}
                 >
                   {draft}
                 </Markdown>
               ) : (
-                <p className="en-empty-placeholder">点击此处开始记录灵感或待办… 支持 Markdown 格式</p>
+                <p className="en-empty-hint" onClick={() => setIsEditing(true)}>
+                  暂无内容，按 ⌘E 或点「编辑」开始记录…
+                </p>
               )}
             </div>
           )}
         </div>
 
-        <footer className="en-footer">
-          <span className="en-footer-stat mono">{draft.length} 字 · {lineCount} 行<br />{saving ? '保存中…' : '自动保存'}</span>
-          <span className="en-footer-meta mono">
-            <span className="en-footer-path">~/Documents/LassoNotes/{activeFile}</span>
-            <span>⌥N 显隐</span>
+        <footer className="en-foot">
+          <span className="mono">
+            {draft.length} 字 · {lineCount} 行
           </span>
+          {isEditing ? (
+            <span className={'en-saved' + (saving ? ' saving' : '')}>
+              {!saving && <Check size={12} />}
+              <span>{saving ? '保存中…' : '已保存'}</span>
+            </span>
+          ) : (
+            <>
+              <span className="grow" />
+              <span className="en-keyhint">
+                <kbd className="en-kbd">⌘E</kbd>回到编辑
+              </span>
+            </>
+          )}
+          {isEditing && (
+            <>
+              <span className="grow" />
+              <span className="en-foot-path mono trunc" title={`${state.notesDir}/${activeFile}`}>
+                ~/Documents/LassoNotes/{activeFile}
+              </span>
+            </>
+          )}
+          {hotkeyLabel && <kbd className="en-kbd">{hotkeyLabel}</kbd>}
         </footer>
       </section>
     </div>

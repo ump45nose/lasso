@@ -7,6 +7,7 @@ import type { MediaService } from './media-service';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
 
+const WIN_W = 468, WIN_H = 420;
 const LANGUAGES: Record<TranslationLang, string> = { auto: '自动互译', zh: '简体中文', en: '英语', ja: '日语', ko: '韩语', fr: '法语', de: '德语' };
 
 function resolveEffectiveLang(text: string, targetLang: TranslationLang): Exclude<TranslationLang, 'auto'> {
@@ -159,8 +160,11 @@ export async function translateTextStream(
 
   if (process.env.LASSO_DATA_ROOT) {
     const ms = Math.max(1, Date.now() - startedAt);
-    onDelta?.(text, ms);
-    return { text, model: 'system-fast', connectionName: '内置极速翻译', firstTokenMs: ms };
+    const mock = /[一-鿿]/.test(text)
+      ? 'Keep screenshots, pins, and translations on the same warm sheet of paper.'
+      : '菜单栏刘海岛下沉到系统状态栏下方，胶囊和控制面板从此不会挡住摄像头和系统图标。';
+    onDelta?.(mock, ms);
+    return { text: mock, model: '内置极速', connectionName: '内置极速', firstTokenMs: ms };
   }
 
   const effectiveLang = resolveEffectiveLang(text, targetLang);
@@ -172,7 +176,7 @@ export async function translateTextStream(
     return {
       text: cached,
       model: provider === 'deepl' ? 'DeepLX' : provider === 'google' ? 'Google Translate' : '内置极速',
-      connectionName: provider === 'deepl' ? 'DeepL / DeepLX' : provider === 'google' ? 'Google 翻译' : '内置极速翻译',
+      connectionName: provider === 'deepl' ? 'DeepL' : provider === 'google' ? 'Google' : '内置极速',
       firstTokenMs
     };
   }
@@ -196,7 +200,7 @@ export async function translateTextStream(
       const firstTokenMs = Math.max(1, Date.now() - startedAt);
       setCachedTranslation(cacheKey, out);
       onDelta?.(out, firstTokenMs);
-      return { text: out, model: 'DeepL', connectionName: 'DeepL API', firstTokenMs };
+      return { text: out, model: 'DeepL', connectionName: 'DeepL', firstTokenMs };
     }
 
     let firstTokenMs = 0;
@@ -215,14 +219,14 @@ export async function translateTextStream(
       if (!firstTokenMs) firstTokenMs = Math.max(1, Date.now() - startedAt);
       setCachedTranslation(cacheKey, out);
       onDelta?.(out, firstTokenMs);
-      return { text: out, model: 'DeepLX', connectionName: 'DeepLX API', firstTokenMs };
+      return { text: out, model: 'DeepLX', connectionName: 'DeepLX', firstTokenMs };
     } catch (deeplxError) {
       try {
         const fallbackOut = fastPreview || await fastPromise;
         if (!firstTokenMs) firstTokenMs = Math.max(1, Date.now() - startedAt);
         setCachedTranslation(cacheKey, fallbackOut);
         onDelta?.(fallbackOut, firstTokenMs);
-        return { text: fallbackOut, model: 'DeepLX · 极速回退', connectionName: 'DeepLX / 极速双通道', firstTokenMs };
+        return { text: fallbackOut, model: 'DeepLX · 极速回退', connectionName: 'DeepLX', firstTokenMs };
       } catch {
         throw deeplxError;
       }
@@ -244,7 +248,7 @@ export async function translateTextStream(
     const firstTokenMs = Math.max(1, Date.now() - startedAt);
     setCachedTranslation(cacheKey, out);
     onDelta?.(out, firstTokenMs);
-    return { text: out, model: 'Google Translate', connectionName: 'Google Cloud', firstTokenMs };
+    return { text: out, model: 'Google Translate', connectionName: 'Google', firstTokenMs };
   }
 
   const out = await translateViaFastPublic(text, effectiveLang, signal);
@@ -254,7 +258,7 @@ export async function translateTextStream(
   return {
     text: out,
     model: provider === 'google' ? 'Google Translate' : '内置极速',
-    connectionName: provider === 'google' ? 'Google 翻译' : '内置极速翻译',
+    connectionName: provider === 'google' ? 'Google' : '内置极速',
     firstTokenMs
   };
 }
@@ -264,7 +268,7 @@ export interface TranslatorPanelDeps {
   mediaService: Pick<MediaService, 'connections' | 'streamChat'>;
   translationSettings: () => TranslationSettings;
   saveTargetLang?: (lang: TranslationLang) => void | Promise<void>;
-  writeText?: (text: string) => void | Promise<void>;
+  writeText?: (text: string, options?: { transient?: boolean }) => void | Promise<void>;
   pinText: (text: string, title?: string) => Promise<void>;
   noteText: (text: string) => void | Promise<void>;
   ax?: Partial<NativeAx>;
@@ -288,21 +292,39 @@ export class TranslatorPanel {
 
   constructor(fonts: TranslatorWindowState['fonts'], private readonly deps: TranslatorPanelDeps) {
     this.ax = deps.ax ?? (process.env.LASSO_DATA_ROOT ? {} : nativeAx());
-    this.state = { open: false, pinnedOnTop: false, sourceText: '', translatedText: '', status: 'idle', error: null,
-      targetLang: deps.translationSettings().targetLang, connectionName: '', model: '', firstTokenMs: null, canReplace: false, fonts };
+    this.state = {
+      open: false,
+      pinnedOnTop: false,
+      fromSelection: false,
+      sourceText: '',
+      translatedText: '',
+      status: 'idle',
+      error: null,
+      targetLang: deps.translationSettings().targetLang,
+      connectionName: '',
+      model: '',
+      firstTokenMs: null,
+      canReplace: false,
+      fonts
+    };
     this.refreshConnection();
-    this.window = createIslandWindow(440, 388, { focusable: true });
+    this.window = createIslandWindow(WIN_W, WIN_H, { focusable: true });
+    this.window.setMovable(true);
     this.window.setAlwaysOnTop(false);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     this.window.on('close', event => { event.preventDefault(); this.close(); });
     this.window.on('blur', () => { if (!this.state.pinnedOnTop) this.close(); });
     this.window.webContents.on('before-input-event', (event, input) => {
-      if (input.type === 'keyDown' && (input.key === 'Escape' || input.meta && input.key.toLowerCase() === 'w')) { event.preventDefault(); this.close(); }
+      if (input.type === 'keyDown' && (input.key === 'Escape' || (input.meta && input.key.toLowerCase() === 'w'))) {
+        event.preventDefault();
+        this.close();
+      }
     });
     const { check } = deps;
     ipcMain.handle('translator:state', event => { check(event); return this.snapshot(); });
     ipcMain.handle('translator:translate', (event, req: { text: string; targetLang: TranslationLang }) => {
-      check(event); return this.translate(req?.text, req?.targetLang);
+      check(event);
+      return this.translate(req?.text, req?.targetLang);
     });
     ipcMain.on('translator:cancel', event => { check(event); this.cancel(); });
     ipcMain.handle('translator:lang', async (event, lang: TranslationLang) => { check(event); await this.setTargetLang(lang); });
@@ -320,11 +342,16 @@ export class TranslatorPanel {
       const pid = sourcePid ?? this.ax.frontmostApp?.().pid ?? 0;
       this.targetPid = Number.isInteger(pid) && pid > 0 && pid !== process.pid ? pid : 0;
     }
-    this.state.canReplace = this.targetPid > 0 && Boolean(this.ax.pasteToProcess);
+    const hasSelectionText = typeof text === 'string' && text.trim().length > 0;
+    this.state.fromSelection = hasSelectionText;
+    this.state.canReplace = hasSelectionText && this.targetPid > 0 && Boolean(this.ax.pasteToProcess);
     this.state.open = true;
     this.refreshConnection();
     const cursor = screen.getCursorScreenPoint(), area = screen.getDisplayNearestPoint(cursor).workArea;
-    this.window.setPosition(Math.round(Math.max(area.x, Math.min(cursor.x - 220, area.x + area.width - 440))), Math.round(Math.max(area.y, Math.min(cursor.y + 12, area.y + area.height - 388))));
+    this.window.setPosition(
+      Math.round(Math.max(area.x, Math.min(cursor.x - WIN_W / 2, area.x + area.width - WIN_W))),
+      Math.round(Math.max(area.y, Math.min(cursor.y + 12, area.y + area.height - WIN_H)))
+    );
     this.window.show();
     this.window.focus();
     this.publish();
@@ -403,19 +430,33 @@ export class TranslatorPanel {
   async act(action: 'copy' | 'replace' | 'pin' | 'note', text: string): Promise<{ error: string | null }> {
     try {
       if (typeof text !== 'string' || !text.trim() || text.length > 1_000_000) throw Error('没有可操作的译文');
-      if (action === 'copy' || action === 'replace') {
-        if (action === 'replace' && !this.state.canReplace) throw Error('没有可替换的原应用选区');
+      if (action === 'copy') {
         if (this.deps.writeText) await this.deps.writeText(text);
-        else await clipboard.writeText(text);
-        if (action === 'replace') {
-          this.close();
-          if (!this.ax.pasteToProcess?.(this.targetPid)) throw Error('未能回贴到原应用，请检查辅助功能权限');
-        }
-      } else if (action === 'pin') await this.deps.pinText(text, '翻译');
-      else if (action === 'note') await this.deps.noteText(text);
-      else throw Error('不支持的翻译操作');
+        else clipboard.writeText(text);
+        if (!this.state.pinnedOnTop) this.close();
+      } else if (action === 'replace') {
+        if (!this.state.canReplace) throw Error('没有可替换的原应用选区');
+        const previous = await Promise.resolve(clipboard.readText());
+        if (this.deps.writeText) await this.deps.writeText(text, { transient: true });
+        else clipboard.writeText(text);
+        this.close();
+        if (!this.ax.pasteToProcess?.(this.targetPid)) throw Error('未能回贴到原应用，请检查辅助功能权限');
+        setTimeout(() => {
+          void Promise.resolve(clipboard.readText()).then(current => {
+            if (current === text && this.deps.writeText) void this.deps.writeText(previous, { transient: true });
+          });
+        }, 280);
+      } else if (action === 'pin') {
+        await this.deps.pinText(text, '翻译');
+      } else if (action === 'note') {
+        await this.deps.noteText(text);
+      } else {
+        throw Error('不支持的翻译操作');
+      }
       return { error: null };
-    } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
   }
 
   updateSettings(settings: Settings) {
@@ -438,16 +479,16 @@ export class TranslatorPanel {
     const hasLlm = Boolean(conn && settings.model.trim());
     const provider = settings.provider || (hasLlm ? 'llm' : 'system');
     if (provider === 'llm' && hasLlm && conn) {
-      this.state.connectionName = conn.name;
+      this.state.connectionName = 'LLM';
       this.state.model = settings.model.trim();
     } else if (provider === 'deepl') {
-      this.state.connectionName = 'DeepL API';
+      this.state.connectionName = 'DeepL';
       this.state.model = 'DeepL';
     } else if (provider === 'google') {
-      this.state.connectionName = 'Google 翻译';
+      this.state.connectionName = 'Google';
       this.state.model = 'Google Translate';
     } else {
-      this.state.connectionName = '内置极速翻译';
+      this.state.connectionName = '内置极速';
       this.state.model = '内置极速';
     }
   }

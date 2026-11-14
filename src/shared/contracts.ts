@@ -1,5 +1,5 @@
 import type { RecordingAction, RecordingSessionState } from './recording';
-import type { CustomCaptureRequest, RegionConfiguration, RegionPreset } from './capture-regions';
+import type { RegionConfiguration, RegionPreset } from './capture-regions';
 import type { ScreenshotSettings } from './screenshot-settings';
 import type { MemorySettings } from './memory';
 import type { ApiConnection, ApiConnectionInput, ImageOptions, MediaConfig, MediaConfigInput, TranslationLang, TranslationSettings } from './media';
@@ -8,41 +8,101 @@ import type { VisionServiceConfig, VisionServiceInput } from './intelligence';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
 import type { EditorShortcutMap, GlobalActionId, IgnoredAppRule } from './shortcuts';
 import type { CaptureHistoryState, PinArrangeMode, PinKind, PinWorkspaceSettings, PinWorkspaceState, WebDavConfig, WebDavConfigInput, WebDavSyncDirection } from './history-sync';
-export type Target = 'chatgpt' | 'gemini' | 'codex' | 'pi';
+
+export type Target = 'chatgpt' | 'gemini' | 'api';
+export type WebTarget = 'chatgpt' | 'gemini';
 /** Native web views are placed below the title bar and above any footer rows. */
 export const HEADER_HEIGHT = 44;
 export const FOOTER_ROW = 48;
-export type LocalTarget = 'codex' | 'pi';
-export const targetLabels: Record<Target, string> = { chatgpt: 'ChatGPT', gemini: 'Gemini', codex: 'Codex', pi: 'Pi' };
+export const targetLabels: Record<Target, string> = { chatgpt: 'ChatGPT', gemini: 'Gemini', api: 'API' };
+export type PresetTarget = Target;
+export const presetTargetLabels = targetLabels;
+
 export interface AppPrompt { bundleId: string; name: string; prompt: string; enabled: boolean }
-export interface LocalConfig { executable: string; cwd: string }
 export interface ImagePreview { id: string; thumbnail: string; width: number; height: number }
 export interface ExecutionProfile { model?: string; effort?: string }
-export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; effortOptions?: { id: string; label: string }[] }
-export interface LaunchOptions { target?: Target; cwd?: string; imageId?: string; textId?: string; imagePrompt?: string }
-export interface ChatMessage { id: string; role: 'user' | 'assistant' | 'tool' | 'notice'; text: string; title?: string; running?: boolean; image?: string }
 export interface AgentModel { id: string; label: string; images?: boolean; efforts?: string[]; defaultEffort?: string }
-export interface AgentQuestion { id: string; question: string; options?: string[]; secret?: boolean }
-export interface AgentRequest { id: string; title: string; detail?: string; kind: 'confirm' | 'select' | 'input' | 'editor' | 'questions' | 'json'; options?: string[]; prefill?: string; questions?: AgentQuestion[] }
-export interface AgentAnswer { cancelled?: boolean; confirmed?: boolean; value?: string; answers?: Record<string, string> }
-export interface AgentState { revision: number; effort: string; efforts: string[]; modelsLoading: boolean; controlsBusy: boolean; modelsError: string | null; taskId: string; target: LocalTarget; cwd: string; messages: ChatMessage[]; requests: AgentRequest[]; models: AgentModel[]; model: string; draft: string; draftRevision: number; image: ImagePreview | null; activity: TaskActivity; error: string | null; resident: boolean; status: string }
-export type AgentEvent = { taskId: string; revision: number; patch: Partial<Omit<AgentState, 'messages'>>; messages: ChatMessage[]; order?: string[] };
+export interface ExecutionCatalog { models: AgentModel[]; efforts: string[]; effortOptions?: { id: string; label: string }[] }
+export interface LaunchOptions { target?: Target; connectionId?: string; model?: string; imageId?: string; prompt?: string; autoSend?: boolean }
+
+export interface ApiChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+  image?: ImagePreview;
+  streaming?: boolean;
+  firstTokenMs?: number | null;
+  error?: string | null;
+}
+export interface ApiChatState {
+  revision: number;
+  taskId: string;
+  connectionId: string;
+  model: string;
+  messages: ApiChatMessage[];
+  draft: string;
+  image: ImagePreview | null;
+  running: boolean;
+  error: string | null;
+}
+export interface ApiChatEvent {
+  taskId: string;
+  state: ApiChatState;
+}
+
 export type FontRole = 'display' | 'text' | 'ui' | 'mono';
 export interface ImportedFont { family: string; file: string }
-export const defaultFonts: Record<FontRole, string> = { display: 'Anthropic Serif Text', text: 'Anthropic Serif Text', ui: 'Anthropic Serif Text', mono: 'JetBrains Mono' };
-export interface ScriptAction { id: string; name: string; enabled: boolean; code: string }
-export type GeneralSettings = Pick<Settings, 'launchAtLogin' | 'themeMode' | 'toolbarTools' | 'mouseActions' | 'scriptActions' | 'autoCheckUpdates'>;
+export const defaultFonts: Record<FontRole, string> = {
+  display: 'Anthropic Serif Text',
+  text: 'Anthropic Serif Text',
+  ui: 'Anthropic Sans',
+  mono: 'JetBrains Mono'
+};
+
+export type FinderTerminalApp = 'Terminal' | 'Ghostty' | 'Warp' | 'iTerm';
+export type FinderEditorApp = 'Cursor' | 'VSCode' | 'Zed';
+
+export interface ActionBarConfig {
+  /** Ordered item IDs ('translate', 'note', or `preset:<id>`). */
+  order: string[];
+  /** Hidden item IDs disabled from the action bar. */
+  hidden: string[];
+  /** Number of enabled items shown directly in the capsule before folding into ···. */
+  inlineCount: number;
+}
+
+export interface SuiteSettings {
+  notchIslandEnabled: boolean;
+  windowDragSnap: boolean;
+  snapDwellMs: number;
+  finderTriggers: { middleClick: boolean; rightHold: boolean };
+  finderTerminal: FinderTerminalApp;
+  finderEditor: FinderEditorApp;
+  clipboardMaxItems: number;
+  nookPrefs: NookReminderPrefs;
+}
+
+export type GeneralSettings = Pick<Settings, 'launchAtLogin' | 'themeMode' | 'toolbarTools' | 'mouseActions' | 'autoCheckUpdates'>;
+
 export interface Settings {
   launchAtLogin: boolean;
   themeMode: 'paper' | 'system';
   /** Empty displays every tool. */
   toolbarTools: string[];
   mouseActions: { doubleClick: 'copy' | 'save' | 'pin' | 'none'; rightClick: 'reselect' | 'cancel'; middleClick: 'pin' | 'quick-save' | 'none' };
-  scriptActions: ScriptAction[];
   autoCheckUpdates: boolean;
   vision: Omit<VisionServiceConfig, 'hasCredential'>;
   translation: TranslationSettings;
+  notchIslandEnabled: boolean;
   windowDragSnap: boolean;
+  snapDwellMs: number;
+  finderTriggers: { middleClick: boolean; rightHold: boolean };
+  finderTerminal: FinderTerminalApp;
+  finderEditor: FinderEditorApp;
+  clipboardMaxItems: number;
+  nookPrefs: NookReminderPrefs;
+  actionBar: ActionBarConfig;
+  defaultApiChat: { connectionId: string; model: string };
   memory: MemorySettings;
   screenshot: ScreenshotSettings;
   /** Empty means no global shortcut. */
@@ -56,12 +116,10 @@ export interface Settings {
   selectionEnabled: boolean;
   clipboardFallback: boolean;
   appPrompts: AppPrompt[];
-  local: Record<LocalTarget, LocalConfig>;
   fonts: Record<FontRole, string>;
   importedFonts: ImportedFont[];
 }
-export type PresetTarget = Target | 'api';
-export const presetTargetLabels = { ...targetLabels, api: 'API' };
+
 export interface Preset extends ExecutionProfile {
   kind?: 'chat' | 'image';
   image?: ImageOptions;
@@ -76,6 +134,7 @@ export interface Preset extends ExecutionProfile {
   needsSelection: boolean;
   enabled: boolean;
 }
+
 export interface SelectionContext {
   text: string;
   sourceApp: string;
@@ -101,24 +160,19 @@ export interface TaskSummary {
   retainedReason: string | null;
 }
 export const taskActivityLabels: Record<TaskActivity, string> = {
-  idle: '新对话', loading: '加载中', running: '进行中', waiting: '等待处理',
-  draft: '有草稿', complete: '已完成', unknown: '状态待确认', error: '页面异常'
+  idle: '新对话', loading: '加载中', running: '生成中', waiting: '等待处理',
+  draft: '有草稿', complete: '已完成', unknown: '状态待确认', error: '异常'
 };
+
+export type SettingsSection = 'general' | 'selection' | 'presets' | 'translation' | 'connections' | 'capture' | 'suite' | 'shortcuts';
+
 export interface ShellState {
-  customCaptureOpen?:boolean;
   tasks: TaskSummary[];
   activeTaskId: string | null;
   pinned: boolean;
   expanded: boolean;
-  settingsOpen: boolean;
   hasPage: boolean;
   activeTarget: Target | null;
-  inputImage: ImagePreview | null;
-  inputImagePrompt?: string;
-  /** OCR or handed-off text waiting for a preset; replaces any pending image. */
-  inputText: { id: string; text: string } | null;
-  /** The pending image or text is shown as a temporary tab in front of the tasks. */
-  inputOpen: boolean;
   hostname: string;
   loading: boolean;
   pageError: string | null;
@@ -127,19 +181,45 @@ export interface ShellState {
   notice: string | null;
   settings: Settings;
   presets: Preset[];
+  connections: ApiConnection[];
+  settingsSection?: SettingsSection;
   capture: CaptureStatus;
   captureEfficiency: CaptureEfficiencyState;
   selection: { length: number; sourceApp: string } | null;
   delivery: DeliveryStatus | null;
 }
-export type Action = 'custom-capture'|'close-custom-capture'| 'dismiss-notice' | 'pin' | 'expand' | 'hide' | 'settings' | 'close-settings' | 'reload' | 'quit'
-  | 'selection-permission' | 'refresh-capture' | 'dismiss-delivery' | 'copy-pending' | 'cancel-delivery' | 'show-input' | 'retry-delivery'
-  | 'open-island-board' | 'toggle-edge-notes' | 'open-finder-panel' | 'snap-coding-ai' | 'snap-equal-split';
-export type PaletteScope = 'all' | 'tasks' | 'new' | 'images';
+
+export type Action =
+  | 'dismiss-notice'
+  | 'pin'
+  | 'expand'
+  | 'hide'
+  | 'settings'
+  | 'open-quick-image'
+  | 'reload'
+  | 'quit'
+  | 'selection-permission'
+  | 'refresh-capture'
+  | 'dismiss-delivery'
+  | 'copy-pending'
+  | 'cancel-delivery'
+  | 'retry-delivery'
+  | 'open-island-board'
+  | 'toggle-edge-notes'
+  | 'open-finder-panel'
+  | 'snap-coding-ai'
+  | 'snap-equal-split';
+
+export type PaletteScope = 'all' | 'tasks' | 'new';
 export interface PaletteEvent { scope: PaletteScope | null; backdrop: string | null }
+
 export interface DesktopAPI {
   saveGeneral(options: GeneralSettings): Promise<{ error: string | null }>;
-  runScriptAction(id: string, input?: { text?: string }): Promise<{ output: string; error: string | null }>;
+  saveActionBarConfig(config: ActionBarConfig): Promise<{ error: string | null }>;
+  saveSuiteSettings(patch: Partial<SuiteSettings>): Promise<{ error: string | null }>;
+  saveAppPrompts(rules: AppPrompt[]): Promise<{ error: string | null }>;
+  saveDefaultApiChat(config: { connectionId: string; model: string }): Promise<{ error: string | null }>;
+  openSettings(section?: SettingsSection): Promise<void>;
   recordingPanel(open: boolean): Promise<void>;
   onRecordingClose(callback: () => void): () => void;
   recordingState(): Promise<RecordingSessionState | null>;
@@ -161,10 +241,9 @@ export interface DesktopAPI {
   saveWebdavConfig(input: WebDavConfigInput): Promise<WebDavConfig>;
   syncWebdav(direction: WebDavSyncDirection): Promise<{ state: WebDavConfig; error: string | null }>;
   saveMemory(options: MemorySettings): Promise<{ error: string | null }>;
-  captureRegions():Promise<RegionConfiguration>;
-  customScreenshot(request:CustomCaptureRequest):Promise<{error:string|null}>;
-  saveRegionPreset(preset:RegionPreset):Promise<void>;
-  deleteRegionPreset(id:string):Promise<void>;
+  captureRegions(): Promise<RegionConfiguration>;
+  saveRegionPreset(preset: RegionPreset): Promise<void>;
+  deleteRegionPreset(id: string): Promise<void>;
   mediaConfig(): Promise<MediaConfig>;
   visionConfig(): Promise<VisionServiceConfig>;
   saveVisionConfig(input: VisionServiceInput): Promise<VisionServiceConfig>;
@@ -176,7 +255,6 @@ export interface DesktopAPI {
   fetchApiConnectionModels(id: string): Promise<{ models: string[]; error: string | null }>;
   saveTranslationSettings(input: TranslationSettings): Promise<{ error: string | null }>;
   saveWindowDragSnap(enabled: boolean): Promise<{ error: string | null }>;
-  attachImage(prompt?: string): Promise<{ error: string | null }>;
   openLink(url: string): Promise<void>;
   getState(): Promise<ShellState>;
   act(action: Action): Promise<void>;
@@ -192,23 +270,22 @@ export interface DesktopAPI {
   savePresets(presets: Preset[]): Promise<{ error: string | null }>;
   runPreset(id: string, options?: LaunchOptions): Promise<{ error: string | null }>;
   newTask(options: LaunchOptions): Promise<void>;
-  saveIntegrations(settings: Pick<Settings, 'local' | 'appPrompts'>): Promise<{ error: string | null }>;
   choosePath(kind: 'directory' | 'executable' | 'application'): Promise<{ path: string; bundleId?: string; name?: string } | null>;
   appIcon(bundleId: string): Promise<string | null>;
   readImage(taskId?: string): Promise<{ error: string | null }>;
+  pickChatImage(taskId: string): Promise<{ error: string | null }>;
   removeImage(taskId?: string): Promise<void>;
-  editImage(imageId: string): Promise<{error:string|null}>;
-  removeText(): Promise<void>;
-  getAgent(taskId: string): Promise<AgentState | null>;
-  agentDraft(taskId: string, text: string): Promise<void>;
-  agentSend(taskId: string): Promise<{ error: string | null }>;
-  agentStop(taskId: string): Promise<{ error: string | null }>;
-  executionCatalog(target: Target, model?: string, refresh?: boolean): Promise<{ catalog: ExecutionCatalog | null; error: string | null }>;
-  agentEffort(taskId: string, effort: string): Promise<{ error: string | null }>;
-  agentRefreshModels(taskId: string): Promise<{ error: string | null }>;
-  agentModel(taskId: string, model: string): Promise<{ error: string | null }>;
-  agentAnswer(taskId: string, requestId: string, answer: AgentAnswer): Promise<{ error: string | null }>;
-  onAgent(callback: (event: AgentEvent) => void): () => void;
+  editImage(taskId: string, imageId: string): Promise<{ error: string | null }>;
+  getApiChat(taskId: string): Promise<ApiChatState | null>;
+  apiChatDraft(taskId: string, text: string): Promise<void>;
+  apiChatSend(taskId: string): Promise<{ error: string | null }>;
+  apiChatStop(taskId: string): Promise<{ error: string | null }>;
+  apiChatRegenerate(taskId: string, messageId?: string): Promise<{ error: string | null }>;
+  apiChatClear(taskId: string): Promise<void>;
+  apiChatModel(taskId: string, connectionId: string, model: string): Promise<{ error: string | null }>;
+  apiChatPin(taskId: string): Promise<{ error: string | null }>;
+  onApiChat(callback: (event: ApiChatEvent) => void): () => void;
+  executionCatalog(target: WebTarget, model?: string, refresh?: boolean): Promise<{ catalog: ExecutionCatalog | null; error: string | null }>;
   selectTask(id: string): Promise<void>;
   closeTask(id: string): Promise<void>;
   openPalette(scope: PaletteScope): Promise<void>;
@@ -219,55 +296,57 @@ export interface DesktopAPI {
   removeFont(file: string): Promise<{ error: string | null }>;
   onState(callback: (state: ShellState) => void): () => void;
 }
+
 export interface FastApiCardState {
   presetId: string;
   presetName: string;
+  connectionId: string;
   model: string;
   status: 'streaming' | 'done' | 'error';
   text: string;
   error: string | null;
   firstTokenMs: number | null;
-  isTranslation: boolean;
-  targetLang: 'auto' | 'zh' | 'en';
 }
-/** `presets` fill the capsule; `more` are the remaining enabled presets and `scripts` the enabled script actions, both listed in the ··· menu. */
+
+export interface ActionBarItem {
+  id: string;
+  kind: 'translate' | 'note' | 'preset';
+  name: string;
+  target?: Target;
+  mode?: 'edit' | 'send';
+}
+
+/** `items` fill the capsule; `more` are the remaining enabled actions listed in the ··· menu. */
 export interface ActionBarState {
-  presets: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[];
-  more: Pick<Preset, 'id' | 'name' | 'target' | 'mode'>[];
-  scripts: Pick<ScriptAction, 'id' | 'name'>[];
+  items: ActionBarItem[];
+  more: ActionBarItem[];
   busy: boolean;
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
   fastCard?: FastApiCardState | null;
 }
-/** A side of the capsule, away from the selection when the screen allows. */
+
 export type ActionBarTip = 'above' | 'below';
-/** Where the hover tip and the ··· menu open; the capsule stays anchored to the other edge. */
 export interface ActionBarLayout { tip: ActionBarTip; menu: ActionBarTip }
-/** ··· menu metrics, shared by main (window growth) and the renderer (row sizes). */
 export const BAR_MENU = { width: 232, row: 32, pad: 5, sep: 9, gap: 6 };
-/** The overflow presets and the scripts each end with a separator when present; the settings row comes last. */
-export const barMenuHeight = ({ more, scripts }: Pick<ActionBarState, 'more' | 'scripts'>) => BAR_MENU.pad * 2 + (more.length + scripts.length + 1) * BAR_MENU.row + [more, scripts].filter(rows => rows.length).length * BAR_MENU.sep;
+export const barMenuHeight = ({ more }: Pick<ActionBarState, 'more'>) =>
+  BAR_MENU.pad * 2 + (more.length + 1) * BAR_MENU.row + (more.length > 0 ? BAR_MENU.sep : 0);
+
 export interface ActionBarAPI {
   getState(): Promise<ActionBarState>;
-  runPreset(id: string): Promise<void>;
-  runScript(id: string): Promise<void>;
-  /** Grows the window on the menu side while the ··· menu is open. */
+  runItem(id: string): Promise<void>;
   menu(open: boolean): void;
   settings(): void;
-  /** Width of the capsule itself; main adds the transparent margins. */
   resize(width: number): void;
-  /** Height of the inline fast-API result card when open (0 when closed). */
   cardHeight(height: number): void;
   closeFastCard(): void;
-  retryFastCard(targetLang?: 'auto' | 'zh' | 'en'): Promise<void>;
+  retryFastCard(): Promise<void>;
+  continueFastInChat(): Promise<void>;
   copyFastResult(text: string): Promise<void>;
   replaceSelection(text: string): Promise<void>;
+  noteFastResult(text: string): Promise<void>;
   pinFastResult(text: string): Promise<void>;
-  appendNote(): Promise<void>;
-  /** The pointer entered or left the capsule; outside it the window lets clicks through. */
   hit(inside: boolean): void;
   onState(callback: (state: ActionBarState) => void): () => void;
-  /** Fired on every show so the capsule can replay its entrance. */
   onEnter(callback: (layout: ActionBarLayout) => void): () => void;
 }
 
@@ -283,13 +362,14 @@ export interface IslandTaskItem {
   id: string;
   title: string;
   listTitle: string;
+  completed?: boolean;
+  dueLabel?: string;
+  overdue?: boolean;
 }
-export type IslandCliTask = {
-  id: string;
-  target: 'codex' | 'pi';
-  title: string;
-  activity: 'running' | 'waiting';
-};
+export interface NookFocusReview {
+  mainGoal: string;
+  items: string[];
+}
 export interface IslandState {
   mode: IslandMode;
   glow: boolean;
@@ -307,10 +387,13 @@ export interface IslandState {
   } | null;
   toast: { id: string; text: string; badge?: string } | null;
   alerts: IslandAlertItem[];
+  nookReview: NookFocusReview | null;
   nookTasks: IslandTaskItem[];
-  cliTasks: IslandCliTask[];
+  nookCompletedCount: number;
+  nookTotalCount: number;
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
 }
+
 export type SnapSlot =
   | 'left-half'
   | 'right-half'
@@ -320,6 +403,11 @@ export type SnapSlot =
   | 'top-right'
   | 'bottom-left'
   | 'bottom-right'
+  | 'left-third'
+  | 'center-third'
+  | 'right-third'
+  | 'left-two-thirds'
+  | 'right-two-thirds'
   | 'maximize'
   | 'center'
   | 'prev-display'
@@ -335,9 +423,11 @@ export interface NookReminderPrefs {
   localAndCustom: boolean;
 }
 export type IslandQuickAction = 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel' | 'open-translator' | 'open-clipboard';
+
 export interface TranslatorWindowState {
   open: boolean;
   pinnedOnTop: boolean;
+  fromSelection: boolean;
   sourceText: string;
   translatedText: string;
   status: 'idle' | 'streaming' | 'done' | 'error';
@@ -349,6 +439,7 @@ export interface TranslatorWindowState {
   canReplace: boolean;
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
 }
+
 export interface ClipboardEntry {
   id: string;
   kind: 'text' | 'image' | 'files';
@@ -360,6 +451,7 @@ export interface ClipboardEntry {
   imagePath?: string;
   imageWidth?: number;
   imageHeight?: number;
+  imageBytes?: number;
   files?: string[];
   sourceBundleId: string;
   sourceAppName: string;
@@ -367,20 +459,26 @@ export interface ClipboardEntry {
   createdAt: number;
   favorite: boolean;
 }
-export interface ClipboardWindowState { entries: ClipboardEntry[]; pinnedOnTop: boolean; fonts: Pick<Settings, 'fonts' | 'importedFonts'> }
+export interface ClipboardWindowState {
+  entries: ClipboardEntry[];
+  pinnedOnTop: boolean;
+  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+}
 
 export interface EdgeNoteItem {
   fileName: string;
   content: string;
+  updatedAt?: number;
 }
-
 export type EdgeNotesState = {
   open: boolean;
+  focused: boolean;
   pinnedOnTop: boolean;
   activeFile: string;
   content: string;
   files: string[];
   notesDir: string;
+  shortcut: string;
   notes: EdgeNoteItem[];
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
 };
@@ -388,22 +486,27 @@ export type EdgeNotesState = {
 export type FinderMoveTarget = {
   id: string;
   label: string;
+  group?: string;
   path: string;
   kind: 'common' | 'repo' | 'worktree';
 };
 export type FinderPanelState = {
   folder: string;
   selection: string[];
+  imageCount: number;
   hasImageSelection: boolean;
   cutPaths: string[];
   moveTargets: FinderMoveTarget[];
+  defaultTerminal: FinderTerminalApp;
+  defaultEditor: FinderEditorApp;
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
 };
 export type FinderActionReq =
   | { kind: 'new-file'; name: string; content?: string }
   | { kind: 'copy-paths'; style: 'posix' | 'quoted' | 'filename' }
-  | { kind: 'open-terminal'; app?: 'Terminal' | 'Warp' | 'Ghostty' }
-  | { kind: 'open-editor'; app: 'Cursor' | 'VSCode' | 'Zed' }
+  | { kind: 'open-terminal'; app?: FinderTerminalApp }
+  | { kind: 'open-editor'; app?: FinderEditorApp }
+  | { kind: 'send-to-ai' }
   | { kind: 'cut-selection' }
   | { kind: 'paste-move' }
   | { kind: 'delete-permanent' }
@@ -422,6 +525,7 @@ export interface IslandAPI {
   togglePausePomodoro(): Promise<void>;
   stopPomodoro(): Promise<void>;
   completeTask(taskId: string): Promise<void>;
+  openNook(): Promise<void>;
   snoozeAlert(alertId: string, minutes?: number): Promise<void>;
   dismissAlert(alertId?: string): Promise<void>;
   restartService(label: string): Promise<void>;
@@ -438,11 +542,10 @@ export interface IslandAPI {
   closeTranslator(): void;
   onTranslatorState(callback: (state: TranslatorWindowState) => void): () => void;
   getClipboardState(): Promise<ClipboardWindowState>;
-  clipboardAct(req: { action: 'paste' | 'copy' | 'toggle-fav' | 'pin' | 'note' | 'delete' | 'clear-all'; id?: string }): Promise<{ error: string | null }>;
+  clipboardAct(req: { action: 'paste' | 'paste-plain' | 'copy' | 'toggle-fav' | 'pin' | 'note' | 'translate' | 'ask-ai' | 'delete' | 'clear-all' | 'set-pinned'; id?: string; pinned?: boolean }): Promise<{ error: string | null }>;
   closeClipboard(): void;
   onClipboardState(callback: (state: ClipboardWindowState) => void): () => void;
   snapWindow(slot: SnapSlot): Promise<void>;
-  focusTask(taskId: string): Promise<void>;
   onState(callback: (state: IslandState) => void): () => void;
   // EdgeNotes surface API
   getNotesState(): Promise<EdgeNotesState>;

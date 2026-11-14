@@ -5,21 +5,78 @@ import { fromMainFrame, sealLocal } from './ipc';
 import { WindowMotion } from './motion';
 import { fitToWorkArea } from './position';
 import { composePrompt } from './presets';
-import { BAR_MENU, barMenuHeight, type ActionBarLayout, type ActionBarState, type AppPrompt, type FastApiCardState, type Preset, type SelectionContext, type Settings } from '../shared/contracts';
+import {
+  BAR_MENU,
+  barMenuHeight,
+  type ActionBarConfig,
+  type ActionBarItem,
+  type ActionBarLayout,
+  type ActionBarState,
+  type AppPrompt,
+  type FastApiCardState,
+  type Preset,
+  type SelectionContext,
+  type Settings
+} from '../shared/contracts';
 
-// The window is transparent: the 40px capsule sits between two tip bands, with side room for its CSS shadow.
-// While the ··· menu or inline fast-API card is open, the band on the menu side grows to hold it.
-const BAR = 40, TIP = 36, SIDE = 16, GAP = 10, HEIGHT = TIP * 2 + BAR, VISIBLE = 4, MENU_EDGE = 6, FAST_WIDTH = 412;
+const BAR = 40, TIP = 36, SIDE = 16, GAP = 10, HEIGHT = TIP * 2 + BAR, MENU_EDGE = 6, FAST_WIDTH = 440;
 
 export interface ActionBarFastCallbacks {
-  stream(input: { connectionId?: string; model?: string; prompt: string; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
-  translateStream?(input: { text: string; targetLang: 'auto' | 'zh' | 'en'; signal?: AbortSignal }, onDelta: (text: string, firstTokenMs: number) => void): Promise<{ text: string; model: string; firstTokenMs: number }>;
+  stream(
+    input: { connectionId?: string; model?: string; prompt: string; signal?: AbortSignal },
+    onDelta: (text: string, firstTokenMs: number) => void
+  ): Promise<{ text: string; model: string; firstTokenMs: number }>;
   writeText(text: string, options?: { transient?: boolean }): Promise<void>;
   paste(): void;
   pin(image: NativeImage): Promise<void>;
   toast(text: string, badge?: string): void;
   appPrompts(): AppPrompt[];
-  translation?: () => Settings['translation'];
+  onTranslate(selection: SelectionContext): void;
+  onAppendNote(text: string, sourceApp?: string): Promise<void> | void;
+  onContinueInChat(payload: { title: string; connectionId: string; model: string; userText: string; assistantText: string }): void;
+}
+
+export function buildOrderedActionBarItems(presets: readonly Preset[], config: ActionBarConfig): { items: ActionBarItem[]; more: ActionBarItem[] } {
+  const catalog = new Map<string, ActionBarItem>();
+  catalog.set('translate', { id: 'translate', kind: 'translate', name: '翻译' });
+  for (const p of presets) {
+    if (!p.enabled || p.kind === 'image') continue;
+    catalog.set(`preset:${p.id}`, { id: p.id, kind: 'preset', name: p.name, target: p.target, mode: p.mode });
+  }
+  catalog.set('note', { id: 'note', kind: 'note', name: '入便签' });
+
+  const cut = Math.max(1, config.inlineCount);
+  const hidden = new Set(config.hidden);
+  const orderedKeys: string[] = [];
+  for (const key of config.order) {
+    if (catalog.has(key) && !orderedKeys.includes(key)) orderedKeys.push(key);
+  }
+  for (const key of catalog.keys()) {
+    if (!orderedKeys.includes(key)) {
+      if (key === 'note' && !config.order.includes('note')) {
+        // Default: keep 入便签 in the last inline capsule slot before overflow presets
+        let enabledBefore = 0;
+        let insertIdx = orderedKeys.length;
+        for (let i = 0; i < orderedKeys.length; i++) {
+          if (!hidden.has(orderedKeys[i])) {
+            enabledBefore++;
+            if (enabledBefore === cut) {
+              insertIdx = i;
+              break;
+            }
+          }
+        }
+        orderedKeys.splice(insertIdx, 0, key);
+      } else {
+        orderedKeys.push(key);
+      }
+    }
+  }
+  const visible = orderedKeys.filter(key => !hidden.has(key)).map(key => catalog.get(key)!);
+  return {
+    items: visible.slice(0, cut),
+    more: visible.slice(cut)
+  };
 }
 
 export class ActionBar {
@@ -27,9 +84,8 @@ export class ActionBar {
   private motion: WindowMotion;
   private selection: SelectionContext | null = null;
   private presets: Preset[] = [];
-  private scripts: ActionBarState['scripts'] = [];
+  private actionBarConfig: ActionBarConfig = { order: [], hidden: [], inlineCount: 5 };
   private fonts: ActionBarState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
-  private translation: Settings['translation'] = { connectionId: '', model: '', targetLang: 'auto', copyTranslateEnabled: false, copyTranslateTrigger: 'double-cmd-c' };
   private busy = false;
   private width = 340;
   private bar = { x: 240, top: 320 };
@@ -39,72 +95,101 @@ export class ActionBar {
   private fastCardHeight = 0;
   private fastAbort: AbortController | null = null;
   private fastPreset: Preset | null = null;
+  private fastPrompt = '';
 
   constructor(
-    private run: (id: string, selection: SelectionContext, openInWindow?: boolean) => Promise<void>,
-    private runScript: (id: string, selection: SelectionContext) => Promise<void>,
-    private settings: () => void,
-    private fast: ActionBarFastCallbacks,
-    private options: { onAppendNote?: (text: string) => Promise<void> | void } = {}
+    private runPreset: (id: string, selection: SelectionContext) => Promise<void>,
+    private openSettings: () => void,
+    private fast: ActionBarFastCallbacks
   ) {
     this.window = new BrowserWindow({
-      width: this.width + SIDE * 2, height: HEIGHT, frame: false, show: false, resizable: false, movable: false,
-      focusable: false, skipTaskbar: true, alwaysOnTop: true, acceptFirstMouse: true,
-      transparent: true, hasShadow: false, backgroundColor: '#00000000',
-      webPreferences: { preload: join(__dirname, 'action-bar-preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true }
+      width: this.width + SIDE * 2,
+      height: HEIGHT,
+      frame: false,
+      show: false,
+      resizable: false,
+      movable: false,
+      focusable: false,
+      skipTaskbar: true,
+      alwaysOnTop: true,
+      acceptFirstMouse: true,
+      transparent: true,
+      hasShadow: false,
+      backgroundColor: '#00000000',
+      webPreferences: {
+        preload: join(__dirname, 'action-bar-preload.cjs'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true
+      }
     });
     this.motion = new WindowMotion(this.window);
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'screen-saver', 1);
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     sealLocal(this.window.webContents);
+
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
       if (!fromMainFrame(event, this.window)) throw new Error('动作条来源不匹配');
     };
-    ipcMain.handle('bar:state', event => { check(event); return this.snapshot(); });
-    ipcMain.handle('bar:run', async (event, id: string) => {
+
+    ipcMain.handle('bar:state', event => {
       check(event);
-      if (!this.selection) return;
-      if (this.fastCard?.presetId === id) {
-        const selection = this.selection;
-        this.hide();
-        await this.run(id, selection, true);
-        return;
-      }
-      if (this.busy) return;
-      const preset = this.presets.find(p => p.id === id && p.enabled);
-      const fastTarget = preset ? this.resolveFastPreset(preset) : null;
-      if (fastTarget) {
-        await this.startFastCard(fastTarget.preset, this.selection, fastTarget.targetLang);
-        return;
-      }
-      await this.run(id, this.selection);
+      return this.snapshot();
     });
-    ipcMain.handle('bar:script', async (event, id: string) => {
+
+    ipcMain.handle('bar:run', async (event, id: string) => {
       check(event);
       const selection = this.selection;
       if (!selection || this.busy) return;
-      this.hide();
-      try { await this.runScript(id, selection); }
-      catch (error) { this.fast.toast(`脚本失败：${(error as Error).message}`, 'Error'); }
+      if (id === 'translate') {
+        this.hide(true);
+        this.fast.onTranslate(selection);
+        return;
+      }
+      if (id === 'note') {
+        if (selection.text.trim()) {
+          await this.fast.onAppendNote(selection.text, selection.sourceApp);
+        }
+        this.hide();
+        return;
+      }
+      const preset = this.presets.find(p => p.id === id && p.enabled && p.kind !== 'image');
+      if (!preset) return;
+      if (preset.target === 'api') {
+        await this.startFastCard(preset, selection);
+        return;
+      }
+      await this.runPreset(id, selection);
     });
-    ipcMain.handle('bar:append-note', async event => {
+
+    ipcMain.on('bar:menu', (event, open: boolean) => {
       check(event);
-      const text = this.selection?.text;
-      if (!text?.trim()) return;
-      await this.options.onAppendNote?.(text);
-      this.hide();
+      this.menuOpen = open === true;
+      if (this.menuOpen) this.closeFast();
+      this.place();
     });
-    ipcMain.on('bar:menu', (event, open: boolean) => { check(event); this.menuOpen = open === true; if (this.menuOpen) this.closeFast(); this.place(); });
-    ipcMain.on('bar:settings', event => { check(event); this.hide(); this.settings(); });
-    ipcMain.on('bar:hit', (event, inside: boolean) => { check(event); this.window.setIgnoreMouseEvents(!inside, { forward: true }); });
+
+    ipcMain.on('bar:settings', event => {
+      check(event);
+      this.hide();
+      this.openSettings();
+    });
+
+    ipcMain.on('bar:hit', (event, inside: boolean) => {
+      check(event);
+      this.window.setIgnoreMouseEvents(!inside, { forward: true });
+    });
+
     ipcMain.on('bar:resize', (event, width: number) => {
       check(event);
       if (typeof width === 'number' && Number.isFinite(width) && width > 0) {
         this.width = Math.min(900, Math.ceil(width));
-        if (this.selection) this.position(this.selection); else this.place();
+        if (this.selection) this.position(this.selection);
+        else this.place();
       }
     });
+
     ipcMain.on('bar:card-height', (event, height: number) => {
       check(event);
       if (typeof height === 'number' && Number.isFinite(height)) {
@@ -112,13 +197,34 @@ export class ActionBar {
         this.place();
       }
     });
-    ipcMain.on('bar:fast-close', event => { check(event); this.closeFast(); this.publish(); this.place(); });
-    ipcMain.handle('bar:fast-retry', async (event, targetLang?: 'auto' | 'zh' | 'en') => {
+
+    ipcMain.on('bar:fast-close', event => {
       check(event);
-      if (!this.fastCard || !this.selection) return;
-      const preset = this.fastPreset;
-      if (preset) await this.startFastCard(preset, this.selection, targetLang || this.fastCard.targetLang, this.fastCard.isTranslation);
+      this.closeFast();
+      this.publish();
+      this.place();
     });
+
+    ipcMain.handle('bar:fast-retry', async event => {
+      check(event);
+      if (!this.fastCard || !this.selection || !this.fastPreset) return;
+      await this.startFastCard(this.fastPreset, this.selection);
+    });
+
+    ipcMain.handle('bar:fast-continue', async event => {
+      check(event);
+      if (!this.fastCard) return;
+      const payload = {
+        title: this.fastCard.presetName,
+        connectionId: this.fastCard.connectionId,
+        model: this.fastCard.model,
+        userText: this.fastPrompt || this.selection?.text || '',
+        assistantText: this.fastCard.text
+      };
+      this.hide(true);
+      this.fast.onContinueInChat(payload);
+    });
+
     ipcMain.handle('bar:fast-copy', async (event, text: string) => {
       check(event);
       if (typeof text === 'string' && text.trim()) {
@@ -128,6 +234,15 @@ export class ActionBar {
         this.fast.toast('已复制结果到剪贴板', ms ? `${ms}ms` : undefined);
       }
     });
+
+    ipcMain.handle('bar:fast-note', async (event, text: string) => {
+      check(event);
+      if (typeof text === 'string' && text.trim()) {
+        await this.fast.onAppendNote(text, this.selection?.sourceApp);
+        this.hide();
+      }
+    });
+
     ipcMain.handle('bar:fast-replace', async (event, text: string) => {
       check(event);
       if (typeof text === 'string' && text.trim()) {
@@ -145,12 +260,18 @@ export class ActionBar {
         }, 60);
       }
     });
+
     ipcMain.handle('bar:fast-pin', async (event, text: string) => {
       check(event);
       if (typeof text !== 'string' || !text.trim()) return;
       const b = this.window.getBounds();
       const cardY = this.layout.menu === 'above' ? Math.max(0, b.height - (TIP + BAR + BAR_MENU.gap) - this.fastCardHeight) : TIP + BAR + BAR_MENU.gap;
-      const rect = { x: SIDE, y: Math.max(0, cardY), width: Math.min(FAST_WIDTH, b.width - SIDE * 2), height: Math.min(this.fastCardHeight, b.height - cardY) };
+      const rect = {
+        x: SIDE,
+        y: Math.max(0, cardY),
+        width: Math.min(FAST_WIDTH, b.width - SIDE * 2),
+        height: Math.min(this.fastCardHeight, b.height - cardY)
+      };
       const image = await this.window.webContents.capturePage(rect);
       this.hide();
       if (!image.isEmpty()) {
@@ -158,52 +279,29 @@ export class ActionBar {
         this.fast.toast('已钉为桌面贴图', 'Pin');
       }
     });
+
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'action-bar' } });
   }
 
-  private resolveFastPreset(preset: Preset): { preset: Preset; targetLang: 'auto' | 'zh' | 'en' } | null {
-    if (preset.kind === 'image') return null;
-    const translation = this.fast.translation?.() ?? this.translation;
-    if (preset.id === 'translate') {
-      const targetLang = translation.targetLang === 'zh' || translation.targetLang === 'en' ? translation.targetLang : 'auto';
-      const hasLlm = Boolean(translation.connectionId.trim() && translation.model.trim());
-      const provider = translation.provider || (hasLlm ? 'llm' : 'system');
-      const modelLabel = provider === 'llm' && hasLlm
-        ? translation.model.trim()
-        : provider === 'deepl'
-          ? 'DeepL'
-          : provider === 'google'
-            ? 'Google Translate'
-            : '内置极速';
-      return {
-        preset: { ...preset, target: 'api', connectionId: translation.connectionId.trim(), model: modelLabel },
-        targetLang
-      };
-    }
-    if (preset.target === 'api') return { preset, targetLang: 'auto' };
-    return null;
-  }
-
   private snapshot(): ActionBarState {
-    const enabled = this.presets.filter(p => p.enabled).map(p => ({
-      id: p.id,
-      name: p.name,
-      target: this.resolveFastPreset(p) ? 'api' : p.target,
-      mode: p.mode
-    }));
-    return { presets: enabled.slice(0, VISIBLE), more: enabled.slice(VISIBLE), scripts: this.scripts, busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
+    const { items, more } = buildOrderedActionBarItems(this.presets, this.actionBarConfig);
+    return { items, more, busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
   }
 
-  private hasActions() { return Boolean(this.options.onAppendNote) || this.presets.some(p => p.enabled) || this.scripts.length > 0; }
+  private hasActions() {
+    const { items, more } = buildOrderedActionBarItems(this.presets, this.actionBarConfig);
+    return items.length > 0 || more.length > 0;
+  }
 
   private publish() {
     if (!this.window.isDestroyed()) this.window.webContents.send('bar:changed', this.snapshot());
   }
 
   update(presets: Preset[], busy: boolean, settings: Settings) {
-    this.presets = presets; this.busy = busy; this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
-    this.translation = settings.translation;
-    this.scripts = settings.scriptActions.filter(action => action.enabled).map(({ id, name }) => ({ id, name }));
+    this.presets = presets;
+    this.busy = busy;
+    this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.actionBarConfig = settings.actionBar;
     this.publish();
     if (!this.hasActions()) this.hide();
   }
@@ -212,36 +310,29 @@ export class ActionBar {
     this.fastAbort?.abort();
     this.fastAbort = null;
     this.fastPreset = null;
+    this.fastPrompt = '';
     this.fastCard = null;
     this.fastCardHeight = 0;
   }
 
-  /** Opens the inline streaming card directly attached to the action bar (or summons the bar near cursor for OCR/palette runs). */
-  async startFastCard(preset: Preset, selection: SelectionContext, targetLang: 'auto' | 'zh' | 'en' = 'auto', languageSwitch = false) {
+  async startFastCard(preset: Preset, selection: SelectionContext) {
     this.closeFast();
-    const resolved = this.resolveFastPreset(preset);
-    const activePreset = resolved ? resolved.preset : preset;
-    this.fastPreset = activePreset;
+    this.fastPreset = preset;
     this.menuOpen = false;
     this.selection = selection;
-    const isTranslation = activePreset.id === 'translate' || /翻译|translate/i.test(activePreset.name);
-    let prompt = composePrompt(activePreset, selection, this.fast.appPrompts());
-    if (targetLang !== 'auto') {
-      prompt += isTranslation
-        ? targetLang === 'zh' ? '\n\n请将上述内容准确翻译为简体中文，只输出译文。' : '\n\nPlease translate the content above into natural English and output only the translation.'
-        : targetLang === 'zh' ? '\n\n请用简体中文输出。' : '\n\nPlease output in English.';
-    }
-    const model = activePreset.model?.trim() || '';
+    const prompt = composePrompt(preset, selection, this.fast.appPrompts());
+    this.fastPrompt = prompt;
+    const connectionId = preset.connectionId?.trim() || '';
+    const model = preset.model?.trim() || '';
     this.fastCard = {
-      presetId: activePreset.id,
-      presetName: activePreset.name,
+      presetId: preset.id,
+      presetName: preset.name,
+      connectionId,
       model,
       status: 'streaming',
       text: '',
       error: null,
-      firstTokenMs: null,
-      isTranslation: isTranslation || languageSwitch,
-      targetLang
+      firstTokenMs: null
     };
     if (this.window.isDestroyed()) return;
     const wasVisible = this.window.isVisible();
@@ -263,9 +354,7 @@ export class ActionBar {
         this.fastCard = { ...this.fastCard, text, firstTokenMs };
         this.publish();
       };
-      const result = activePreset.id === 'translate' && this.fast.translateStream
-        ? await this.fast.translateStream({ text: selection.text, targetLang, signal: controller.signal }, onDelta)
-        : await this.fast.stream({ connectionId: activePreset.connectionId, model, prompt, signal: controller.signal }, onDelta);
+      const result = await this.fast.stream({ connectionId, model, prompt, signal: controller.signal }, onDelta);
       if (this.fastAbort !== controller || !this.fastCard) return;
       this.fastCard = { ...this.fastCard, status: 'done', text: result.text, model: result.model, firstTokenMs: result.firstTokenMs };
       this.publish();
@@ -276,23 +365,27 @@ export class ActionBar {
     }
   }
 
-  /** Places the capsule above the selection (below when there is no room) and picks the free sides for the tip and the menu/card. */
   private position(selection: SelectionContext) {
     const a = selection.anchor;
     const area = screen.getDisplayNearestPoint({ x: a.x, y: a.y }).workArea;
     const above = a.y - BAR - GAP >= area.y;
     const barY = above ? a.y - BAR - GAP : a.y + a.height + GAP;
     const targetWidth = Math.max(this.width, this.fastCard ? FAST_WIDTH : 0);
-    const bounds = fitToWorkArea({ x: a.x - SIDE, y: barY - TIP, width: targetWidth + SIDE * 2, height: HEIGHT }, { ...area, y: area.y - TIP, height: area.height + TIP * 2 });
-    const top = bounds.y + TIP, room = (side: 'above' | 'below', need: number) => side === 'above' ? top - need >= area.y : top + BAR + need <= area.y + area.height;
-    const away = above ? 'above' : 'below', toward = above ? 'below' : 'above';
+    const bounds = fitToWorkArea(
+      { x: a.x - SIDE, y: barY - TIP, width: targetWidth + SIDE * 2, height: HEIGHT },
+      { ...area, y: area.y - TIP, height: area.height + TIP * 2 }
+    );
+    const top = bounds.y + TIP;
+    const room = (side: 'above' | 'below', need: number) =>
+      side === 'above' ? top - need >= area.y : top + BAR + need <= area.y + area.height;
+    const away = above ? 'above' : 'below';
+    const toward = above ? 'below' : 'above';
     const menuNeed = BAR_MENU.gap + Math.max(barMenuHeight(this.snapshot()), this.fastCardHeight);
     this.bar = { x: bounds.x, top };
     this.layout = { tip: room(away, TIP) ? away : toward, menu: room(away, menuNeed) || !room(toward, menuNeed) ? away : toward };
     this.place();
   }
 
-  /** Sizes the window around the capsule, growing the menu-side band while the menu or fast card is open. */
   private place() {
     if (this.window.isDestroyed()) return;
     const cardH = this.fastCard ? (this.fastCardHeight || 196) : this.fastCardHeight;
@@ -303,7 +396,12 @@ export class ActionBar {
         : 0;
     const extra = Math.max(0, activeExtraHeight - TIP);
     const width = Math.max(this.width, cardH > 0 ? FAST_WIDTH : this.menuOpen ? BAR_MENU.width : 0) + SIDE * 2;
-    this.window.setBounds({ x: this.bar.x, y: this.bar.top - TIP - (this.layout.menu === 'above' ? extra : 0), width, height: HEIGHT + extra });
+    this.window.setBounds({
+      x: this.bar.x,
+      y: this.bar.top - TIP - (this.layout.menu === 'above' ? extra : 0),
+      width,
+      height: HEIGHT + extra
+    });
   }
 
   show(selection: SelectionContext) {
@@ -319,7 +417,6 @@ export class ActionBar {
     this.publish();
   }
 
-  /** Hit-tests the capsule, or the whole window while the menu or fast card is open; a click elsewhere counts as outside. */
   contains(point: { x: number; y: number }) {
     if (this.window.isDestroyed() || !this.window.isVisible()) return false;
     const b = this.window.getBounds();

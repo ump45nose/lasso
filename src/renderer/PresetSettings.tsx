@@ -1,107 +1,484 @@
-import { defaultImageOptions } from '../shared/media';
-import { ApiConnectionPoolManager, ApiTextFields, ImageOptionsFields } from './ImageOptionsFields';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { ChevronLeft, GripVertical, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
+import { presetTargetLabels as targetLabels, type Preset } from '../shared/contracts';
+import { defaultImageOptions, imageOptionsSummary } from '../shared/media';
 import { promptSources } from '../shared/prompt-templates';
-import { Fragment, useRef, useState } from 'react';
-import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
-import { ChevronLeft, GripVertical, Plus, Trash2 } from 'lucide-react';
 import { ExecutionFields } from './ExecutionFields';
-import { presetTargetLabels as targetLabels } from '../shared/contracts';
-import type { Preset } from '../shared/contracts';
-import { targets } from './targets';
-import { Segmented, rise, spring } from './motion';
-import { SaveBar } from './SaveBar';
+import { ApiTextFields, ImageOptionsFields } from './ImageOptionsFields';
+import { Segmented } from './motion';
 import { Switch } from './Switch';
+import { Badge, targets } from './targets';
 
-const BAR_SIZE = 4;
 const preview = (template: string) => template.replace(/\s+/g, ' ').split('{{selection}}');
 
-/** Order and on/off save immediately; content edits go through the editor's save bar. */
-export function PresetSettings({ presets }: { presets: Preset[] }) {
+export function PresetSettings({
+  presets,
+  creatingKind,
+  onClearCreate,
+  onOpenConnections,
+  notify
+}: {
+  presets: Preset[];
+  creatingKind: 'chat' | 'image' | null;
+  onClearCreate(): void;
+  onOpenConnections(): void;
+  notify(status: { ok?: boolean; error?: string }): void;
+}) {
   const [editing, setEditing] = useState<Preset | null>(null);
   const [error, setError] = useState('');
   const drag = useRef<string | null>(null);
   const [drop, setDrop] = useState<string | null>(null);
-  async function save(next: Preset[]) { const r = await window.desktop.savePresets(next); setError(r.error || ''); return !r.error; }
-  function move(id: string, to: number) {
-    const from = presets.findIndex(p => p.id === id);
-    if (from < 0 || to < 0 || to >= presets.length || from === to) return;
-    const next = [...presets]; const [moved] = next.splice(from, 1); next.splice(to, 0, moved); void save(next);
+
+  useEffect(() => {
+    if (!creatingKind) return;
+    setEditing(
+      creatingKind === 'image'
+        ? {
+            id: crypto.randomUUID(),
+            kind: 'image',
+            name: '新图片生成预设',
+            template: '请生成清晰细腻的插画：\n\n{{selection}}',
+            target: 'api',
+            image: defaultImageOptions(),
+            mode: 'send',
+            needsSelection: false,
+            enabled: true
+          }
+        : {
+            id: crypto.randomUUID(),
+            kind: 'chat',
+            name: '新对话预设',
+            template: '{{selection}}',
+            target: 'chatgpt',
+            mode: 'send',
+            needsSelection: true,
+            enabled: true
+          }
+    );
+    onClearCreate();
+  }, [creatingKind, onClearCreate]);
+
+  async function save(next: Preset[]) {
+    const r = await window.desktop.savePresets(next);
+    setError(r.error || '');
+    if (r.error) {
+      notify({ error: r.error });
+      return false;
+    }
+    notify({ ok: true });
+    return true;
   }
-  const bar: Preset[] = [], more: Preset[] = [];
-  for (const preset of presets) (preset.enabled && bar.length < BAR_SIZE ? bar : more).push(preset);
-  const row = (preset: Preset) => <motion.li key={preset.id} layout="position" layoutId={preset.id} transition={spring} className={'l-preset-row' + (preset.enabled ? '' : ' l-off')} data-drop={drop === preset.id} draggable onDragStart={() => { drag.current = preset.id; }} onDragOver={e => { e.preventDefault(); if (drag.current !== preset.id) setDrop(preset.id); }} onDragLeave={() => setDrop(null)} onDragEnd={() => { drag.current = null; setDrop(null); }}
-    onDrop={() => { if (drag.current) move(drag.current, presets.indexOf(preset)); drag.current = null; setDrop(null); }}>
-    <span className="l-grip" aria-hidden="true"><GripVertical size={14} /></span>
-    <button className="l-preset" aria-label={`编辑 ${preset.name}，⌥↑↓ 调整顺序`} onClick={() => setEditing(preset)}
-      onKeyDown={e => { if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) { e.preventDefault(); move(preset.id, presets.indexOf(preset) + (e.key === 'ArrowUp' ? -1 : 1)); } }}>
-      <strong>{preset.name || '未命名'}{!preset.needsSelection && <span className="tag">无需选区</span>}{!preset.enabled && <span className="tag">已停用</span>}</strong>
-      <span>{preview(preset.template).map((part, i) => <Fragment key={i}>{i > 0 && <span className="l-placeholder-chip">选区</span>}{part}</Fragment>)}</span>
-    </button>
-    <span className="l-row-meta">{targetLabels[preset.target]}{preset.target === 'api' && preset.model ? ` · ${preset.model}` : ''} · {preset.mode === 'edit' ? '先编辑' : '直接发送'}</span>
-    <Switch label={'启用 ' + preset.name} value={preset.enabled} change={() => void save(presets.map(p => p.id === preset.id ? { ...p, enabled: !p.enabled } : p))} />
-  </motion.li>;
-  return <AnimatePresence mode="wait" initial={false}>{editing ? <motion.div key={editing.id} className="l-view" {...rise}><PresetEditor key={editing.id} preset={editing} isNew={!presets.some(p => p.id === editing.id)} back={() => setEditing(null)}
-    save={preset => save(presets.some(p => p.id === preset.id) ? presets.map(p => p.id === preset.id ? preset : p) : [...presets, preset])}
-    remove={async id => { if (await save(presets.filter(p => p.id !== id))) setEditing(null); }} error={error} /></motion.div> : <motion.div key="presets" className="l-view" {...rise}><LayoutGroup id="preset-order"><div className="l-set-body">
-    <div className="l-set-row-head"><h3>动作条 · 前 {BAR_SIZE} 个</h3><span>拖动或 ⌥↑↓ 调整顺序，点开编辑</span></div>
-    {bar.length ? <ul className="l-group">{bar.map(row)}</ul> : <p className="l-field-help">启用一个预设后，它会出现在动作条上。</p>}
-    {more.length > 0 && <><div className="l-set-row-head l-gap"><h3>更多菜单</h3><span>动作条「···」与指令面板</span></div><ul className="l-group">{more.map(row)}</ul></>}
-    {error && <p className="l-field-help error" role="alert">{error}</p>}
-    <button className="l-add" onClick={() => setEditing({ id: crypto.randomUUID(), name: '新预设', template: '{{selection}}', target: 'chatgpt', mode: 'edit', needsSelection: true, enabled: true })}><Plus size={14} />新建预设</button>
-    <div className="l-gap"><ApiConnectionPoolManager idPrefix="preset-pool-" /></div>
-  </div></LayoutGroup></motion.div>}</AnimatePresence>;
+
+  function move(id: string, toId: string) {
+    const from = presets.findIndex(p => p.id === id);
+    const to = presets.findIndex(p => p.id === toId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...presets];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    void save(next);
+  }
+
+  if (editing) {
+    const isNew = !presets.some(p => p.id === editing.id);
+    return (
+      <PresetEditor
+        key={editing.id}
+        preset={editing}
+        isNew={isNew}
+        error={error}
+        back={() => {
+          setEditing(null);
+          setError('');
+        }}
+        onOpenConnections={onOpenConnections}
+        save={async preset => {
+          const ok = await save(isNew ? [...presets, preset] : presets.map(p => (p.id === preset.id ? preset : p)));
+          if (ok) setEditing(null);
+          return ok;
+        }}
+        remove={async id => {
+          if (await save(presets.filter(p => p.id !== id))) setEditing(null);
+        }}
+      />
+    );
+  }
+
+  const chatPresets = presets.filter(p => p.kind !== 'image');
+  const imagePresets = presets.filter(p => p.kind === 'image');
+
+  const renderRow = (preset: Preset) => {
+    const isImg = preset.kind === 'image';
+    const meta = isImg
+      ? [targetLabels[preset.target], preset.image ? imageOptionsSummary(preset.image) : ''].filter(Boolean).join(' · ')
+      : [
+          targetLabels[preset.target],
+          preset.target === 'api' ? (preset.model ? preset.model : '快答卡') : preset.mode === 'edit' ? '先编辑' : '直接发送'
+        ]
+          .filter(Boolean)
+          .join(' · ');
+
+    return (
+      <div
+        key={preset.id}
+        className="l-set-row clickable"
+        data-drop={drop === preset.id}
+        draggable
+        onDragStart={() => {
+          drag.current = preset.id;
+        }}
+        onDragOver={e => {
+          e.preventDefault();
+          if (drag.current && drag.current !== preset.id) setDrop(preset.id);
+        }}
+        onDragLeave={() => setDrop(null)}
+        onDragEnd={() => {
+          drag.current = null;
+          setDrop(null);
+        }}
+        onDrop={() => {
+          if (drag.current) move(drag.current, preset.id);
+          drag.current = null;
+          setDrop(null);
+        }}
+        onClick={() => setEditing(preset)}
+      >
+        <span className="l-grip" aria-hidden="true" onClick={e => e.stopPropagation()}>
+          <GripVertical size={14} />
+        </span>
+        {isImg ? <ImageIcon size={15} className="faint" /> : <Badge target={preset.target} />}
+        <div className="l-set-row-main">
+          <div className="l-set-row-name">
+            <span>{preset.name || '未命名'}</span>
+            {!preset.needsSelection && <span className="l-chip">无需选区</span>}
+            {!preset.enabled && <span className="l-chip faint">已停用</span>}
+          </div>
+          <div className="l-set-row-sub trunc">
+            {preview(preset.template).map((part, i) => (
+              <Fragment key={i}>
+                {i > 0 && <span className="l-chip mono">选区</span>}
+                {part}
+              </Fragment>
+            ))}
+          </div>
+        </div>
+        <span className="l-set-row-sub">{meta}</span>
+        <div onClick={e => e.stopPropagation()}>
+          <Switch
+            label={'启用 ' + preset.name}
+            value={preset.enabled}
+            change={() => void save(presets.map(p => (p.id === preset.id ? { ...p, enabled: !p.enabled } : p)))}
+          />
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <>
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>对话预设（{chatPresets.length}）</span>
+          <span className="r">点开编辑；动作条显示顺序在「划词与动作条」调整</span>
+        </div>
+        <div className="l-set-card">
+          {chatPresets.length > 0 ? (
+            chatPresets.map(renderRow)
+          ) : (
+            <div className="l-set-row">
+              <span className="l-set-row-sub">尚无对话预设</span>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>AI 生图预设（{imagePresets.length}）</span>
+          <span className="r">供独立「AI 生图」窗口与截图「问 AI」使用</span>
+        </div>
+        <div className="l-set-card">
+          {imagePresets.length > 0 ? (
+            imagePresets.map(renderRow)
+          ) : (
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <span className="l-set-row-sub">尚无 AI 生图预设</span>
+              </div>
+              <button
+                type="button"
+                className="l-btn small"
+                onClick={() =>
+                  setEditing({
+                    id: crypto.randomUUID(),
+                    kind: 'image',
+                    name: '内容配图',
+                    template: '请直接生成图片。有参考图时结合参考图完成。\n\n{{selection}}',
+                    target: 'api',
+                    image: defaultImageOptions(),
+                    mode: 'send',
+                    needsSelection: false,
+                    enabled: true
+                  })
+                }
+              >
+                <Plus size={13} />
+                <span>添加生图预设</span>
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <p className="l-field-help l-danger" role="alert">
+          {error}
+        </p>
+      )}
+    </>
+  );
 }
 
-function PresetEditor({ preset, isNew, save, remove, back, error }: { preset: Preset; isNew: boolean; save(preset: Preset): Promise<boolean>; remove(id: string): Promise<void>; back(): void; error: string }) {
+function PresetEditor({
+  preset,
+  isNew,
+  save,
+  remove,
+  back,
+  onOpenConnections,
+  error
+}: {
+  preset: Preset;
+  isNew: boolean;
+  save(preset: Preset): Promise<boolean>;
+  remove(id: string): Promise<void>;
+  back(): void;
+  onOpenConnections(): void;
+  error: string;
+}) {
   const [draft, setDraft] = useState(preset);
-  const [base, setBase] = useState(isNew ? null : preset);
-  const [saved, setSaved] = useState(false);
-  const [confirm, setConfirm] = useState<'delete' | 'leave' | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const area = useRef<HTMLTextAreaElement>(null);
-  const dirty = JSON.stringify(draft) !== JSON.stringify(base);
-  const source = promptSources.find(source => source.template === draft.template);
-  const set = (changes: Partial<Preset>) => { setDraft(old => ({ ...old, ...changes })); setSaved(false); setConfirm(null); };
-  function insert() {
-    const el = area.current!, at = el.selectionStart;
-    set({ template: draft.template.slice(0, at) + '{{selection}}' + draft.template.slice(el.selectionEnd) });
-    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(at + 13, at + 13); });
-  }
-  function switchTarget(target: Preset['target']) {
-    set({ target, model: '', effort: '', ...(['codex', 'pi', 'api'].includes(target) ? { temporaryChat: undefined } : {}) });
-    if (target === 'api' && !draft.connectionId) {
-      void window.desktop.apiConnections().then(list => { if (list[0]) set({ connectionId: list[0].id }); });
+  const source = promptSources.find(item => item.template === draft.template);
+
+  useEffect(() => {
+    if (draft.target === 'api' && !draft.connectionId) {
+      void window.desktop.apiConnections().then(list => {
+        if (list[0]) setDraft(old => ({ ...old, connectionId: old.connectionId || list[0].id }));
+      });
     }
+  }, [draft.target, draft.connectionId]);
+
+  const set = (changes: Partial<Preset>) => {
+    setDraft(old => ({ ...old, ...changes }));
+    setConfirmDelete(false);
+  };
+
+  function insertSelectionToken() {
+    const el = area.current;
+    if (!el) return;
+    const at = el.selectionStart;
+    set({ template: draft.template.slice(0, at) + '{{selection}}' + draft.template.slice(el.selectionEnd) });
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(at + 13, at + 13);
+    });
   }
-  async function commit() { if (await save(draft)) { setBase(draft); setSaved(true); } }
-  return <>
-    <div className="l-editor-head"><button className="l-text-btn l-back" onClick={() => dirty && confirm !== 'leave' ? setConfirm('leave') : back()}><ChevronLeft size={14} />{confirm === 'leave' ? '再点一次放弃更改' : '全部预设'}</button></div>
-    <div className="l-set-body l-editor">
-      <div className="l-field"><span className="l-field-label">功能</span><Segmented label="预设功能" value={draft.kind || 'chat'} onChange={kind => { if (kind === (draft.kind || 'chat')) return; set({ kind, ...(kind === 'image' && isNew && draft.template === '{{selection}}' ? { name: '图片生成', template: '请直接生成图片。有参考图时结合参考图完成。\n\n{{selection}}' } : {}), image: kind === 'image' ? defaultImageOptions() : undefined, target: kind === 'image' ? (draft.target === 'gemini' || draft.target === 'api' ? draft.target : 'chatgpt') : draft.target, model: '', effort: '' }); }} options={[['chat', '提问'], ['image', '图片生成']]} /></div>
-      <div className="l-field"><label htmlFor="preset-name">名称</label><input id="preset-name" className="l-input" value={draft.name} onChange={e => set({ name: e.target.value })} /></div>
-      <div className="l-field">
-        <div className="l-field-row"><label htmlFor="preset-template" className="l-field-label">提示词</label><button className="l-btn small" onClick={insert}>插入选区位置</button></div>
-        <textarea id="preset-template" ref={area} className="l-textarea" rows={6} value={draft.template} onChange={e => set({ template: e.target.value })} spellCheck={false} />
-        {source && <button className="l-text-btn l-prompt-source" onClick={() => void window.desktop.openLink(source.url)}>来源：{source.name}</button>}
-        <p className="l-field-help"><span className="mono">{'{{selection}}'}</span> 处放选中文字；没有这个位置时，选中文字附在末尾。应用背景会放在最前面。{draft.kind === 'image' && <>用 <span className="mono">{'{{aspect}}'}</span> 插入图片比例。</>}</p>
+
+  function switchTarget(target: Preset['target']) {
+    set({
+      target,
+      model: '',
+      effort: '',
+      ...(target === 'api' ? { temporaryChat: undefined } : {})
+    });
+  }
+
+  const saveDisabled =
+    !draft.name.trim() ||
+    !draft.template.trim() ||
+    (draft.target === 'api' && (!draft.connectionId || (draft.kind !== 'image' && !draft.model?.trim()) || (draft.kind === 'image' && !draft.image?.generationModel.trim())));
+
+  return (
+    <div className="l-set-group">
+      <div className="l-row">
+        <button type="button" className="l-text-btn" onClick={back}>
+          <ChevronLeft size={14} />
+          <span>返回全部预设</span>
+        </button>
       </div>
-      <div className="l-field"><span className="l-field-label">目标</span>
-        <Segmented label="目标" value={draft.target} onChange={switchTarget} options={(draft.kind === 'image' ? ['chatgpt', 'gemini', 'api'] as const : [...targets, 'api'] as const).map(id => [id, targetLabels[id]] as const)} /></div>
-      {(draft.target === 'chatgpt' || draft.target === 'gemini') && <div className="l-field">
-        <span className="l-field-label">网页会话</span>
-        <Segmented label="网页会话" value={draft.temporaryChat ? 'temporary' : 'normal'} onChange={mode => set({ temporaryChat: mode === 'temporary' ? true : undefined })} options={[['normal', '普通提问'], ['temporary', '临时提问']]} />
-        {draft.temporaryChat && <p className="l-field-help">不进入网页历史；标签保持驻留，关闭或重载后无法恢复。{draft.target === 'gemini' && '需要个人 Google 账号，临时对话不能使用关联应用。'}</p>}
-      </div>}
-      {draft.target !== 'api' && <ExecutionFields key={draft.target + '-execution'} target={draft.target} profile={draft} update={set} />}
-      {draft.kind !== 'image' && draft.target === 'api' && <ApiTextFields key="api-text" connectionId={draft.connectionId || ''} model={draft.model || ''} onChange={model => set({ model })} onConnectionChange={connectionId => set({ connectionId })} />}
-      {draft.kind === 'image' && <ImageOptionsFields key={draft.target + '-image'} value={draft.image!} update={image => set({ image })} api={draft.target === 'api'} connectionId={draft.connectionId || ''} onConnectionChange={connectionId => set({ connectionId })} />}
-      <div className="l-field"><span className="l-field-label">执行方式</span>
-        <Segmented label="执行方式" value={draft.mode} onChange={mode => set({ mode })} options={[['edit', '先填入，再编辑'], ['send', '填入后直接发送']]} /></div>
-      <ul className="l-group">
-        <li><div className="l-row-label"><span>需要内容</span><span>没有选中文字或图片时，这个预设不可用</span></div><Switch label="需要内容" value={draft.needsSelection} change={() => set({ needsSelection: !draft.needsSelection })} /></li>
-        <li><div className="l-row-label"><span>启用</span><span>停用后不出现在动作条和指令面板</span></div><Switch label="启用预设" value={draft.enabled} change={() => set({ enabled: !draft.enabled })} /></li>
-      </ul>
-      {!isNew && <button className="l-btn danger l-quit" onClick={() => confirm === 'delete' ? void remove(preset.id) : setConfirm('delete')}><Trash2 size={14} />{confirm === 'delete' ? `再点一次删除「${preset.name}」` : '删除预设'}</button>}
+
+      <div className="l-set-card">
+        <div className="l-set-row col">
+          <div className="l-grid-2">
+            <div className="l-field">
+              <label htmlFor="preset-name">预设名称</label>
+              <input id="preset-name" className="l-input" value={draft.name} onChange={e => set({ name: e.target.value })} placeholder="如：解释 / 总结 / 内容配图" />
+            </div>
+            <div className="l-field">
+              <span className="l-field-label">预设类型</span>
+              <Segmented
+                label="预设类型"
+                value={draft.kind || 'chat'}
+                onChange={kind => {
+                  if (kind === (draft.kind || 'chat')) return;
+                  set({
+                    kind,
+                    ...(kind === 'image' && isNew && draft.template === '{{selection}}'
+                      ? { name: '内容配图', template: '请直接生成图片。有参考图时结合参考图完成。\n\n{{selection}}', target: 'api', needsSelection: false }
+                      : {}),
+                    image: kind === 'image' ? draft.image || defaultImageOptions() : undefined,
+                    model: '',
+                    effort: ''
+                  });
+                }}
+                options={[
+                  ['chat', '对话预设'],
+                  ['image', 'AI 生图预设']
+                ]}
+              />
+            </div>
+          </div>
+
+          <div className="l-field">
+            <div className="l-field-row">
+              <label htmlFor="preset-template">提示词模板</label>
+              <button type="button" className="l-btn small" onClick={insertSelectionToken}>
+                插入 {'{{selection}}'}
+              </button>
+            </div>
+            <textarea
+              id="preset-template"
+              ref={area}
+              className="l-textarea"
+              rows={5}
+              value={draft.template}
+              onChange={e => set({ template: e.target.value })}
+              spellCheck={false}
+            />
+            {source && (
+              <button type="button" className="l-text-btn" onClick={() => void window.desktop.openLink(source.url)}>
+                模板来源：{source.name}
+              </button>
+            )}
+            <p className="l-field-help">
+              <span className="mono">{'{{selection}}'}</span> 处放入选中文字；未写占位符时自动附在末尾。
+              {draft.kind === 'image' && (
+                <>
+                  {' '}
+                  可用 <span className="mono">{'{{aspect}}'}</span> 插入图片比例。
+                </>
+              )}
+            </p>
+          </div>
+
+          <div className="l-field">
+            <span className="l-field-label">发送目标</span>
+            <Segmented
+              label="发送目标"
+              value={draft.target}
+              onChange={switchTarget}
+              options={targets.map(id => [id, targetLabels[id]] as const)}
+            />
+          </div>
+
+          {(draft.target === 'chatgpt' || draft.target === 'gemini') && (
+            <>
+              <div className="l-grid-equal">
+                <div className="l-field">
+                  <span className="l-field-label">网页会话</span>
+                  <Segmented
+                    label="网页会话"
+                    value={draft.temporaryChat ? 'temporary' : 'normal'}
+                    onChange={mode => set({ temporaryChat: mode === 'temporary' ? true : undefined })}
+                    options={[
+                      ['normal', '普通提问'],
+                      ['temporary', '临时提问']
+                    ]}
+                  />
+                </div>
+                <div className="l-field">
+                  <span className="l-field-label">执行方式</span>
+                  <Segmented
+                    label="执行方式"
+                    value={draft.mode}
+                    onChange={mode => set({ mode })}
+                    options={[
+                      ['send', '直接发送'],
+                      ['edit', '先填入再改']
+                    ]}
+                  />
+                </div>
+              </div>
+              <ExecutionFields key={draft.target + '-execution'} target={draft.target} profile={draft} update={set} />
+            </>
+          )}
+
+          {draft.kind !== 'image' && draft.target === 'api' && (
+            <ApiTextFields
+              connectionId={draft.connectionId || ''}
+              model={draft.model || ''}
+              onChange={model => set({ model })}
+              onConnectionChange={connectionId => set({ connectionId })}
+              onOpenConnections={onOpenConnections}
+            />
+          )}
+
+          {draft.kind === 'image' && (
+            <ImageOptionsFields
+              key={draft.target + '-image'}
+              value={draft.image || defaultImageOptions()}
+              update={image => set({ image })}
+              api={draft.target === 'api'}
+              connectionId={draft.connectionId || ''}
+              onConnectionChange={connectionId => set({ connectionId })}
+              onOpenConnections={onOpenConnections}
+            />
+          )}
+        </div>
+
+        <div className="l-set-row">
+          <div className="l-set-row-main">
+            <div className="l-set-row-name">必须有选区或图片才能触发</div>
+            <div className="l-set-row-sub">关闭后可在指令面板（⌘K）直接无输入触发</div>
+          </div>
+          <Switch label="需要选区内容" value={draft.needsSelection} change={() => set({ needsSelection: !draft.needsSelection })} />
+        </div>
+
+        <div className="l-set-row">
+          <div className="l-set-row-main">
+            <div className="l-set-row-name">启用此预设</div>
+            <div className="l-set-row-sub">停用后不出现在动作条、截图「问 AI」与指令面板</div>
+          </div>
+          <Switch label="启用预设" value={draft.enabled} change={() => set({ enabled: !draft.enabled })} />
+        </div>
+
+        <div className="l-set-row">
+          {!isNew && (
+            <button
+              type="button"
+              className="l-ghost small danger"
+              onClick={() => (confirmDelete ? void remove(preset.id) : setConfirmDelete(true))}
+            >
+              <Trash2 size={13} />
+              <span>{confirmDelete ? `确认删除「${preset.name}」` : '删除预设'}</span>
+            </button>
+          )}
+          <span className="grow" />
+          <button type="button" className="l-ghost small" onClick={back}>
+            取消
+          </button>
+          <button type="button" className="l-btn small primary" disabled={saveDisabled} onClick={() => void save(draft)}>
+            保存预设
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <p className="l-field-help l-danger" role="alert">
+          {error}
+        </p>
+      )}
     </div>
-    <SaveBar dirty={dirty} saved={saved} error={error} pending={isNew && !base ? '新预设尚未保存' : '有未保存的更改'} saveLabel="保存预设" saveDisabled={!draft.name.trim() || !draft.template.trim() || (draft.target === 'api' && (!draft.connectionId || (draft.kind !== 'image' && !draft.model?.trim())))} discard={() => base ? setDraft(base) : back()} save={() => void commit()} />
-  </>;
+  );
 }

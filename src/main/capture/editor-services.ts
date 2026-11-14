@@ -1,5 +1,5 @@
 import { clipboard, ipcMain, shell, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
-import type { CaptureFrame, CaptureRect, OCRRequest, OCRResult, ScreenshotAPI } from '../../shared/capture';
+import type { CaptureFrame, CaptureRect, EditorPresetSummary, OCRRequest, OCRResult, ScreenshotAPI } from '../../shared/capture';
 import type { Settings } from '../../shared/contracts';
 import type { ScreenshotSettings } from '../../shared/screenshot-settings';
 import { webURL } from '../../shared/intelligence';
@@ -28,16 +28,33 @@ export interface EditorSession {
 export interface EditorExternal {
   fastText?: (text: string, bounds?: CaptureRect) => Promise<void> | void;
   noteText?: (text: string) => Promise<void> | void;
+  presets?: () => EditorPresetSummary[];
+  onStartRecording?: (bounds?: CaptureRect) => Promise<void> | void;
 }
-export interface EditorHost extends EditorExternal { settings(): ScreenshotSettings; intelligence(): IntelligenceService; suppress(): void; text(text: string): Promise<void> }
+export interface EditorHost extends EditorExternal {
+  settings(): ScreenshotSettings;
+  intelligence(): IntelligenceService;
+  suppress(): void;
+  text(text: string, presetId?: string): Promise<void>;
+}
 
 export function validCrop(crop: CaptureRect | undefined, size: { width: number; height: number }, min = 1): CaptureRect {
   if (!crop || ![crop.x, crop.y, crop.width, crop.height].every(Number.isSafeInteger) || crop.x < 0 || crop.y < 0 || crop.width < min || crop.height < min || crop.x + crop.width > size.width || crop.y + crop.height > size.height) throw Error('无效的裁剪范围');
   return crop;
 }
 /** Settings both hosts hand to the shared renderer Editor with each edit. */
-export const editorSettings = (settings: ScreenshotSettings, general: Pick<Settings, 'editorShortcuts' | 'toolbarTools' | 'mouseActions'>) =>
-  ({ annotationMemory: settings.annotationMemory, screenshotSettings: settings, editorShortcuts: general.editorShortcuts, toolbarTools: general.toolbarTools, mouseActions: general.mouseActions });
+export const editorSettings = (
+  settings: ScreenshotSettings,
+  general: Pick<Settings, 'editorShortcuts' | 'toolbarTools' | 'mouseActions'>,
+  presets?: EditorPresetSummary[]
+) => ({
+  annotationMemory: settings.annotationMemory,
+  screenshotSettings: settings,
+  editorShortcuts: general.editorShortcuts,
+  toolbarTools: general.toolbarTools,
+  mouseActions: general.mouseActions,
+  ...(presets ? { presets } : {})
+});
 const editorText = (value: unknown, message: string) => { if (typeof value !== 'string' || !value.trim() || value.length > 100000) throw Error(message); return value; };
 const message = (error: unknown) => (error as Error).message;
 
@@ -72,9 +89,15 @@ export function handleEditorServices(channels: EditorChannels, session: (event: 
     const s = session(e), text = editorText(r?.text, '没有可复制的文字');
     s.accept(r.id, r.revision); host.suppress(); clipboard.writeText(text);
   });
-  ipcMain.handle(channels.sendText, (e, r: { id: string; revision: number; text: string }) => {
+  ipcMain.handle(channels.sendText, (e, r: { id: string; revision: number; text: string; presetId?: string }) => {
     const s = session(e);
-    return result(async () => { const text = editorText(r?.text, '请先选择图中文字'); s.accept(r.id, r.revision); await host.text(text); s.textSent(r.id); });
+    return result(async () => {
+      const text = editorText(r?.text, '请先选择图中文字');
+      const presetId = typeof r?.presetId === 'string' && r.presetId ? r.presetId : undefined;
+      s.accept(r.id, r.revision);
+      await host.text(text, presetId);
+      s.textSent(r.id);
+    });
   });
   ipcMain.handle(channels.fastText, (e, id: string, revision: number, text: string, rect?: CaptureRect) => {
     const s = session(e);

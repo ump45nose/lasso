@@ -24,10 +24,11 @@ struct CopyWatchEvent { bool doubleCopy; double timestamp; };
 struct SnappedOrigin { AXUIElementRef window; NSRect original; NSRect snapped; };
 struct DragSnapSession {
   AXUIElementRef window = nullptr;
-  NSRect initial = NSZeroRect, original = NSZeroRect, target = NSZeroRect;
+  NSRect initial = NSZeroRect, original = NSZeroRect, target = NSZeroRect, pendingTarget = NSZeroRect;
   NSPoint down = NSZeroPoint;
   double grabRatioX = 0.5, grabOffsetY = 0;
-  bool active = false, canRestore = false, hasTarget = false;
+  int dwellZone = 0;
+  bool active = false, canRestore = false, hasTarget = false, dwellArmed = false;
 };
 
 static napi_threadsafe_function g_bridge_tsfn = nullptr;
@@ -39,10 +40,14 @@ static napi_threadsafe_function g_finder_tsfn = nullptr;
 static id g_finder_monitor = nil;
 static dispatch_source_t g_finder_timer = nil;
 static NSPoint g_finder_down;
+static bool g_finder_middle_enabled = true;
+static bool g_finder_right_hold_enabled = true;
 static napi_threadsafe_function g_copy_tsfn = nullptr;
 static id g_copy_monitor = nil;
 static double g_last_copy_time = -1;
 static id g_drag_snap_monitor = nil;
+static dispatch_source_t g_snap_dwell_timer = nil;
+static int g_snap_dwell_ms = 250;
 static SnapPreviewOverlay* g_snap_preview = nil;
 static DragSnapSession g_drag_snap;
 static std::vector<SnappedOrigin> g_snapped_origins;
@@ -311,6 +316,52 @@ static napi_value postBridge(napi_env e, napi_callback_info info) {
   return undefined;
 }
 
+static double primaryScreenTop() {
+  NSScreen* first = NSScreen.screens.firstObject;
+  return first ? NSMaxY(first.frame) : 0.0;
+}
+
+static NSRect axRectFromCocoaRect(NSRect rect) {
+  return NSMakeRect(rect.origin.x, primaryScreenTop() - NSMaxY(rect), rect.size.width, rect.size.height);
+}
+
+static bool axVisibleForTarget(double x, double y, double w, double h, NSRect* outVisible) {
+  double cx = x + w * 0.5, cy = y + h * 0.5;
+  NSScreen* best = nil;
+  double bestDist = 1e18;
+  for (NSScreen* screen in NSScreen.screens) {
+    NSRect axFrame = axRectFromCocoaRect(screen.frame);
+    if (cx >= NSMinX(axFrame) && cx <= NSMaxX(axFrame) && cy >= NSMinY(axFrame) && cy <= NSMaxY(axFrame)) {
+      best = screen;
+      break;
+    }
+    double dx = cx < NSMinX(axFrame) ? NSMinX(axFrame) - cx : (cx > NSMaxX(axFrame) ? cx - NSMaxX(axFrame) : 0.0);
+    double dy = cy < NSMinY(axFrame) ? NSMinY(axFrame) - cy : (cy > NSMaxY(axFrame) ? cy - NSMaxY(axFrame) : 0.0);
+    double d = dx * dx + dy * dy;
+    if (d < bestDist) { bestDist = d; best = screen; }
+  }
+  if (!best) return false;
+  *outVisible = axRectFromCocoaRect(best.visibleFrame);
+  return true;
+}
+
+static bool axActualWindowRect(AXUIElementRef window, NSRect* rect) {
+  CFTypeRef position = nullptr, size = nullptr;
+  CGPoint point = CGPointZero;
+  CGSize dimensions = CGSizeZero;
+  bool ok = AXUIElementCopyAttributeValue(window, kAXPositionAttribute, &position) == kAXErrorSuccess &&
+    AXUIElementCopyAttributeValue(window, kAXSizeAttribute, &size) == kAXErrorSuccess && position && size &&
+    CFGetTypeID(position) == AXValueGetTypeID() && CFGetTypeID(size) == AXValueGetTypeID() &&
+    AXValueGetValue((AXValueRef)position, kAXValueTypeCGPoint, &point) &&
+    AXValueGetValue((AXValueRef)size, kAXValueTypeCGSize, &dimensions) &&
+    std::isfinite(point.x) && std::isfinite(point.y) && std::isfinite(dimensions.width) &&
+    std::isfinite(dimensions.height) && dimensions.width > 0 && dimensions.height > 0;
+  if (position) CFRelease(position);
+  if (size) CFRelease(size);
+  if (ok) *rect = NSMakeRect(point.x, point.y, dimensions.width, dimensions.height);
+  return ok;
+}
+
 static bool setAxWindowRect(AXUIElementRef win, double x, double y, double w, double h) {
   if (!win) return false;
   CGPoint pt = CGPointMake(x, y);
@@ -323,7 +374,32 @@ static bool setAxWindowRect(AXUIElementRef win, double x, double y, double w, do
   AXUIElementSetAttributeValue(win, kAXPositionAttribute, posVal);
   if (posVal) CFRelease(posVal);
   if (sizeVal) CFRelease(sizeVal);
-  return e1 == kAXErrorSuccess || e2 == kAXErrorSuccess;
+  bool ok = (e1 == kAXErrorSuccess || e2 == kAXErrorSuccess);
+  // Clamp inward if window enforced a minimum width/height so it never hides behind Dock or menu bar.
+  NSRect axVisible = NSZeroRect, actual = NSZeroRect;
+  if (ok && axVisibleForTarget(x, y, w, h, &axVisible) && axActualWindowRect(win, &actual)) {
+    double padX = (x >= NSMinX(axVisible) + 6.0 && x + w <= NSMaxX(axVisible) - 6.0) ? 8.0 : 0.0;
+    double padY = (y >= NSMinY(axVisible) + 6.0 && y + h <= NSMaxY(axVisible) - 6.0) ? 8.0 : 0.0;
+    double leftLimit = NSMinX(axVisible) + padX;
+    double rightLimit = NSMaxX(axVisible) - padX;
+    double topLimit = NSMinY(axVisible) + padY;
+    double bottomLimit = NSMaxY(axVisible) - padY;
+    double clampedX = actual.origin.x;
+    double clampedY = actual.origin.y;
+    if (clampedX + actual.size.width > rightLimit) clampedX = std::max(leftLimit, rightLimit - actual.size.width);
+    if (clampedX < leftLimit) clampedX = leftLimit;
+    if (clampedY + actual.size.height > bottomLimit) clampedY = std::max(topLimit, bottomLimit - actual.size.height);
+    if (clampedY < topLimit) clampedY = topLimit;
+    if (std::abs(clampedX - actual.origin.x) >= 1.0 || std::abs(clampedY - actual.origin.y) >= 1.0) {
+      CGPoint fixedPt = CGPointMake(clampedX, clampedY);
+      AXValueRef fixedPos = AXValueCreate(kAXValueTypeCGPoint, &fixedPt);
+      if (fixedPos) {
+        AXUIElementSetAttributeValue(win, kAXPositionAttribute, fixedPos);
+        CFRelease(fixedPos);
+      }
+    }
+  }
+  return ok;
 }
 
 static AXUIElementRef copyFrontWindow() {
@@ -467,12 +543,18 @@ static bool axWindowRect(AXUIElementRef window, NSRect* rect) {
   return ok;
 }
 
-static double screenTop() { return NSMaxY(NSScreen.screens.firstObject.frame); }
-static NSRect axRectFromScreenRect(NSRect rect) {
-  return NSMakeRect(rect.origin.x, screenTop() - NSMaxY(rect), rect.size.width, rect.size.height);
+static double screenTop() { return primaryScreenTop(); }
+static NSRect axRectFromScreenRect(NSRect rect) { return axRectFromCocoaRect(rect); }
+
+static void cancelSnapDwell() {
+  if (g_snap_dwell_timer) {
+    dispatch_source_cancel(g_snap_dwell_timer);
+    g_snap_dwell_timer = nil;
+  }
 }
 
 static void resetDragSnap() {
+  cancelSnapDwell();
   [g_snap_preview orderOut:nil];
   if (g_drag_snap.window) CFRelease(g_drag_snap.window);
   g_drag_snap = DragSnapSession{};
@@ -494,9 +576,9 @@ static void showSnapPreview(NSRect frame) {
     g_snap_preview.contentView.wantsLayer = YES;
     CAShapeLayer* shape = [CAShapeLayer layer];
     NSColor* clay = [NSColor colorWithSRGBRed:217.0/255.0 green:119.0/255.0 blue:87.0/255.0 alpha:1];
-    shape.strokeColor = clay.CGColor;
-    shape.fillColor = [clay colorWithAlphaComponent:0.16].CGColor;
-    shape.lineWidth = 2;
+    shape.strokeColor = [clay colorWithAlphaComponent:0.85].CGColor;
+    shape.fillColor = [clay colorWithAlphaComponent:0.14].CGColor;
+    shape.lineWidth = 1.5;
     [g_snap_preview.contentView.layer addSublayer:shape];
   }
   [g_snap_preview setFrame:frame display:NO];
@@ -504,35 +586,91 @@ static void showSnapPreview(NSRect frame) {
   [CATransaction begin];
   [CATransaction setDisableActions:YES];
   shape.frame = NSMakeRect(0, 0, frame.size.width, frame.size.height);
-  CGPathRef path = CGPathCreateWithRoundedRect(CGRectInset(shape.bounds, 1, 1), 12, 12, nullptr);
+  CGPathRef path = CGPathCreateWithRoundedRect(CGRectInset(shape.bounds, 1, 1), 10, 10, nullptr);
   shape.path = path;
   [CATransaction commit];
   CGPathRelease(path);
   [g_snap_preview orderFrontRegardless];
 }
 
-static bool snapTargetAtPoint(NSPoint point, NSRect* target) {
+static bool snapTargetAtPoint(NSPoint point, NSRect* target, bool* needsDwell, int* zoneId) {
   for (NSScreen* screen in NSScreen.screens) {
     NSRect frame = screen.frame;
     if (point.x < NSMinX(frame) || point.x > NSMaxX(frame) ||
         point.y < NSMinY(frame) || point.y > NSMaxY(frame)) continue;
     NSRect visible = screen.visibleFrame;
-    double left = point.x - NSMinX(frame), right = NSMaxX(frame) - point.x;
-    double bottom = point.y - NSMinY(frame), top = NSMaxY(frame) - point.y;
-    double visibleTop = NSMaxY(visible) - point.y;
-    double visibleBottom = point.y - NSMinY(visible);
-    double halfW = visible.size.width / 2, halfH = visible.size.height / 2;
-    bool nearTop = top <= 48 || (visibleTop >= -8 && visibleTop <= 28);
-    bool nearBottom = bottom <= 48 || (visibleBottom >= -8 && visibleBottom <= 32);
-    if ((left <= 48 || right <= 48) && (nearTop || nearBottom)) {
-      *target = NSMakeRect(visible.origin.x + (right <= 48 ? halfW : 0),
-        visible.origin.y + (nearTop ? halfH : 0), halfW, halfH);
-    } else if (left <= 24 || right <= 24) {
-      *target = NSMakeRect(visible.origin.x + (right <= 24 ? halfW : 0), visible.origin.y, halfW, visible.size.height);
-    } else if (nearTop && left > 48 && right > 48) {
-      *target = visible;
-    } else return false;
-    return true;
+    const double gap = 8.0;
+    double halfW = std::round((visible.size.width - gap * 3.0) * 0.5);
+    double halfH = std::round((visible.size.height - gap * 3.0) * 0.5);
+    double fullW = visible.size.width - gap * 2.0;
+    double fullH = visible.size.height - gap * 2.0;
+
+    bool inLeftCornerX = point.x <= NSMinX(visible) + 48.0;
+    bool inRightCornerX = point.x >= NSMaxX(visible) - 48.0;
+    bool inTopCornerY = point.y >= NSMaxY(visible) - 44.0;
+    bool inBottomCornerY = point.y <= NSMinY(visible) + 44.0;
+
+    bool nearLeft = point.x <= NSMinX(visible) + 30.0;
+    bool nearRight = point.x >= NSMaxX(visible) - 30.0;
+    bool nearTop = point.y >= NSMaxY(visible) - 28.0;
+    bool nearBottom = point.y <= NSMinY(visible) + 32.0;
+
+    if ((inLeftCornerX || inRightCornerX) && (inTopCornerY || inBottomCornerY)) {
+      *needsDwell = false;
+      *zoneId = (inRightCornerX ? 2 : 1) + (inTopCornerY ? 0 : 2);
+      *target = NSMakeRect(
+        visible.origin.x + (inRightCornerX ? gap * 2.0 + halfW : gap),
+        visible.origin.y + (inTopCornerY ? gap * 2.0 + halfH : gap),
+        halfW,
+        halfH
+      );
+      return true;
+    }
+    if (nearLeft || nearRight) {
+      *needsDwell = false;
+      *zoneId = nearRight ? 6 : 5;
+      *target = NSMakeRect(
+        visible.origin.x + (nearRight ? gap * 2.0 + halfW : gap),
+        visible.origin.y + gap,
+        halfW,
+        fullH
+      );
+      return true;
+    }
+    if (nearTop) {
+      double rx = (point.x - NSMinX(visible)) / std::max(1.0, (double)visible.size.width);
+      if (rx >= 0.32 && rx <= 0.68) {
+        *needsDwell = true;
+        *zoneId = 10;
+        *target = NSMakeRect(visible.origin.x + gap, visible.origin.y + gap, fullW, fullH);
+        return true;
+      }
+      return false;
+    }
+    if (nearBottom) {
+      *needsDwell = true;
+      double rx = std::clamp((point.x - NSMinX(visible)) / std::max(1.0, (double)visible.size.width), 0.0, 1.0);
+      double thirdW = std::round((visible.size.width - gap * 4.0) / 3.0);
+      double twoThirdW = thirdW * 2.0 + gap;
+      if (rx < 0.28) {
+        *zoneId = 20;
+        *target = NSMakeRect(visible.origin.x + gap, visible.origin.y + gap, thirdW, fullH);
+      } else if (rx < 0.39) {
+        *zoneId = 21;
+        *target = NSMakeRect(visible.origin.x + gap, visible.origin.y + gap, twoThirdW, fullH);
+      } else if (rx <= 0.61) {
+        *zoneId = 22;
+        *target = NSMakeRect(visible.origin.x + gap * 2.0 + thirdW, visible.origin.y + gap, thirdW, fullH);
+      } else if (rx <= 0.72) {
+        *zoneId = 23;
+        *target = NSMakeRect(NSMaxX(visible) - gap - twoThirdW, visible.origin.y + gap, twoThirdW, fullH);
+      } else {
+        *zoneId = 24;
+        *target = NSMakeRect(NSMaxX(visible) - gap - thirdW, visible.origin.y + gap, thirdW, fullH);
+      }
+      return true;
+    }
+    return false;
   }
   return false;
 }
@@ -640,9 +778,53 @@ static void handleDragSnap(NSEvent* event) {
       g_drag_snap.canRestore = false;
     }
   }
-  g_drag_snap.hasTarget = snapTargetAtPoint(point, &g_drag_snap.target);
-  if (g_drag_snap.hasTarget) showSnapPreview(g_drag_snap.target);
-  else [g_snap_preview orderOut:nil];
+  NSRect candidate = NSZeroRect;
+  bool needsDwell = false;
+  int zoneId = 0;
+  if (!snapTargetAtPoint(point, &candidate, &needsDwell, &zoneId)) {
+    cancelSnapDwell();
+    g_drag_snap.dwellZone = 0;
+    g_drag_snap.dwellArmed = false;
+    g_drag_snap.hasTarget = false;
+    [g_snap_preview orderOut:nil];
+    return;
+  }
+  if (!needsDwell) {
+    cancelSnapDwell();
+    g_drag_snap.dwellZone = zoneId;
+    g_drag_snap.dwellArmed = true;
+    g_drag_snap.target = candidate;
+    g_drag_snap.hasTarget = true;
+    showSnapPreview(g_drag_snap.target);
+    return;
+  }
+  g_drag_snap.pendingTarget = candidate;
+  if (g_drag_snap.dwellZone == zoneId) {
+    if (g_drag_snap.dwellArmed) {
+      g_drag_snap.target = candidate;
+      g_drag_snap.hasTarget = true;
+      showSnapPreview(g_drag_snap.target);
+    }
+    return;
+  }
+  cancelSnapDwell();
+  g_drag_snap.dwellZone = zoneId;
+  g_drag_snap.dwellArmed = false;
+  g_drag_snap.hasTarget = false;
+  [g_snap_preview orderOut:nil];
+  int expectedZone = zoneId;
+  int dwellMs = std::clamp(g_snap_dwell_ms, 80, 1200);
+  g_snap_dwell_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+  dispatch_source_set_timer(g_snap_dwell_timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)dwellMs * NSEC_PER_MSEC), DISPATCH_TIME_FOREVER, 0);
+  dispatch_source_set_event_handler(g_snap_dwell_timer, ^{
+    cancelSnapDwell();
+    if (!g_drag_snap.window || !g_drag_snap.active || g_drag_snap.dwellZone != expectedZone) return;
+    g_drag_snap.dwellArmed = true;
+    g_drag_snap.target = g_drag_snap.pendingTarget;
+    g_drag_snap.hasTarget = true;
+    showSnapPreview(g_drag_snap.target);
+  });
+  dispatch_resume(g_snap_dwell_timer);
 }
 
 static void stopDragSnapMonitoring() {
@@ -658,13 +840,19 @@ static void stopDragSnapMonitoring() {
 }
 
 static napi_value setWindowDragSnapEnabled(napi_env e, napi_callback_info info) {
-  size_t n = 1;
-  napi_value args[1];
+  size_t n = 2;
+  napi_value args[2];
   napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
   bool enabled = false;
-  if (n != 1 || napi_get_value_bool(e, args[0], &enabled) != napi_ok) {
+  if (n < 1 || napi_get_value_bool(e, args[0], &enabled) != napi_ok) {
     napi_throw_type_error(e, nullptr, "drag snap enabled boolean required");
     return nullptr;
+  }
+  if (n >= 2) {
+    int32_t dwellMs = 250;
+    if (napi_get_value_int32(e, args[1], &dwellMs) == napi_ok) {
+      g_snap_dwell_ms = std::clamp((int)dwellMs, 80, 1200);
+    }
   }
   if (!enabled) stopDragSnapMonitoring();
   else onMain(^{
@@ -755,11 +943,12 @@ static napi_value startFinderTrigger(napi_env e, napi_callback_info info) {
       NSPoint point = NSEvent.mouseLocation;
       if (event.type == NSEventTypeOtherMouseDown && event.buttonNumber == 2) {
         cancelFinderHold();
-        emitFinderTrigger(point, false);
+        if (g_finder_middle_enabled) emitFinderTrigger(point, false);
       } else if (event.type == NSEventTypeRightMouseDragged) {
         if (std::hypot(point.x - g_finder_down.x, point.y - g_finder_down.y) > 6.0) cancelFinderHold();
       } else if (event.type == NSEventTypeRightMouseDown) {
         cancelFinderHold();
+        if (!g_finder_right_hold_enabled) return;
         g_finder_down = point;
         g_finder_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
         dispatch_source_set_timer(g_finder_timer, dispatch_time(DISPATCH_TIME_NOW, 250 * NSEC_PER_MSEC), DISPATCH_TIME_FOREVER, 0);
@@ -783,6 +972,18 @@ static napi_value startFinderTrigger(napi_env e, napi_callback_info info) {
 
 static napi_value stopFinderTrigger(napi_env e, napi_callback_info) {
   stopFinderMonitoring();
+  napi_value result;
+  napi_get_undefined(e, &result);
+  return result;
+}
+
+static napi_value setFinderTriggerOptions(napi_env e, napi_callback_info info) {
+  size_t n = 2;
+  napi_value args[2];
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  if (n >= 1) napi_get_value_bool(e, args[0], &g_finder_middle_enabled);
+  if (n >= 2) napi_get_value_bool(e, args[1], &g_finder_right_hold_enabled);
+  if (!g_finder_right_hold_enabled) onMain(^{ cancelFinderHold(); });
   napi_value result;
   napi_get_undefined(e, &result);
   return result;
@@ -1072,7 +1273,15 @@ static napi_value startIslandStatusClick(napi_env e, napi_callback_info info) {
   return undefined;
 }
 
-static napi_value notchGeometry(napi_env e, napi_callback_info) {
+static napi_value notchGeometry(napi_env e, napi_callback_info info) {
+  size_t n = 1;
+  napi_value args[1];
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  bool wantBlocker = true;
+  if (n >= 1) {
+    bool flag = true;
+    if (napi_get_value_bool(e, args[0], &flag) == napi_ok) wantBlocker = flag;
+  }
   napi_value obj;
   napi_create_object(e, &obj);
   bool hasNotch = false;
@@ -1167,13 +1376,18 @@ static napi_value notchGeometry(napi_env e, napi_callback_info) {
         anchorX = (notchLeftX + notchRightX) / 2.0;
       } else {
         // Approach 2 (Continuous Menu Bar without active cutout — external monitor or 16:10 scaled mode):
-        // Place a 248pt native NSStatusItem slot at screen center so right status items automatically route around the island.
+        // Place a 248pt native NSStatusItem slot at screen center only when the island capsule is visible.
         hasNotch = false;
         const double blockerItemLength = 232.0; // 232 + 16 system padding = 248pt slot
         leftSafeWidth = 152.0;
         rightSafeWidth = 88.0;
 
-        if ((!g_island_blocker_item && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
+        if (!wantBlocker) {
+          if (g_island_blocker_item || g_blocker_calibrating) {
+            g_cached_has_blocker = false;
+            disableBlockerSlot();
+          }
+        } else if ((!g_island_blocker_item && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
           g_blocker_screen_w = screenWidth;
           g_cached_has_blocker = false;
           startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenCenterX, blockerItemLength);
@@ -1243,6 +1457,7 @@ static napi_value init(napi_env e,napi_value exports){
     {"focusedWindowFrame",nullptr,focusedWindowFrame,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"startFinderTrigger",nullptr,startFinderTrigger,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"stopFinderTrigger",nullptr,stopFinderTrigger,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"setFinderTriggerOptions",nullptr,setFinderTriggerOptions,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"tileTwoWindows",nullptr,tileTwoWindows,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"frontmostApp",nullptr,frontmostApp,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"notchGeometry",nullptr,notchGeometry,nullptr,nullptr,nullptr,napi_default,nullptr},

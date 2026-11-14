@@ -14,7 +14,7 @@ export interface NativeAx {
   pasteToProcess(pid: number): boolean;
   startCopyWatch(cb: (event: { doubleCopy: boolean; timestamp: number }) => void): void;
   stopCopyWatch(): void;
-  setWindowDragSnapEnabled(enabled: boolean): void;
+  setWindowDragSnapEnabled(enabled: boolean, dwellMs?: number): void;
   setGlow(enabled: boolean): void;
   startBridge(cb: (event: { name: string; payload: string }) => void): void;
   stopBridge(): void;
@@ -23,8 +23,9 @@ export interface NativeAx {
   focusedWindowFrame(): CaptureRect | null;
   startFinderTrigger(cb: (point: { x: number; y: number; trigger: 'middle' | 'right-hold' }) => void): void;
   stopFinderTrigger(): void;
+  setFinderTriggerOptions(middleClick: boolean, rightHold: boolean): void;
   tileTwoWindows(x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number): number;
-  notchGeometry(): { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
+  notchGeometry(active?: boolean): { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
   startIslandStatusClick(cb: () => void): void;
   setStationaryWindow(handle: Buffer): void;
 }
