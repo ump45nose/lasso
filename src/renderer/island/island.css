@@ -117,6 +117,12 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
   overflow: hidden;
 }
 
+.isl-shell.mode-idle .isl-drop-card,
+.isl-shell.mode-focus .isl-drop-card,
+.isl-shell.mode-toast .isl-drop-card {
+  pointer-events: none;
+}
+
 .isl-drop-card.mode-focus-hover,
 .isl-drop-card.mode-slacking,
 .isl-drop-card.mode-nook-alert { width: 380px; padding: 10px; }

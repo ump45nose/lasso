@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   ArrowUpRight,
@@ -124,19 +124,17 @@ export function NotchIsland() {
     return () => stop();
   }, []);
 
-  if (!state) return null;
-  const {
-    mode,
-    pomodoro,
-    toast,
-    alerts,
-    nookReviewBadge,
-    nookTaskLists = [],
-    nookTasks,
-    nookCompletedCount,
-    nookTotalCount,
-    notch
-  } = state;
+  const mode = state?.mode ?? 'idle';
+  const pomodoro = state?.pomodoro ?? null;
+  const toast = state?.toast ?? null;
+  const alerts = state?.alerts ?? [];
+  const nookReviewBadge = state?.nookReviewBadge ?? null;
+  const nookTaskLists = state?.nookTaskLists ?? [];
+  const nookTasks = state?.nookTasks ?? [];
+  const nookCompletedCount = state?.nookCompletedCount ?? 0;
+  const nookTotalCount = state?.nookTotalCount ?? 0;
+  const notch = state?.notch;
+
   const focusOpenTasks = nookTasks.filter(t => !t.completed && t.inFocus);
   const focusDoneTasks = nookTasks.filter(t => t.completed && t.inFocus);
   const effectiveTab = activeListTab === 'focus' || nookTaskLists.some(l => l.id === activeListTab) ? activeListTab : 'focus';
@@ -160,35 +158,64 @@ export function NotchIsland() {
 
   // State 1: All-Clear hidden when nothing pending and not expanded
   const wingKind =
-    mode === 'toast' && toast
-      ? 'toast'
-      : alerts.length > 0
-        ? 'nook-alert'
-        : pomodoro?.active
-          ? 'focus'
-          : focusOpenTasks.length > 0 || hasHotReview
-            ? 'idle'
-            : null;
+    !state
+      ? null
+      : mode === 'toast' && toast
+        ? 'toast'
+        : alerts.length > 0
+          ? 'nook-alert'
+          : pomodoro?.active
+            ? 'focus'
+            : focusOpenTasks.length > 0 || hasHotReview
+              ? 'idle'
+              : null;
 
   const dropKind =
-    mode === 'board'
-      ? 'board'
-      : mode === 'nook-alert' && alerts.length > 0
-        ? 'nook-alert'
-        : mode === 'slacking'
-          ? 'slacking'
-          : mode === 'focus-hover' && pomodoro?.active
-            ? 'focus-hover'
-            : null;
+    !state
+      ? null
+      : mode === 'board'
+        ? 'board'
+        : mode === 'nook-alert' && alerts.length > 0
+          ? 'nook-alert'
+          : mode === 'slacking'
+            ? 'slacking'
+            : mode === 'focus-hover' && pomodoro?.active
+              ? 'focus-hover'
+              : null;
+
+  const wingKindRef = useRef(wingKind);
+  const dropKindRef = useRef(dropKind);
+  wingKindRef.current = wingKind;
+  dropKindRef.current = dropKind;
+
+  useEffect(() => {
+    if (state && !dropKind && !wingKind) {
+      window.island.hit(false);
+    }
+  }, [state, dropKind, wingKind]);
+
+  if (!state) return null;
 
   function resolveCollapsedMode() {
     return pomodoro?.active ? (pomodoro.kind === 'slacking' ? 'slacking' : 'focus') : 'idle';
   }
 
-  function enterCard() {
+  function enterWing() {
+    if (!wingKindRef.current) {
+      window.island.hit(false);
+      return;
+    }
     window.island.hit(true);
     if (alerts.length > 0 && (mode === 'idle' || mode === 'focus')) window.island.setMode('nook-alert');
     else if (mode === 'focus' && pomodoro?.active) window.island.setMode('focus-hover');
+  }
+
+  function enterCard(event?: { metaKey?: boolean }) {
+    if (event?.metaKey || !dropKindRef.current) {
+      window.island.hit(false);
+      return;
+    }
+    window.island.hit(true);
   }
 
   function leaveCard() {
@@ -211,12 +238,20 @@ export function NotchIsland() {
   return (
     <div
       className="isl-stage"
-      onPointerDown={event => {
-        if (event.target === event.currentTarget && (mode === 'board' || mode === 'focus-hover' || mode === 'nook-alert')) {
-          window.island.setMode(resolveCollapsedMode());
+      onPointerMove={event => {
+        if (event.metaKey || !(event.target as Element | null)?.closest?.('.isl-drop-card, .isl-menubar-wings, .isl-notch-anchor')) {
           window.island.hit(false);
         }
       }}
+      onPointerDown={event => {
+        if (event.target === event.currentTarget) {
+          window.island.hit(false);
+          if (mode === 'board' || mode === 'focus-hover' || mode === 'nook-alert') {
+            window.island.setMode(resolveCollapsedMode());
+          }
+        }
+      }}
+      onPointerLeave={() => window.island.hit(false)}
     >
       <div
         style={
@@ -238,7 +273,7 @@ export function NotchIsland() {
             className="isl-notch-anchor"
             aria-label="展开或收起今日聚焦看板"
             onPointerEnter={event => {
-              if (event.metaKey) {
+              if (event.metaKey || (!wingKindRef.current && !dropKindRef.current)) {
                 window.island.hit(false);
                 return;
               }
@@ -259,7 +294,7 @@ export function NotchIsland() {
                 window.island.hit(false);
                 return;
               }
-              enterCard();
+              enterWing();
             }}
             onPointerMove={event => {
               if (event.metaKey) window.island.hit(false);

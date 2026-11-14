@@ -699,7 +699,22 @@ export function TranslationPane({
 }) {
   const [draft, setDraft] = useState(translation);
   useEffect(() => {
-    setDraft(translation);
+    setDraft(prev => {
+      const prevIncomplete =
+        (prev.provider === 'llm' && (!prev.connectionId || !prev.model.trim())) ||
+        (prev.provider === 'deepl' && !prev.deeplApiKey?.trim());
+      if (prevIncomplete && prev.provider !== translation.provider) {
+        return {
+          ...translation,
+          provider: prev.provider,
+          connectionId: prev.connectionId,
+          model: prev.model,
+          deeplApiKey: prev.deeplApiKey,
+          googleApiKey: prev.googleApiKey
+        };
+      }
+      return translation;
+    });
   }, [translation]);
 
   const activeProvider: TranslationProvider = draft.provider || (draft.connectionId && draft.model.trim() ? 'llm' : 'system');
@@ -707,8 +722,27 @@ export function TranslationPane({
   async function commit(next: TranslationSettings) {
     setDraft(next);
     const provider = next.provider || 'system';
-    if (provider === 'llm' && (!next.connectionId || !next.model.trim())) return;
-    if (provider === 'deepl' && !next.deeplApiKey?.trim()) return;
+    const incompleteLlm = provider === 'llm' && (!next.connectionId || !next.model.trim());
+    const incompleteDeepl = provider === 'deepl' && !next.deeplApiKey?.trim();
+    if (incompleteLlm || incompleteDeepl) {
+      const nonProviderChanged =
+        next.targetLang !== translation.targetLang ||
+        next.copyTranslateEnabled !== translation.copyTranslateEnabled ||
+        next.copyTranslateTrigger !== translation.copyTranslateTrigger;
+      if (!nonProviderChanged) return;
+      const persistedProvider = translation.provider || (translation.connectionId && translation.model.trim() ? 'llm' : 'system');
+      const res = await window.desktop.saveTranslationSettings({
+        ...translation,
+        provider: persistedProvider,
+        model: translation.model.trim(),
+        targetLang: next.targetLang,
+        copyTranslateEnabled: next.copyTranslateEnabled,
+        copyTranslateTrigger: next.copyTranslateTrigger
+      });
+      if (res.error) notify({ error: res.error });
+      else notify({ ok: true });
+      return;
+    }
     const res = await window.desktop.saveTranslationSettings({ ...next, provider, model: next.model.trim() });
     if (res.error) notify({ error: res.error });
     else notify({ ok: true });

@@ -250,7 +250,7 @@ svg.lucide { stroke-width: 1.6; flex-shrink: 0; }
 .l-seg button:not([aria-checked="true"]):hover { color: var(--clay-ink); }
 .l-seg button[aria-checked="true"] { color: var(--ink); font-weight: 500; }
 .l-seg-label { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 5px; }
-.l-seg-thumb { position: absolute; inset: 0; border-radius: 7px; background: var(--surface); box-shadow: var(--shadow-tab), 0 0 0 1px var(--line); }
+.l-seg-thumb { position: absolute; inset: 0; border-radius: 7px; background: var(--surface); box-shadow: var(--shadow-tab), 0 0 0 1px var(--line); pointer-events: none; z-index: 0; }
 
 /* B2D Command palette */
 .l-pal-layer { position: absolute; inset: 0; z-index: 19; }

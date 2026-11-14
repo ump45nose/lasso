@@ -244,6 +244,7 @@ function showWindow() {
 }
 
 function openSettings(section?: SettingsSection) {
+  island?.closeBoard();
   capture?.configure(state.settings);
   void settingsWindow?.open(section);
 }

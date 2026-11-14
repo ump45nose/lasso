@@ -1072,6 +1072,116 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       const afterUnbind = await page(sw, `window.desktop.getState().then(s => s.settings.actionShortcuts['open-translator'])`);
       if (afterUnbind !== '') throw Error('Shortcut unbinding did not persist empty string: ' + JSON.stringify(afterUnbind));
 
+      // Verify NotchIsland mouse-passthrough handoff when opening Settings + Pomodoro + click sync
+      const isl = find('island');
+      let lastIgnore = null;
+      const origSetIgnore = isl.setIgnoreMouseEvents.bind(isl);
+      isl.setIgnoreMouseEvents = (ignore, options) => {
+        lastIgnore = { ignore, forward: Boolean(options?.forward) };
+        return origSetIgnore(ignore, options);
+      };
+      try {
+        // 1) Open Settings from NotchIsland quick action ("设置")
+        await page(m, `window.desktop.act('open-island-board')`);
+        await wait(120);
+        if (!lastIgnore || lastIgnore.ignore !== false) {
+          throw Error('Expected NotchIsland board open to enable mouse capture, got ' + JSON.stringify(lastIgnore));
+        }
+        await page(isl, `window.island.quickAction('open-settings')`);
+        await wait(150);
+        if (!lastIgnore.ignore || !lastIgnore.forward) {
+          throw Error('NotchIsland blocked Settings after quickAction(open-settings): ' + JSON.stringify(lastIgnore));
+        }
+
+        // 2) Open Settings directly while NotchIsland board is open
+        await page(m, `window.desktop.act('open-island-board')`);
+        await wait(120);
+        await page(m, `window.desktop.openSettings('general')`);
+        await wait(150);
+        if (!lastIgnore.ignore || !lastIgnore.forward) {
+          throw Error('NotchIsland did not collapse / restore passthrough when openSettings() ran: ' + JSON.stringify(lastIgnore));
+        }
+
+        // 3) Start & stop Pomodoro from board restores passthrough
+        await page(m, `window.desktop.act('open-island-board')`);
+        await wait(120);
+        await page(isl, `window.island.startPomodoro({ id: null, title: '验证' }, 25, 'focus')`);
+        await wait(120);
+        if (!lastIgnore.ignore || !lastIgnore.forward) {
+          throw Error('NotchIsland did not restore passthrough after startPomodoro: ' + JSON.stringify(lastIgnore));
+        }
+        await page(isl, `window.island.stopPomodoro()`);
+        await wait(120);
+        if (!lastIgnore.ignore || !lastIgnore.forward) {
+          throw Error('NotchIsland did not restore passthrough after stopPomodoro: ' + JSON.stringify(lastIgnore));
+        }
+      } finally {
+        isl.setIgnoreMouseEvents = origSetIgnore;
+      }
+
+      // Verify TranslationPane non-provider toggles save even when incomplete DeepL provider is drafted
+      await page(sw, `[...document.querySelectorAll('.l-set-nav-item')].find(b => b.textContent.trim() === '翻译').click()`);
+      await wait(250);
+      await page(sw, `[...document.querySelectorAll('.l-seg button')].find(b => b.textContent.includes('DeepL')).click()`);
+      await wait(150);
+      await page(sw, `document.querySelector('button[role="switch"][aria-label="复制即译"]').click()`);
+      await wait(150);
+      await page(sw, `[...document.querySelectorAll('.l-seg button')].find(b => b.textContent.includes('每次复制')).click()`);
+      await wait(150);
+      const transSaved = await page(sw, `window.desktop.getState().then(s => s.settings.translation)`);
+      if (transSaved.copyTranslateEnabled !== false || transSaved.copyTranslateTrigger !== 'every-copy' || transSaved.provider !== 'llm') {
+        throw Error('TranslationPane general controls failed to save with incomplete DeepL draft: ' + JSON.stringify(transSaved));
+      }
+      const stillShowsDeepL = await page(sw, `Boolean(document.getElementById('translation-deepl-key'))`);
+      if (!stillShowsDeepL) {
+        throw Error('TranslationPane lost incomplete DeepL draft state after saving copyTranslateEnabled');
+      }
+      // Restore defaults
+      await page(sw, `[...document.querySelectorAll('.l-seg button')].find(b => b.textContent.includes('AI 大模型')).click()`);
+      await page(sw, `document.querySelector('button[role="switch"][aria-label="复制即译"]').click()`);
+      await page(sw, `[...document.querySelectorAll('.l-seg button')].find(b => b.textContent.includes('连按两次')).click()`);
+      await wait(150);
+
+      // Verify Switch stays in sync when ScreenshotSettings rejects unchecking the last enabled action
+      await page(sw, `[...document.querySelectorAll('.l-set-nav-item')].find(b => b.textContent.trim() === '截图、贴图与录屏').click()`);
+      await ready(sw, `Boolean(document.querySelector('.l-shot-actions'))`);
+      await wait(150);
+      const initialActions = await page(
+        sw,
+        `[...document.querySelector('.l-shot-actions').querySelectorAll('button[role="switch"]')].map(b => b.getAttribute('aria-checked'))`
+      );
+      for (const idx of [1, 2]) {
+        if (initialActions[idx] === 'true') {
+          await page(sw, `document.querySelector('.l-shot-actions').querySelectorAll('button[role="switch"]')[${idx}].click()`);
+          await wait(100);
+        }
+      }
+      const remaining = await page(
+        sw,
+        `[...document.querySelector('.l-shot-actions').querySelectorAll('button[role="switch"]')].map(b => b.getAttribute('aria-checked'))`
+      );
+      const soleIdx = remaining.indexOf('true');
+      if (soleIdx < 0) throw Error('Unexpected all-false screenshot actions: ' + JSON.stringify(remaining));
+      await page(sw, `document.querySelector('.l-shot-actions').querySelectorAll('button[role="switch"]')[${soleIdx}].click()`);
+      await wait(120);
+      const afterSoleClick = await page(
+        sw,
+        `document.querySelector('.l-shot-actions').querySelectorAll('button[role="switch"]')[${soleIdx}].getAttribute('aria-checked')`
+      );
+      if (afterSoleClick !== 'true') {
+        throw Error('Switch drifted out of sync when ScreenshotSettings prevented unchecking last action: ' + afterSoleClick);
+      }
+      // Restore initial action switches
+      for (const idx of [1, 2]) {
+        if (initialActions[idx] === 'true') {
+          await page(
+            sw,
+            `(() => { const b = document.querySelector('.l-shot-actions').querySelectorAll('button[role="switch"]')[${idx}]; if (b.getAttribute('aria-checked') !== 'true') b.click(); })()`
+          );
+          await wait(100);
+        }
+      }
+
       sw.hide();
       return names;
     }))

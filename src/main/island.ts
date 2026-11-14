@@ -571,6 +571,7 @@ export class NotchIsland {
   private nookWatchers = new Map<string, FSWatcher>();
   private nookWatchDebounce: ReturnType<typeof setTimeout> | null = null;
   private lastAnchorX = -1;
+  private lastPublishedMode: IslandMode = 'idle';
   private destroyed = false;
 
   private readonly onDisplayMetricsChanged = () => this.placeWindows();
@@ -643,14 +644,25 @@ export class NotchIsland {
       check(event);
       if (!MODES.includes(mode)) return;
       this.mode = mode;
-      if (this.mode === 'idle' || this.mode === 'focus') {
-        this.window.setIgnoreMouseEvents(true, { forward: true });
+      if (this.mode === 'board') {
+        if (!this.window.isDestroyed()) this.window.setIgnoreMouseEvents(false, { forward: true });
+      } else {
+        this.syncMousePassthrough();
       }
       this.publish();
     });
     ipcMain.on('island:hit', (event, inside: boolean) => {
       check(event);
-      this.window.setIgnoreMouseEvents(!inside, { forward: true });
+      const allowHit =
+        inside &&
+        (this.mode === 'board' ||
+          this.mode === 'focus-hover' ||
+          this.mode === 'nook-alert' ||
+          this.mode === 'slacking' ||
+          this.isCapsuleActive());
+      if (!this.window.isDestroyed()) {
+        this.window.setIgnoreMouseEvents(!allowHit, { forward: true });
+      }
     });
     ipcMain.handle('island:pomo-start', (event, task?: { id: string | null; title: string }, minutes = 25, kind: 'focus' | 'slacking' = 'focus') => {
       check(event);
@@ -694,8 +706,9 @@ export class NotchIsland {
       check(event);
       if (!QUICK_ACTIONS.includes(action)) throw new Error('不支持的快捷操作');
       if (this.mode === 'board') {
-        this.mode = this.resolveBaseMode();
-        this.publish();
+        this.closeBoard();
+      } else {
+        this.syncMousePassthrough();
       }
       if (action === 'toggle-notes') {
         this.notes.toggleDrawer();
@@ -874,7 +887,18 @@ export class NotchIsland {
     };
   }
 
+  private syncMousePassthrough() {
+    if (!this.window.isDestroyed() && this.mode !== 'board') {
+      this.window.setIgnoreMouseEvents(true, { forward: true });
+    }
+  }
+
   private publish() {
+    const modeChanged = this.mode !== this.lastPublishedMode;
+    this.lastPublishedMode = this.mode;
+    if ((this.mode === 'idle' || this.mode === 'focus' || this.mode === 'toast') && (modeChanged || !this.isCapsuleActive())) {
+      this.syncMousePassthrough();
+    }
     if (!this.window.isDestroyed()) {
       this.window.webContents.send('island:changed', this.snapshot());
     }
@@ -891,6 +915,8 @@ export class NotchIsland {
       this.islandEnabled = nextEnabled;
       if (!nextEnabled) {
         this.ax.notchGeometry?.(false);
+        this.mode = 'idle';
+        this.syncMousePassthrough();
         if (!this.window.isDestroyed() && this.window.isVisible()) this.window.hide();
       } else if (!process.env.LASSO_DATA_ROOT && !this.window.isDestroyed() && !this.window.isVisible()) {
         this.window.showInactive();
@@ -955,14 +981,16 @@ export class NotchIsland {
     }
     this.refreshNookData();
     this.mode = 'board';
-    this.window.setIgnoreMouseEvents(false);
+    if (!this.window.isDestroyed()) this.window.setIgnoreMouseEvents(false, { forward: true });
     this.publish();
   }
 
   closeBoard() {
-    this.mode = this.resolveBaseMode();
-    this.window.setIgnoreMouseEvents(true, { forward: true });
-    this.window.blur();
+    if (this.mode !== 'toast') {
+      this.mode = this.resolveBaseMode();
+    }
+    this.syncMousePassthrough();
+    if (!this.window.isDestroyed()) this.window.blur();
     this.publish();
   }
 
@@ -1064,9 +1092,7 @@ export class NotchIsland {
       if (this.mode === 'toast') {
         this.mode = previousMode === 'toast' ? this.resolveBaseMode() : previousMode;
       }
-      if (this.mode === 'idle' || this.mode === 'focus') {
-        this.window.setIgnoreMouseEvents(true, { forward: true });
-      }
+      this.syncMousePassthrough();
       this.publish();
     }, 2400);
   }
@@ -1086,6 +1112,7 @@ export class NotchIsland {
       totalSeconds
     };
     this.mode = kind === 'slacking' ? 'slacking' : 'focus';
+    this.syncMousePassthrough();
     this.publish();
 
     this.tickTimer = setInterval(() => {
@@ -1112,6 +1139,7 @@ export class NotchIsland {
     }
     this.pomodoro = null;
     this.mode = this.resolveBaseMode();
+    this.syncMousePassthrough();
     this.publish();
   }
 
@@ -1143,9 +1171,7 @@ export class NotchIsland {
       }
       if (this.mode === 'nook-alert' && this.alerts.length === 0) {
         this.mode = this.resolveBaseMode();
-        if (this.mode === 'idle' || this.mode === 'focus') {
-          this.window.setIgnoreMouseEvents(true, { forward: true });
-        }
+        this.syncMousePassthrough();
       }
     }
     this.publish();
@@ -1164,9 +1190,7 @@ export class NotchIsland {
     this.alerts = this.alerts.filter(a => a.id !== alertId);
     if (this.mode !== 'board') {
       this.mode = this.resolveBaseMode();
-      if (this.mode === 'idle' || this.mode === 'focus') {
-        this.window.setIgnoreMouseEvents(true, { forward: true });
-      }
+      this.syncMousePassthrough();
     }
     this.publish();
   }
@@ -1195,9 +1219,7 @@ export class NotchIsland {
     this.persistDismissedAlerts();
     if (this.mode !== 'board') {
       this.mode = this.resolveBaseMode();
-      if (this.mode === 'idle' || this.mode === 'focus') {
-        this.window.setIgnoreMouseEvents(true, { forward: true });
-      }
+      this.syncMousePassthrough();
     }
     this.publish();
   }
@@ -1211,9 +1233,7 @@ export class NotchIsland {
     this.alerts = this.alerts.filter(a => a.target !== label && a.id !== label && a.id !== `launchd:${label}`);
     if (this.mode !== 'board') {
       this.mode = this.resolveBaseMode();
-      if (this.mode === 'idle' || this.mode === 'focus') {
-        this.window.setIgnoreMouseEvents(true, { forward: true });
-      }
+      this.syncMousePassthrough();
     }
     this.toast(`已重启 ${friendlyServiceName(label)}`, '服务');
   }
@@ -1253,9 +1273,7 @@ export class NotchIsland {
       this.persistDismissedAlerts();
       if (this.mode !== 'board') {
         this.mode = this.resolveBaseMode();
-        if (this.mode === 'idle' || this.mode === 'focus') {
-          this.window.setIgnoreMouseEvents(true, { forward: true });
-        }
+        this.syncMousePassthrough();
       }
       this.publish();
       return;

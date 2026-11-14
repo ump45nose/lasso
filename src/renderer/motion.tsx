@@ -34,16 +34,9 @@ export function Glide({ id, className }: { id: string; className: string }) {
 
 export function Segmented<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: readonly (readonly [T, ReactNode])[]; onChange: (value: T) => void }) {
   const group = useId();
-  const [active, setActive] = useState(value);
-  useEffect(() => {
-    setActive(value);
-  }, [value]);
   return <LayoutGroup id={group}><div className="l-seg" role="radiogroup" aria-label={label}>
-    {options.map(([id, text]) => <button key={id || '_'} type="button" role="radio" aria-checked={active === id} onClick={() => {
-      setActive(id);
-      onChange(id);
-    }}>
-      {active === id && <Glide id="seg" className="l-seg-thumb" />}<span className="l-seg-label">{text}</span></button>)}
+    {options.map(([id, text]) => <button key={id || '_'} type="button" role="radio" aria-checked={value === id} onClick={() => onChange(id)}>
+      {value === id && <Glide id="seg" className="l-seg-thumb" />}<span className="l-seg-label">{text}</span></button>)}
   </div></LayoutGroup>;
 }
 
