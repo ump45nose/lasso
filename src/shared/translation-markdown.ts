@@ -1,6 +1,8 @@
 const restoreBlockMarker = (line: string) => line
   .replace(/^( {0,3})\\([-+*]|#{1,6}|>)(?=[ \t])/, '$1$2')
-  .replace(/^( {0,3}\d+)\\([.)])(?=[ \t])/, '$1$2');
+  .replace(/^( {0,3}\d+)\\([.)])(?=\D)/, '$1$2')
+  // Rich-text selection may omit the space after a list number ("2.ape").
+  .replace(/^( {0,3}\d{1,9}[.)])(?=[^\s\d])/, '$1 ');
 
 /** Restore Markdown copied from rich text, without changing fenced code. */
 export function normalizeTranslationMarkdown(text: string): string {

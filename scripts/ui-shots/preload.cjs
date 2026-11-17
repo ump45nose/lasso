@@ -270,7 +270,7 @@ contextBridge.executeInMainWorld({
               fromSelection: true,
               canReplace: true,
               sourceText: 'Switch AIDE and import again. Other issues:\n\n1. Check why orca is called twice.\n2. Harden ape so the operation completes fully.\n\nBoth Macs should retain these separate paragraphs. Commit: `6eb89c3`.',
-              translatedText: '切换 AIDE 后重新导入。其他问题：\n\n1. 检查为什么 orca 被调用了两次。\n2. 加固 ape，确保操作能够完整完成。\n\n两台 Mac 都应保留这些独立段落。提交：`6eb89c3`。'
+              translatedText: '切换 AIDE 后重新导入。其他问题：\n\n1.检查为什么 orca 被调用了两次。\n2.ape 会做一下加固，确保操作能够完整完成。\n\n两台 Mac 都应保留这些独立段落。提交：`6eb89c3`。'
             };
           }
           return common;

@@ -102,3 +102,13 @@ test('plain-text line separators and rich links, tables, and fenced code survive
   assert.match(converted, /\| Name \|/);
   assert.match(converted, /```\n\\- literal\n```/);
 });
+
+test('compact numbered selections remain separate list items without changing decimal or code text', () => {
+  const f = fixture();
+  assert.equal(f.selectionMarkdown('其它问题：\n1.查一下 orca 为什么会并发调用 2 次\n2.ape 会做一下加固', ''),
+    '其它问题：\n1. 查一下 orca 为什么会并发调用 2 次\n2. ape 会做一下加固');
+  assert.equal(f.selectionMarkdown('Other issues:\n1. Why does orca make concurrent calls twice\n2.ape will harden this', ''),
+    'Other issues:\n1. Why does orca make concurrent calls twice\n2. ape will harden this');
+  assert.equal(f.selectionMarkdown('1.25 is a decimal\nVersion 2.ape\n```\n2.ape\n```\n`1.literal`', ''),
+    '1.25 is a decimal\nVersion 2.ape\n```\n2.ape\n```\n`1.literal`');
+});
