@@ -13,6 +13,7 @@ struct Query { napi_async_work work; napi_deferred deferred; int pid; double x,y
 struct BridgeEvent { std::string name; std::string payload; };
 struct FinderTrigger { double x, y; bool rightHold; };
 struct CopyWatchEvent { bool doubleCopy; double timestamp; };
+static constexpr int64_t kLassoCopyEvent = 0x4c4153534f;
 
 @interface SnapPreviewOverlay : NSWindow
 @end
@@ -144,6 +145,34 @@ static napi_value pasteToProcess(napi_env e, napi_callback_info info) {
     });
   });
   napi_get_boolean(e, activated, &result);
+  return result;
+}
+
+static napi_value copySelectionToProcess(napi_env e, napi_callback_info info) {
+  size_t n = 1;
+  napi_value args[1], result;
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  int32_t pid = 0;
+  bool sent = false;
+  if (n == 1 && napi_get_value_int32(e, args[0], &pid) == napi_ok && pid > 0 && pid != getpid()) {
+    @autoreleasepool {
+      if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid) {
+        CGEventRef down = CGEventCreateKeyboardEvent(nullptr, 8, true); // Cmd+C
+        CGEventRef up = CGEventCreateKeyboardEvent(nullptr, 8, false);
+        if (down && up) {
+          for (CGEventRef event : {down, up}) {
+            CGEventSetFlags(event, kCGEventFlagMaskCommand);
+            CGEventSetIntegerValueField(event, kCGEventSourceUserData, kLassoCopyEvent);
+            CGEventPostToPid(pid, event);
+          }
+          sent = true;
+        }
+        if (down) CFRelease(down);
+        if (up) CFRelease(up);
+      }
+    }
+  }
+  napi_get_boolean(e, sent, &result);
   return result;
 }
 
@@ -431,6 +460,7 @@ static napi_value startCopyWatch(napi_env e, napi_callback_info info) {
   napi_unref_threadsafe_function(e, g_copy_tsfn);
   onMain(^{
     g_copy_monitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskKeyDown handler:^(NSEvent* event) {
+      if (event.CGEvent && CGEventGetIntegerValueField(event.CGEvent, kCGEventSourceUserData) == kLassoCopyEvent) return;
       NSEventModifierFlags excluded = NSEventModifierFlagControl | NSEventModifierFlagOption | NSEventModifierFlagShift;
       if (event.keyCode != 8 || event.isARepeat || !(event.modifierFlags & NSEventModifierFlagCommand) ||
           (event.modifierFlags & excluded) || !g_copy_tsfn) return;
@@ -1373,6 +1403,7 @@ static napi_value init(napi_env e,napi_value exports){
     {"paste",nullptr,paste,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"pasteboardMeta",nullptr,pasteboardMeta,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"pasteToProcess",nullptr,pasteToProcess,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"copySelectionToProcess",nullptr,copySelectionToProcess,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"startCopyWatch",nullptr,startCopyWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"stopCopyWatch",nullptr,stopCopyWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"setWindowDragSnapEnabled",nullptr,setWindowDragSnapEnabled,nullptr,nullptr,nullptr,napi_default,nullptr},

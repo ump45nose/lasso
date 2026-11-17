@@ -12,6 +12,7 @@ import type {
   IslandTaskListMeta,
   NookReminderPrefs,
   NookReviewBadge,
+  SelectionContext,
   Settings,
   SnapSlot
 } from '../shared/contracts';
@@ -946,6 +947,16 @@ export class NotchIsland {
     if (settings.copyTranslateEnabled && (settings.copyTranslateTrigger === 'every-copy' || (this.pendingDoubleCopyAt && !this.copyTimer))) {
       this.translateCopy();
     }
+  }
+
+  async translateSelection(selection: SelectionContext) {
+    const source = this.ax.frontmostApp?.();
+    let text = selection.text;
+    if (source && source.bundleId === selection.sourceApp) {
+      try { text = await this.clipboardHistory.selectionMarkdown(source.pid) ?? text; }
+      catch { console.warn('未能读取划词原文的格式，使用所选文字'); }
+    }
+    this.translator.open(text, source?.pid);
   }
 
   private translateCopy() {

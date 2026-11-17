@@ -525,8 +525,11 @@ async function runGlobalAction(action: GlobalActionId) {
     if (!lastSelection?.text?.trim()) capture?.current();
     const selText = lastSelection?.text?.trim();
     const frontPid = nativeAx().frontmostApp?.().pid ?? 0;
-    if (selText) actionBar?.hide();
-    island.translator.open(selText || undefined, frontPid);
+    if (selText && lastSelection) {
+      actionBar?.hide();
+      capture?.suppress();
+      await island.translateSelection(lastSelection);
+    } else island.translator.open(undefined, frontPid);
   } else if (action === 'open-clipboard-history') {
     island.clipboardHistory.open();
   } else if (action === 'toggle-notes') {
@@ -1708,9 +1711,9 @@ async function boot() {
       pin: pinImage,
       toast: (text, badge) => island.toast(text, badge),
       appPrompts: () => state.settings.appPrompts,
-      onTranslate: selection => {
-        const frontPid = nativeAx().frontmostApp?.().pid ?? 0;
-        island.translator.open(selection.text, frontPid);
+      onTranslate: async selection => {
+        capture?.suppress();
+        await island.translateSelection(selection);
       },
       onAppendNote: appendNoteText,
       onContinueInChat: payload => {

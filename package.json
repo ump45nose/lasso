@@ -11,6 +11,7 @@
   "description": "Mac 上不打断当前工作的 AI 小窗",
   "main": "dist/main.cjs",
   "scripts": {
+    "test:translation": "node --test scripts/selection-markdown.test.mjs",
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && npm run check:ui && npm run build:js && node scripts/build-capture.mjs && node scripts/source-info.mjs --record",
     "check:ui": "node scripts/check-ui.mjs",
@@ -35,7 +36,9 @@
     "react-dom": "19.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "selection-hook": "2.1.2"
+    "selection-hook": "2.1.2",
+    "turndown": "^7.2.5",
+    "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
     "@electron/osx-sign": "^2.7.1",
@@ -43,6 +46,7 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@types/turndown": "^5.0.6",
     "electron": "45.0.0",
     "esbuild": "^0.27.0",
     "typescript": "^5.9.0",

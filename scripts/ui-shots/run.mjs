@@ -570,6 +570,16 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
           !prose.querySelector('p').textContent.includes('\\\\');
       })()`))) throw Error('B3 Markdown structures, hard breaks, or fenced code were changed');
       names.push(await save(transWin, 'v4-b3-translator-markdown-code'));
+
+      transWin.setSize(468, 470);
+      const selectedTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'selection'))`);
+      transWin.webContents.send('translator:changed', selectedTrans);
+      await wait(200);
+      if (!(await page(transWin, `(() => {
+        const prose = document.querySelector('.sw-tr-prose');
+        return prose.querySelectorAll(':scope > p').length === 2 && prose.querySelectorAll('ol > li').length === 2 && Boolean(prose.querySelector('code'));
+      })()`))) throw Error('B3 rich selection lost paragraphs, ordered list items, or inline code');
+      names.push(await save(transWin, 'v4-b3-translator-selection-format'));
       transWin.hide();
 
       // B4 Notch Island & Focus Board

@@ -5,7 +5,7 @@ const restoreBlockMarker = (line: string) => line
 /** Restore Markdown copied from rich text, without changing fenced code. */
 export function normalizeTranslationMarkdown(text: string): string {
   let fence: { char: string; length: number } | null = null;
-  return text.replace(/\r\n/g, '\n').split('\n').map((line, index, lines) => {
+  return text.replace(/\r\n?|[\u2028\u2029]/g, '\n').split('\n').map((line, index, lines) => {
     const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
     if (marker) {
       if (!fence) fence = { char: marker[1][0], length: marker[1].length };

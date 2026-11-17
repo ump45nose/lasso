@@ -12,6 +12,7 @@ export interface NativeAx {
   paste(): void;
   pasteboardMeta(): { changeCount: number; concealed: boolean };
   pasteToProcess(pid: number): boolean;
+  copySelectionToProcess(pid: number): boolean;
   startCopyWatch(cb: (event: { doubleCopy: boolean; timestamp: number }) => void): void;
   stopCopyWatch(): void;
   setWindowDragSnapEnabled(enabled: boolean, dwellMs?: number): void;

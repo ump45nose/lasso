@@ -33,7 +33,8 @@ jobs:
         run: npm run typecheck
       - name: Check UI rules
         run: npm run check:ui
-      # No standalone test script is currently defined in package.json.
+      - name: Check translation selection formatting
+        run: npm run test:translation
       # ui:shots needs the running macOS app and is verified separately.
       - name: Build JS
         # Native compilation requires Xcode and macOS frameworks.

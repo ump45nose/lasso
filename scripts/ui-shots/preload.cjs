@@ -264,6 +264,15 @@ contextBridge.executeInMainWorld({
               translatedText: '## 格式保留\n\n正文第一行\\\n正文第二行\n\n1. **列表**与[链接](https://example.com)\n2. 行内代码 `\\- literal`\n\n> 引用内容\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 已预览 |\n\n````text\n\\- literal\n```\n\\# literal heading\n````'
             };
           }
+          if (variant === 'selection') {
+            return {
+              ...common,
+              fromSelection: true,
+              canReplace: true,
+              sourceText: 'Switch AIDE and import again. Other issues:\n\n1. Check why orca is called twice.\n2. Harden ape so the operation completes fully.\n\nBoth Macs should retain these separate paragraphs. Commit: `6eb89c3`.',
+              translatedText: '切换 AIDE 后重新导入。其他问题：\n\n1. 检查为什么 orca 被调用了两次。\n2. 加固 ape，确保操作能够完整完成。\n\n两台 Mac 都应保留这些独立段落。提交：`6eb89c3`。'
+            };
+          }
           return common;
         },
         clipboardState(base, { safariIcon = null, finderIcon = null, thumbnailDataUrl = null } = {}) {

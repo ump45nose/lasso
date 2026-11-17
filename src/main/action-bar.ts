@@ -31,7 +31,7 @@ export interface ActionBarFastCallbacks {
   pin(image: NativeImage): Promise<void>;
   toast(text: string, badge?: string): void;
   appPrompts(): AppPrompt[];
-  onTranslate(selection: SelectionContext): void;
+  onTranslate(selection: SelectionContext): void | Promise<void>;
   onAppendNote(text: string, sourceApp?: string): Promise<void> | void;
   onContinueInChat(payload: { title: string; connectionId: string; model: string; userText: string; assistantText: string }): void;
 }
@@ -144,7 +144,7 @@ export class ActionBar {
       if (!selection || this.busy) return;
       if (id === 'translate') {
         this.hide(true);
-        this.fast.onTranslate(selection);
+        await this.fast.onTranslate(selection);
         return;
       }
       if (id === 'note') {

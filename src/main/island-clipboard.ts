@@ -10,6 +10,7 @@ import { applicationIcon } from './app-icons';
 import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
+import { readSelectionMarkdown } from './selection-markdown';
 
 const WIN_W = 708, WIN_H = 508;
 const SENSITIVE_APPS = /^(?:com\.agilebits\.onepassword(?:[0-9]|\.|$)|com\.1password(?:\.|$)|com\.bitwarden(?:\.|$)|com\.apple\.Passwords$|com\.apple\.keychainaccess$|org\.keepassxc\.keepassxc$|com\.lastpass(?:\.|$)|com\.keepassx(?:\.|$))/i;
@@ -104,6 +105,14 @@ export class ClipboardHistoryPanel {
 
   /** Use for all Lasso writes so history and copy translation ignore the same changeCount. */
   ignoreCurrentCopy() { this.changeCount = this.ax.pasteboardMeta?.().changeCount ?? this.changeCount; }
+
+  async selectionMarkdown(pid: number): Promise<string | null> {
+    const source = this.ax.frontmostApp?.();
+    if (this.writing || !source || source.pid !== pid || isSensitiveCopy(source.bundleId, false)) return null;
+    ++this.writing;
+    try { return await readSelectionMarkdown(pid, this.ax); }
+    finally { this.ignoreCurrentCopy(); --this.writing; }
+  }
 
   private pushEntry(entry: ClipboardEntry) {
     const head = this.state.entries[0];
