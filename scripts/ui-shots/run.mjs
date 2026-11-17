@@ -537,6 +537,39 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       await wait(350);
       if (!(await page(transWin, `Boolean(document.querySelector('.sw-src-box'))`))) throw Error('B3 Translator expanded source box missing');
       names.push(await save(transWin, 'v4-b3-translator-expanded'));
+
+      transWin.setSize(468, 560);
+      const markdownTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'markdown'))`);
+      transWin.webContents.send('translator:changed', markdownTrans);
+      await wait(200);
+      if (!(await page(transWin, `(() => {
+        const prose = document.querySelector('.sw-tr-prose');
+        return prose.querySelectorAll('ul > li').length === 2 && prose.textContent.includes('~/WorkSpace') && !prose.textContent.includes('\\\\');
+      })()`))) throw Error('B3 escaped translation must preview as a two-item list without literal backslashes');
+      names.push(await save(transWin, 'v4-b3-translator-markdown'));
+
+      transWin.setSize(375, 620);
+      transWin.webContents.send('translator:changed', { ...markdownTrans, status: 'streaming' });
+      await wait(200);
+      if (!(await page(transWin, `Boolean(document.querySelector('.sw-tr-prose ul') && document.querySelector('.sw-caret'))`))) throw Error('B3 Markdown preview missing while streaming');
+      if (!(await page(transWin, `(() => {
+        const footer = document.querySelector('.sw-tr .sw-wfoot');
+        return [...footer.querySelectorAll('button')].every(button => button.getBoundingClientRect().right <= footer.getBoundingClientRect().right);
+      })()`))) throw Error('B3 narrow translator footer clips an action');
+      names.push(await save(transWin, 'v4-b3-translator-markdown-streaming-narrow'));
+
+      transWin.setSize(468, 660);
+      const codeTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'markdown-code'))`);
+      transWin.webContents.send('translator:changed', codeTrans);
+      await wait(200);
+      if (!(await page(transWin, `(() => {
+        const prose = document.querySelector('.sw-tr-prose');
+        return prose.querySelectorAll('ol > li').length === 2 && prose.querySelector('h2') && prose.querySelector('strong') &&
+          prose.querySelector('a') && prose.querySelector('blockquote') && prose.querySelector('table') &&
+          prose.querySelector('p > br') && prose.querySelector('pre code').textContent === '\\\\- literal\\n\u0060\u0060\u0060\\n\\\\# literal heading\\n' &&
+          !prose.querySelector('p').textContent.includes('\\\\');
+      })()`))) throw Error('B3 Markdown structures, hard breaks, or fenced code were changed');
+      names.push(await save(transWin, 'v4-b3-translator-markdown-code'));
       transWin.hide();
 
       // B4 Notch Island & Focus Board

@@ -247,6 +247,23 @@ contextBridge.executeInMainWorld({
               ? '## 设计原则\n\n好工具平时安静退在后台，直到你运行 `npm run build` 的那一刻：\n- **克制聚焦**：不在屏幕上留下一堆杂物\n- **结构无损**：多段文本与 Markdown 格式完整保留'
               : '好工具平时不露面，伸手去够的那一刻刚好在手边，用完又干干净净地退开，不在屏幕上留一堆摊子。'
           };
+          if (variant === 'markdown') {
+            return {
+              ...common,
+              fromSelection: true,
+              canReplace: true,
+              sourceText: 'Other notes\\\n\\- The local test instance was still pointing at the repo\'s old folder and created \\~/WorkSpace by accident while I was testing. I fixed its settings and deleted that folder. All temporary screenshots and scripts are cleaned up.\\\n\\- The code changes are not committed yet; the NAS is running the uncommitted version. The 4-hourly release builds only pick up main. Should I commit and merge into main?',
+              translatedText: '其他说明\\\n\\- 本地测试实例仍指向仓库的旧目录，测试时意外创建了 \\~/WorkSpace。我已修正设置并删除该目录。所有临时截图和脚本均已清理。\\\n\\- 代码改动尚未提交；NAS 运行的是未提交的版本。每 4 小时一次的发布构建只会采用 main 分支。是否需要提交并合并到 main？'
+            };
+          }
+          if (variant === 'markdown-code') {
+            return {
+              ...common,
+              fromSelection: true,
+              sourceText: 'Markdown preview with headings, lists, links, tables, and literal code.',
+              translatedText: '## 格式保留\n\n正文第一行\\\n正文第二行\n\n1. **列表**与[链接](https://example.com)\n2. 行内代码 `\\- literal`\n\n> 引用内容\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 已预览 |\n\n````text\n\\- literal\n```\n\\# literal heading\n````'
+            };
+          }
           return common;
         },
         clipboardState(base, { safariIcon = null, finderIcon = null, thumbnailDataUrl = null } = {}) {

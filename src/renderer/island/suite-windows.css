@@ -98,6 +98,12 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-tr-error { padding: 8px 10px; border-radius: 8px; background: var(--danger-wash); color: var(--danger); font-size: 12.5px; }
 .sw-caret { display: inline-block; width: 1.5px; height: 1.1em; background: var(--clay); vertical-align: -0.15em; margin-left: 2px; }
 
+@media (max-width: 420px) {
+  .sw-tr .sw-wfoot { gap: 4px; padding-inline: 8px; }
+  .sw-tr .sw-wfoot .sw-btn { padding-inline: 6px; }
+  .sw-tr .sw-wfoot .sw-kbd { display: none; }
+}
+
 /* B5 Dual-Pane Clipboard */
 .sw-clip-bar { height: 52px; gap: 6px; padding: 0 8px 0 10px; }
 .sw-search-box { flex: 1; min-width: 0; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line-strong); transition: border-color var(--t-fast), box-shadow var(--t-fast); }

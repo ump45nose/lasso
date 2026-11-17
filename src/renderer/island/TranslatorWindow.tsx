@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import type { IslandAPI, TranslatorWindowState } from '../../shared/contracts';
 import type { TranslationLang } from '../../shared/media';
+import { normalizeTranslationMarkdown } from '../../shared/translation-markdown';
 import { useFonts } from '../fonts';
 import './suite-windows.css';
 
@@ -48,19 +49,21 @@ function detectSourceTag(text: string): string {
 }
 
 function formatMarkdownBreaks(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, '\n').split('\n');
-  let inFence = false;
+  const lines = normalizeTranslationMarkdown(markdown).split('\n');
+  let fence: { char: string; length: number } | null = null;
   const isBlockLine = (line: string) =>
-    /^\s*(?:$|#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\||`{3,}|~{3,}|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line);
+    /^\s*(?:$|#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\||`{3,}|~{3,}|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line);
   return lines
     .map((line, idx) => {
-      if (/^\s*(?:`{3,}|~{3,})/.test(line)) {
-        inFence = !inFence;
+      const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+      if (marker) {
+        if (!fence) fence = { char: marker[1][0], length: marker[1].length };
+        else if (marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
         return line;
       }
-      if (inFence || idx === lines.length - 1) return line;
+      if (fence || idx === lines.length - 1) return line;
       const next = lines[idx + 1];
-      if (!isBlockLine(line) && !isBlockLine(next) && !line.endsWith('  ')) {
+      if (!isBlockLine(line) && !isBlockLine(next) && !line.endsWith('  ') && !/(?<!\\)\\$/.test(line)) {
         return `${line}  `;
       }
       return line;
