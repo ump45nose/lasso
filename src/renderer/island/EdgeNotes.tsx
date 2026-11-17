@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import Markdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, ChevronUp, FileText, Lock, LockOpen, Pin, Plus, Search, Trash2, X } from 'lucide-react';
 import type { EdgeNotesState, IslandAPI } from '../../shared/contracts';
 import { useFonts } from '../fonts';
-import { Segmented } from '../motion';
+import { NoteEditor } from './NoteEditor';
+import type { EditorView } from '@codemirror/view';
 import { shortcutLabel } from '../targets';
 import './island.css';
 
@@ -15,11 +14,6 @@ declare global {
 }
 
 const SCRATCHPAD = 'Scratchpad.md';
-const MODE_OPTIONS = [
-  ['edit', '编辑'],
-  ['preview', '预览']
-] as const;
-
 function formatShortDate(ts?: number): string {
   if (!ts) return '';
   const d = new Date(ts);
@@ -30,8 +24,6 @@ function formatShortDate(ts?: number): string {
 export function EdgeNotes() {
   const [state, setState] = useState<EdgeNotesState | null>(null);
   const [draft, setDraft] = useState('');
-  // v4 B6: persistent edit mode by default — blur saves without leaving edit mode!
-  const [isEditing, setIsEditing] = useState(true);
   const [saving, setSaving] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -44,7 +36,7 @@ export function EdgeNotes() {
   const savesRef = useRef<{ file: string; content: string; done: Promise<void> }[]>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorRef = useRef<EditorView | null>(null);
 
   useFonts(state?.fonts);
 
@@ -119,14 +111,6 @@ export function EdgeNotes() {
         await flushSave();
         setPickerOpen(false);
         window.island.setNotesOpen(false);
-      } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'e') {
-        event.preventDefault();
-        await flushSave();
-        setIsEditing(prev => {
-          const next = !prev;
-          if (next) setTimeout(() => textareaRef.current?.focus(), 20);
-          return next;
-        });
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
         event.preventDefault();
         await flushSave();
@@ -143,7 +127,6 @@ export function EdgeNotes() {
   }, [pickerOpen, flushSave]);
 
   if (!state) return null;
-  let checkboxCounter = 0;
   const activeFile = state.activeFile;
   const q = query.trim().toLowerCase();
   const otherNotes = state.notes.filter(n => n.fileName !== SCRATCHPAD && (!q || n.fileName.toLowerCase().includes(q)));
@@ -166,20 +149,6 @@ export function EdgeNotes() {
     timerRef.current = setTimeout(flushSave, 400);
   }
 
-  function toggleTaskCheckbox(targetIdx: number) {
-    let count = 0;
-    const next = draft.replace(/^(\s*(?:[-*+]|\d+\.)\s+\[)([ xX])(\])/gm, (match, prefix, checkState, suffix) => {
-      if (count === targetIdx) {
-        count++;
-        const nextState = checkState.trim() ? ' ' : 'x';
-        return `${prefix}${nextState}${suffix}`;
-      }
-      count++;
-      return match;
-    });
-    if (next !== draft) onEdit(next);
-  }
-
   function pickNote(fileName: string) {
     void flushSave();
     fileRequestRef.current++;
@@ -199,12 +168,11 @@ export function EdgeNotes() {
     const title = (customTitle ?? query).trim();
     setQuery('');
     setPickerOpen(false);
-    setIsEditing(true);
     await window.island.createNote(title || undefined);
     const next = await window.island.getNotesState();
     if (request === fileRequestRef.current) {
       applyNote(next);
-      setTimeout(() => textareaRef.current?.focus(), 20);
+      setTimeout(() => editorRef.current?.focus(), 20);
     }
   }
 
@@ -318,18 +286,6 @@ export function EdgeNotes() {
 
           <span className="grow" />
 
-          <Segmented
-            label="编辑与预览切换"
-            value={isEditing ? 'edit' : 'preview'}
-            options={MODE_OPTIONS}
-            onChange={mode => {
-              void flushSave();
-              const nextEdit = mode === 'edit';
-              setIsEditing(nextEdit);
-              if (nextEdit) setTimeout(() => textareaRef.current?.focus(), 20);
-            }}
-          />
-
           <button
             type="button"
             className="en-ib"
@@ -379,90 +335,21 @@ export function EdgeNotes() {
         </header>
 
         <div className="en-body">
-          {isEditing ? (
-            <textarea
-              ref={textareaRef}
-              className="en-editor"
-              aria-label="便签 Markdown 内容"
-              value={draft}
-              onChange={e => onEdit(e.target.value)}
-              onBlur={() => {
-                // B6 rule: blur ONLY saves, never exits edit mode or resets cursor/scroll!
-                void flushSave();
-              }}
-              placeholder="随手记录灵感、命令片段或待办… 自动保存为本地 Markdown"
-            />
-          ) : (
-            <div className="en-render" role="region" aria-label="Markdown 预览">
-              {draft.trim() ? (
-                <Markdown
-                  remarkPlugins={[remarkGfm]}
-                  components={{
-                    input: ({ ...props }) => {
-                      if (props.type === 'checkbox') {
-                        const idx = checkboxCounter++;
-                        const checked = Boolean(props.checked);
-                        return (
-                          <button
-                            type="button"
-                            role="checkbox"
-                            aria-checked={checked}
-                            aria-label="切换待办状态"
-                            className={'en-chk' + (checked ? ' on' : '')}
-                            onClick={e => {
-                              e.stopPropagation();
-                              toggleTaskCheckbox(idx);
-                            }}
-                          >
-                            {checked && <Check size={11} />}
-                          </button>
-                        );
-                      }
-                      return <input {...props} />;
-                    },
-                    a: ({ href, children, ...props }) => (
-                      <a href={href} target="_blank" rel="noreferrer" {...props}>
-                        {children}
-                      </a>
-                    )
-                  }}
-                >
-                  {draft}
-                </Markdown>
-              ) : (
-                <p className="en-empty-hint" onClick={() => setIsEditing(true)}>
-                  暂无内容，按 ⌘E 或点「编辑」开始记录…
-                </p>
-              )}
-            </div>
-          )}
+          <NoteEditor key={activeFile} value={draft} onChange={onEdit} onBlur={() => void flushSave()} editorRef={editorRef} />
         </div>
 
         <footer className="en-foot">
           <span className="mono">
             {draft.length} 字 · {lineCount} 行
           </span>
-          {isEditing ? (
-            <span className={'en-saved' + (saving ? ' saving' : '')}>
-              {!saving && <Check size={12} />}
-              <span>{saving ? '保存中…' : '已保存'}</span>
-            </span>
-          ) : (
-            <>
-              <span className="grow" />
-              <span className="en-keyhint">
-                <kbd className="en-kbd">⌘E</kbd>回到编辑
-              </span>
-            </>
-          )}
-          {isEditing && (
-            <>
-              <span className="grow" />
-              <span className="en-foot-path mono trunc" title={`${state.notesDir}/${activeFile}`}>
-                ~/Documents/LassoNotes/{activeFile}
-              </span>
-            </>
-          )}
+          <span className={'en-saved' + (saving ? ' saving' : '')}>
+            {!saving && <Check size={12} />}
+            <span>{saving ? '保存中…' : '已保存'}</span>
+          </span>
+          <span className="grow" />
+          <span className="en-foot-path mono trunc" title={`${state.notesDir}/${activeFile}`}>
+            ~/Documents/LassoNotes/{activeFile}
+          </span>
           {hotkeyLabel && <kbd className="en-kbd">{hotkeyLabel}</kbd>}
         </footer>
       </section>

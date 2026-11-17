@@ -645,7 +645,7 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       names.push(await save(clipWin, 'v4-b5-clipboard-image'));
       clipWin.hide();
 
-      // B6 EdgeNotes (Persistent edit + Preview + Unfocused header)
+      // B6 EdgeNotes: formatted content stays editable, including when the window loses focus.
       const notesWin = find('edge-notes');
       await ready(notesWin, `Boolean(window.island && document.querySelector('.en-stage'))`);
       notesWin.setSize(420, 500);
@@ -660,29 +660,18 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         activeFile: 'Scratchpad.md',
         files: ['Scratchpad.md', 'release-v4.md'],
         content:
-          '# 今日推进备忘\n\n- [x] 收敛截图工具条为两排紧凑布局\n- [ ] 核对独立设置窗 8 个模块自动保存\n- [ ] 验证访达面板发给 AI 动作\n\n失焦时不退出编辑态，保留光标与滚动位置。'
+          '# 今日推进备忘\n\n- [x] 收敛截图工具条为两排紧凑布局\n- [ ] 核对独立设置窗 8 个模块自动保存\n- [ ] 验证访达面板发给 AI 动作\n\n失焦时保留光标与滚动位置。'
       };
       notesWin.webContents.send('notes:changed', notesPayload);
       await wait(350);
-      // Verify persistent edit mode is default AND blur on textarea does NOT exit edit mode!
-      await page(notesWin, `document.querySelector('textarea')?.dispatchEvent(new FocusEvent('blur', { bubbles: true }))`);
-      await wait(150);
-      if (!(await page(notesWin, `Boolean(document.querySelector('textarea'))`))) {
-        throw Error('B6 EdgeNotes exited edit mode on blur!');
+      if (!(await page(notesWin, `Boolean(document.querySelector('.cm-content[contenteditable="true"]') && document.querySelector('.en-md-heading') && document.querySelector('.en-task-checkbox'))`))) {
+        throw Error('B6 EdgeNotes live editor did not render Markdown');
       }
-      names.push(await save(notesWin, 'v4-b6-notes-edit'));
-
-      await page(notesWin, `[...document.querySelectorAll('[aria-label="编辑与预览切换"] button, .l-seg button')].find(b => b.textContent.includes('预览'))?.click()`);
-      await wait(250);
-      names.push(await save(notesWin, 'v4-b6-notes-preview'));
-
-      // Switch back to edit mode and then simulate window blur — verify edit mode persists on blur!
-      await page(notesWin, `[...document.querySelectorAll('[aria-label="编辑与预览切换"] button, .l-seg button')].find(b => b.textContent.includes('编辑'))?.click()`);
-      await wait(150);
+      names.push(await save(notesWin, 'v4-b6-notes-live'));
       notesWin.webContents.send('notes:changed', { ...notesPayload, focused: false });
       await wait(250);
-      if (!(await page(notesWin, `Boolean(document.querySelector('textarea'))`))) {
-        throw Error('B6 EdgeNotes exited edit mode when focused=false!');
+      if (!(await page(notesWin, `Boolean(document.querySelector('.cm-content[contenteditable="true"]'))`))) {
+        throw Error('B6 EdgeNotes editor disappeared when focused=false');
       }
       names.push(await save(notesWin, 'v4-b6-notes-blurred'));
       notesWin.hide();
