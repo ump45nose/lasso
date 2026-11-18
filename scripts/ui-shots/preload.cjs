@@ -200,6 +200,18 @@ contextBridge.executeInMainWorld({
               nookTotalCount: 6,
               pomodoro: focusPomodoro
             },
+            slackingCard: {
+              ...base,
+              mode: 'slacking',
+              alerts: [],
+              toast: null,
+              nookReviewBadge,
+              nookTaskLists,
+              nookTasks,
+              nookCompletedCount: 1,
+              nookTotalCount: 6,
+              pomodoro: { ...focusPomodoro, kind: 'slacking', taskId: null, taskTitle: '休息提醒 · 起身活动喝水', remainingSeconds: 262, totalSeconds: 300 }
+            },
             alertCapsule: {
               ...base,
               mode: 'focus',
@@ -224,6 +236,18 @@ contextBridge.executeInMainWorld({
               nookTotalCount: 6,
               pomodoro: focusPomodoro,
               nookPrefs: { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true }
+            },
+            boardIdle: {
+              ...base,
+              mode: 'board',
+              alerts: [],
+              toast: null,
+              nookReviewBadge,
+              nookTaskLists,
+              nookTasks,
+              nookCompletedCount: 1,
+              nookTotalCount: 6,
+              pomodoro: null
             }
           };
         },

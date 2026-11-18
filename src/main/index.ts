@@ -1692,6 +1692,10 @@ async function boot() {
     saveTranslation,
     saveNookPrefs: nookPrefs => {
       persistSettings({ ...state.settings, nookPrefs });
+    },
+    savePomodoroPrefs: pomodoro => {
+      persistSettings({ ...state.settings, pomodoro });
+      publish();
     }
   });
   island.updateSettings(state.settings);

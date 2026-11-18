@@ -7,6 +7,7 @@ const api: IslandAPI = {
   setMode: mode => ipcRenderer.send('island:mode', mode),
   hit: inside => ipcRenderer.send('island:hit', inside),
   startPomodoro: (task, minutes, kind) => ipcRenderer.invoke('island:pomo-start', task, minutes, kind),
+  setPomodoroPrefs: patch => ipcRenderer.invoke('island:pomo-prefs', patch),
   togglePausePomodoro: () => ipcRenderer.invoke('island:pomo-pause'),
   stopPomodoro: () => ipcRenderer.invoke('island:pomo-stop'),
   completeTask: taskId => ipcRenderer.invoke('island:complete-task', taskId),

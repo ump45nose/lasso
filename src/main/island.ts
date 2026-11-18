@@ -12,11 +12,13 @@ import type {
   IslandTaskListMeta,
   NookReminderPrefs,
   NookReviewBadge,
+  PomodoroSettings,
   SelectionContext,
   Settings,
   SnapSlot
 } from '../shared/contracts';
 import { fromMainFrame } from './ipc';
+import { defaultPomodoroSettings, normalizePomodoroSettings } from './settings';
 import { FinderPanel } from './island-finder';
 import { ClipboardHistoryPanel, type ClipboardCopyEvent } from './island-clipboard';
 import { TranslatorPanel } from './island-translator';
@@ -535,6 +537,7 @@ export interface NotchIslandCallbacks {
   settings: () => Settings;
   saveTranslation: (settings: TranslationSettings) => void;
   saveNookPrefs: (prefs: NookReminderPrefs) => void;
+  savePomodoroPrefs: (prefs: PomodoroSettings) => void;
 }
 
 export class NotchIsland {
@@ -554,6 +557,7 @@ export class NotchIsland {
   private serviceRestartCooldown = new Map<string, number>();
   private readonly dismissedAlertsPath = join(app.getPath('userData'), 'island-dismissed-alerts.json');
   private nookPrefs: NookReminderPrefs = { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true };
+  private pomodoroPrefs: PomodoroSettings = defaultPomodoroSettings();
   private copyTranslateEnabled = false;
   private dragSnapEnabled: boolean | undefined;
   private snapDwellMs: number | undefined;
@@ -665,10 +669,31 @@ export class NotchIsland {
         this.window.setIgnoreMouseEvents(!allowHit, { forward: true });
       }
     });
-    ipcMain.handle('island:pomo-start', (event, task?: { id: string | null; title: string }, minutes = 25, kind: 'focus' | 'slacking' = 'focus') => {
+    ipcMain.handle('island:pomo-start', (event, task?: { id: string | null; title: string }, minutes?: number, kind: 'focus' | 'slacking' = 'focus') => {
       check(event);
       if (kind !== 'focus' && kind !== 'slacking') throw new Error('番茄钟类型无效');
+      if (minutes !== undefined && (typeof minutes !== 'number' || !Number.isFinite(minutes))) throw new Error('番茄钟时长无效');
       this.startPomodoro(task, minutes, kind);
+    });
+    ipcMain.handle('island:pomo-prefs', (event, patch: Partial<PomodoroSettings>) => {
+      check(event);
+      if (
+        !patch ||
+        typeof patch !== 'object' ||
+        Array.isArray(patch) ||
+        Object.entries(patch).some(([key, value]) =>
+          key === 'soundEnabled' ? typeof value !== 'boolean'
+          : key === 'focusMinutes' || key === 'breakMinutes' ? typeof value !== 'number' || !Number.isFinite(value)
+          : true
+        )
+      ) {
+        throw Error('番茄钟设置无效');
+      }
+      const wasSoundEnabled = this.pomodoroPrefs.soundEnabled;
+      this.pomodoroPrefs = normalizePomodoroSettings({ ...this.pomodoroPrefs, ...patch }, this.pomodoroPrefs);
+      this.callbacks.savePomodoroPrefs(this.pomodoroPrefs);
+      if (!wasSoundEnabled && this.pomodoroPrefs.soundEnabled) this.playPomodoroChime('focus');
+      this.publish();
     });
     ipcMain.handle('island:pomo-pause', event => {
       check(event);
@@ -876,6 +901,7 @@ export class NotchIsland {
         : { hasNotch: false, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 152, rightSafeWidth: 88 },
       nookPrefs: { ...this.nookPrefs },
       copyTranslateEnabled: this.copyTranslateEnabled,
+      pomodoroPrefs: { ...this.pomodoroPrefs },
       pomodoro: this.pomodoro,
       toast: this.toastItem,
       alerts: this.alerts,
@@ -911,6 +937,7 @@ export class NotchIsland {
     if (!this.copyTranslateEnabled) this.pendingDoubleCopyAt = 0;
 
     this.nookPrefs = { ...settings.nookPrefs };
+    this.pomodoroPrefs = { ...settings.pomodoro };
     const nextEnabled = settings.notchIslandEnabled !== false;
     if (this.islandEnabled !== nextEnabled) {
       this.islandEnabled = nextEnabled;
@@ -1108,9 +1135,10 @@ export class NotchIsland {
     }, 2400);
   }
 
-  startPomodoro(task?: { id: string | null; title: string }, minutes = 25, kind: 'focus' | 'slacking' = 'focus') {
+  startPomodoro(task?: { id: string | null; title: string }, minutes?: number, kind: 'focus' | 'slacking' = 'focus') {
     if (this.tickTimer) clearInterval(this.tickTimer);
-    const totalSeconds = Math.max(60, Math.round(minutes * 60));
+    const preferred = kind === 'slacking' ? this.pomodoroPrefs.breakMinutes : this.pomodoroPrefs.focusMinutes;
+    const totalSeconds = Math.max(60, Math.min(180 * 60, Math.round((minutes ?? preferred) * 60)));
     const firstOpen = this.nookTasks.find(t => !t.completed && t.inFocus) ?? this.nookTasks.find(t => !t.completed);
     const chosen = task || (firstOpen ? { id: firstOpen.id, title: firstOpen.title } : { id: null, title: '深度专注' });
     this.pomodoro = {
@@ -1131,16 +1159,24 @@ export class NotchIsland {
       const next = this.pomodoro.remainingSeconds - 1;
       if (next <= 0) {
         if (this.pomodoro.kind === 'focus') {
-          this.startPomodoro({ id: this.pomodoro.taskId, title: '休息提醒 · 起身活动喝水' }, 5, 'slacking');
+          this.playPomodoroChime('focus');
+          this.startPomodoro({ id: this.pomodoro.taskId, title: '休息提醒 · 起身活动喝水' }, undefined, 'slacking');
         } else {
+          this.playPomodoroChime('slacking');
           this.stopPomodoro();
-          this.toast('休息结束，随时开始下一轮番茄钟', '25:00');
+          this.toast('休息结束，随时开始下一轮番茄钟', `${String(this.pomodoroPrefs.focusMinutes).padStart(2, '0')}:00`);
         }
         return;
       }
       this.pomodoro = { ...this.pomodoro, remainingSeconds: next };
       this.publish();
     }, 1000);
+  }
+
+  private playPomodoroChime(kind: 'focus' | 'slacking') {
+    if (!this.pomodoroPrefs.soundEnabled || process.env.LASSO_DATA_ROOT) return;
+    const sound = kind === 'focus' ? 'Glass' : 'Ping';
+    execFile('afplay', [`/System/Library/Sounds/${sound}.aiff`], () => {});
   }
 
   stopPomodoro() {
@@ -1305,7 +1341,7 @@ export class NotchIsland {
         };
         if (data.kind === 'slacking') {
           if (!this.nookPrefs.enabled || !this.nookPrefs.localAndCustom) return;
-          this.startPomodoro({ id: null, title: data.title || '休息提醒 · 站起来喝口水' }, 5, 'slacking');
+          this.startPomodoro({ id: null, title: data.title || '休息提醒 · 站起来喝口水' }, undefined, 'slacking');
           return;
         }
         if (!this.nookPrefs.enabled) return;

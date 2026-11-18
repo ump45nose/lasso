@@ -9,14 +9,18 @@ import {
   FolderOpen,
   Languages,
   ListChecks,
+  Minus,
   NotebookPen,
   Pause,
   Play,
+  Plus,
   RotateCcw,
   Scan,
   Settings,
   Square,
   Timer,
+  Volume2,
+  VolumeX,
   X
 } from 'lucide-react';
 import type { IslandAPI, IslandAlertItem, IslandState, IslandTaskItem } from '../../shared/contracts';
@@ -110,6 +114,80 @@ function shortTag(listTitle: string): string {
   return t;
 }
 
+const FOCUS_PRESETS = [15, 25, 45, 60];
+const BREAK_PRESETS = [5, 10, 15];
+
+function PomoSoundToggle({ enabled }: { enabled: boolean }) {
+  return (
+    <button
+      type="button"
+      className={'isl-ib sm' + (enabled ? ' act' : '')}
+      aria-label={enabled ? '关闭结束提示音' : '开启结束提示音'}
+      aria-pressed={enabled}
+      title={enabled ? '结束提示音：开' : '结束提示音：关'}
+      onClick={() => void window.island.setPomodoroPrefs({ soundEnabled: !enabled })}
+    >
+      {enabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
+    </button>
+  );
+}
+
+function PomoDurationRow({ label, value, presets, onChange }: { label: string; value: number; presets: number[]; onChange: (minutes: number) => void }) {
+  const holdRef = useRef<{ delay: ReturnType<typeof setTimeout> | null; repeat: ReturnType<typeof setInterval> | null }>({ delay: null, repeat: null });
+  const valueRef = useRef(value);
+  valueRef.current = value;
+  const stopHold = () => {
+    if (holdRef.current.delay) clearTimeout(holdRef.current.delay);
+    if (holdRef.current.repeat) clearInterval(holdRef.current.repeat);
+    holdRef.current = { delay: null, repeat: null };
+  };
+  useEffect(() => stopHold, []);
+  const step = (delta: number) => {
+    const next = Math.max(1, Math.min(180, valueRef.current + delta));
+    valueRef.current = next;
+    onChange(next);
+  };
+  const startHold = (delta: number) => {
+    stopHold();
+    step(delta);
+    holdRef.current.delay = setTimeout(() => {
+      holdRef.current.repeat = setInterval(() => step(delta), 80);
+    }, 420);
+  };
+  const holdProps = (delta: number) => ({
+    onPointerDown: () => startHold(delta),
+    onPointerUp: stopHold,
+    onPointerLeave: stopHold,
+    onPointerCancel: stopHold
+  });
+  return (
+    <div className="isl-pomo-row">
+      <span className="isl-pomo-lbl">{label}</span>
+      {presets.map(minutes => (
+        <button
+          key={minutes}
+          type="button"
+          className={'isl-pomo-chip mono' + (value === minutes ? ' on' : '')}
+          aria-pressed={value === minutes}
+          onClick={() => onChange(minutes)}
+        >
+          {minutes}m
+        </button>
+      ))}
+      <span className="isl-pomo-stepper">
+        <button type="button" className="isl-pomo-step" aria-label={`减少${label}分钟`} disabled={value <= 1} {...holdProps(-1)}>
+          <Minus size={11} />
+        </button>
+        <span className="isl-pomo-value mono">{value}</span>
+        <button type="button" className="isl-pomo-step" aria-label={`增加${label}分钟`} disabled={value >= 180} {...holdProps(1)}>
+          <Plus size={11} />
+        </button>
+        <span className="isl-pomo-unit">m</span>
+      </span>
+    </div>
+  );
+}
+
 export function NotchIsland() {
   const [state, setState] = useState<IslandState | null>(null);
   const [activeListTab, setActiveListTab] = useState<string>('focus');
@@ -126,6 +204,7 @@ export function NotchIsland() {
 
   const mode = state?.mode ?? 'idle';
   const pomodoro = state?.pomodoro ?? null;
+  const pomoPrefs = state?.pomodoroPrefs ?? { focusMinutes: 25, breakMinutes: 5, soundEnabled: true };
   const toast = state?.toast ?? null;
   const alerts = state?.alerts ?? [];
   const nookReviewBadge = state?.nookReviewBadge ?? null;
@@ -226,7 +305,7 @@ export function NotchIsland() {
   function startFocus(task?: { id: string | null; title: string }) {
     const candidate = visibleOpenTasks[0] ?? focusOpenTasks[0];
     const first = task ?? (candidate ? { id: candidate.id, title: candidate.title } : undefined);
-    void window.island.startPomodoro(first, 25, 'focus');
+    void window.island.startPomodoro(first, undefined, 'focus');
   }
 
   const urgentTitle = focusOpenTasks[0]?.title || nookReviewBadge?.label || '';
@@ -402,6 +481,7 @@ export function NotchIsland() {
                       <Timer size={13} />
                       <span>{pomodoro.paused ? '已暂停' : '专注中'}</span>
                       <span className="r trunc">{pomodoro.taskTitle}</span>
+                      <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
                     </div>
                     <div className="isl-timer-row">
                       <span className="isl-timer-big">{formatClock(pomodoro.remainingSeconds)}</span>
@@ -425,12 +505,14 @@ export function NotchIsland() {
                     <div className="isl-blk-lbl">
                       <Coffee size={13} />
                       <span>休息提醒 · 起身活动喝水</span>
+                      <span className="grow" />
+                      <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
                     </div>
                     <div className="isl-timer-row">
                       <span className="isl-timer-big">{formatClock(pomodoro?.remainingSeconds ?? 300)}</span>
                       <span className="grow" />
                       <button type="button" className="isl-ink-btn pri" onClick={() => startFocus()}>
-                        开始下一轮 25m
+                        开始下一轮 {pomoPrefs.focusMinutes}m
                       </button>
                       <button type="button" className="isl-ink-btn line" onClick={() => void window.island.stopPomodoro()}>
                         结束
@@ -488,6 +570,7 @@ export function NotchIsland() {
                             <Timer size={13} />
                             <span>{pomodoro.kind === 'slacking' ? '休息' : '专注'}</span>
                             <span className="r trunc">{pomodoro.taskTitle}</span>
+                            <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
                           </div>
                           <div className="isl-timer-row">
                             <span className="isl-timer-big">{formatClock(pomodoro.remainingSeconds)}</span>
@@ -515,19 +598,34 @@ export function NotchIsland() {
                             <Timer size={13} />
                             <span>专注计时</span>
                             <span className="r">番茄钟</span>
+                            <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
+                          </div>
+                          <div className="isl-pomo-setup">
+                            <PomoDurationRow
+                              label="专注"
+                              value={pomoPrefs.focusMinutes}
+                              presets={FOCUS_PRESETS}
+                              onChange={focusMinutes => void window.island.setPomodoroPrefs({ focusMinutes })}
+                            />
+                            <PomoDurationRow
+                              label="休息"
+                              value={pomoPrefs.breakMinutes}
+                              presets={BREAK_PRESETS}
+                              onChange={breakMinutes => void window.island.setPomodoroPrefs({ breakMinutes })}
+                            />
                           </div>
                           <div className="isl-timer-idle">
-                            <span className="isl-timer-hint">选一条事项开始 25m 专注，或直接启动</span>
+                            <span className="isl-timer-hint">选一条事项开始专注，或直接启动</span>
                             <div className="isl-timer-idle-btns">
                               <button type="button" className="isl-ink-btn pri" onClick={() => startFocus()}>
-                                25m 专注
+                                {pomoPrefs.focusMinutes}m 专注
                               </button>
                               <button
                                 type="button"
                                 className="isl-ink-btn line"
-                                onClick={() => void window.island.startPomodoro({ id: null, title: '起身活动喝水' }, 5, 'slacking')}
+                                onClick={() => void window.island.startPomodoro({ id: null, title: '起身活动喝水' }, pomoPrefs.breakMinutes, 'slacking')}
                               >
-                                5m 休息
+                                {pomoPrefs.breakMinutes}m 休息
                               </button>
                             </div>
                           </div>

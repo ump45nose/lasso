@@ -880,6 +880,66 @@ export function TranslationPane({
 
 /* ───────────────────────── Module 7: 桌面套件 ───────────────────────── */
 
+function PomodoroDurationRow({ name, sub, value, presets, onChange }: { name: string; sub: string; value: number; presets: string[]; onChange: (minutes: number) => void }) {
+  const isPreset = presets.includes(String(value));
+  const [customOpen, setCustomOpen] = useState(!isPreset);
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const commit = () => {
+    const parsed = Number.parseInt(draft, 10);
+    if (Number.isFinite(parsed) && parsed >= 1) onChange(Math.min(180, parsed));
+    else setDraft(String(value));
+  };
+  return (
+    <>
+      <div className="l-set-row">
+        <div className="l-set-row-main">
+          <div className="l-set-row-name">{name}</div>
+          <div className="l-set-row-sub">{sub}</div>
+        </div>
+        <Segmented
+          label={name}
+          value={isPreset ? String(value) : 'custom'}
+          onChange={v => {
+            if (v === 'custom') setCustomOpen(true);
+            else {
+              setCustomOpen(false);
+              onChange(Number(v));
+            }
+          }}
+          options={[...presets.map(p => [p, `${p} 分钟`] as const), ['custom', '自定义'] as const]}
+        />
+      </div>
+      <AnimatePresence initial={false}>
+        {(customOpen || !isPreset) && (
+          <motion.div key="pomo-custom" className="l-set-collapse" {...collapse}>
+            <div className="l-set-row">
+              <div className="l-set-row-main">
+                <div className="l-set-row-name">自定义分钟数</div>
+                <div className="l-set-row-sub">1–180 分钟，回车或失焦后保存</div>
+              </div>
+              <span className="l-set-minutes">
+                <input
+                  className="l-input mono"
+                  inputMode="numeric"
+                  aria-label={`${name}自定义分钟数`}
+                  value={draft}
+                  onChange={event => setDraft(event.target.value.replace(/[^0-9]/g, '').slice(0, 3))}
+                  onBlur={commit}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter') event.currentTarget.blur();
+                  }}
+                />
+                <span className="l-set-minutes-unit">分钟</span>
+              </span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
 export function DesktopSuitePane({ state, notify }: { state: ShellState; notify: NotifyFn }) {
   const { settings } = state;
 
@@ -890,6 +950,7 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
   }
 
   const prefs = settings.nookPrefs;
+  const pomo = settings.pomodoro;
 
   return (
     <>
@@ -949,6 +1010,40 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
               </motion.div>
             )}
           </AnimatePresence>
+        </div>
+      </div>
+
+      <div className="l-set-group">
+        <div className="l-set-lbl">
+          <span>番茄钟</span>
+          <span className="r">时长支持快捷选择与自定义，专注看板内也可随时调整</span>
+        </div>
+        <div className="l-set-card">
+          <PomodoroDurationRow
+            name="专注时长"
+            sub="专注结束后自动进入休息倒计时"
+            value={pomo.focusMinutes}
+            presets={['15', '25', '45', '60']}
+            onChange={focusMinutes => void saveSuite({ pomodoro: { ...pomo, focusMinutes } })}
+          />
+          <PomodoroDurationRow
+            name="休息时长"
+            sub="休息结束后提示开始下一轮专注"
+            value={pomo.breakMinutes}
+            presets={['5', '10', '15']}
+            onChange={breakMinutes => void saveSuite({ pomodoro: { ...pomo, breakMinutes } })}
+          />
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">结束提示音</div>
+              <div className="l-set-row-sub">专注或休息倒计时结束时播放轻柔的系统提示音</div>
+            </div>
+            <Switch
+              label="番茄钟结束提示音"
+              value={pomo.soundEnabled}
+              change={() => void saveSuite({ pomodoro: { ...pomo, soundEnabled: !pomo.soundEnabled } })}
+            />
+          </div>
         </div>
       </div>
 

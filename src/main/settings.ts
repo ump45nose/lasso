@@ -7,6 +7,7 @@ import {
   type ActionBarConfig,
   type GeneralSettings,
   type NookReminderPrefs,
+  type PomodoroSettings,
   type Preset,
   type Settings,
   type SuiteSettings
@@ -46,6 +47,21 @@ export function defaultNookPrefs(): NookReminderPrefs {
   return { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true };
 }
 
+export function defaultPomodoroSettings(): PomodoroSettings {
+  return { focusMinutes: 25, breakMinutes: 5, soundEnabled: true };
+}
+
+export function normalizePomodoroSettings(value: unknown, defaults: PomodoroSettings): PomodoroSettings {
+  const raw = value && typeof value === 'object' && !Array.isArray(value) ? (value as Partial<PomodoroSettings>) : {};
+  const minutes = (v: unknown, fallback: number) =>
+    typeof v === 'number' && Number.isFinite(v) ? Math.max(1, Math.min(180, Math.round(v))) : fallback;
+  return {
+    focusMinutes: minutes(raw.focusMinutes, defaults.focusMinutes),
+    breakMinutes: minutes(raw.breakMinutes, defaults.breakMinutes),
+    soundEnabled: typeof raw.soundEnabled === 'boolean' ? raw.soundEnabled : defaults.soundEnabled
+  };
+}
+
 /** Absent entries initialize from defaults; explicit empty strings ('') stay unbound across restarts. */
 function syncActionShortcuts(settings: Settings): Settings {
   const raw = settings.actionShortcuts ?? {};
@@ -81,7 +97,7 @@ export function normalizeActionBarConfig(value: unknown, hideLegacyTranslate = f
 
 export function normalizeSuiteSettings(value: Partial<Settings>, defaults: Settings): Pick<
   Settings,
-  'notchIslandEnabled' | 'windowDragSnap' | 'snapDwellMs' | 'finderTriggers' | 'finderTerminal' | 'finderEditor' | 'clipboardMaxItems' | 'nookPrefs'
+  'notchIslandEnabled' | 'windowDragSnap' | 'snapDwellMs' | 'finderTriggers' | 'finderTerminal' | 'finderEditor' | 'clipboardMaxItems' | 'nookPrefs' | 'pomodoro'
 > {
   const rawNook: Partial<NookReminderPrefs> = value.nookPrefs && typeof value.nookPrefs === 'object' ? value.nookPrefs : {};
   const nookPrefs: NookReminderPrefs = {
@@ -111,7 +127,8 @@ export function normalizeSuiteSettings(value: Partial<Settings>, defaults: Setti
     clipboardMaxItems: typeof value.clipboardMaxItems === 'number' && Number.isInteger(value.clipboardMaxItems)
       ? Math.max(20, Math.min(1000, value.clipboardMaxItems))
       : defaults.clipboardMaxItems,
-    nookPrefs
+    nookPrefs,
+    pomodoro: normalizePomodoroSettings(value.pomodoro, defaults.pomodoro)
   };
 }
 
@@ -133,6 +150,7 @@ export function defaultSettings(): Settings {
     finderEditor: 'Cursor',
     clipboardMaxItems: 200,
     nookPrefs: defaultNookPrefs(),
+    pomodoro: defaultPomodoroSettings(),
     actionBar: defaultActionBarConfig(false),
     defaultApiChat: { connectionId: '', model: '' },
     screenshot: screenshotDefaults(join(app.getPath('pictures'), 'Lasso')),
@@ -276,6 +294,14 @@ export function validateSuitePatch(current: Settings, patch: Partial<SuiteSettin
       throw Error('Nook 提醒设置无效');
     }
     next.nookPrefs = { ...p };
+  }
+  if (patch.pomodoro !== undefined) {
+    const p = patch.pomodoro;
+    const validMinutes = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 180;
+    if (!p || !validMinutes(p.focusMinutes) || !validMinutes(p.breakMinutes) || typeof p.soundEnabled !== 'boolean') {
+      throw Error('番茄钟时长需在 1–180 分钟之间');
+    }
+    next.pomodoro = { ...p };
   }
   return next;
 }

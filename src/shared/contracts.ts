@@ -71,6 +71,12 @@ export interface ActionBarConfig {
   inlineCount: number;
 }
 
+export interface PomodoroSettings {
+  focusMinutes: number;
+  breakMinutes: number;
+  soundEnabled: boolean;
+}
+
 export interface SuiteSettings {
   notchIslandEnabled: boolean;
   windowDragSnap: boolean;
@@ -80,6 +86,7 @@ export interface SuiteSettings {
   finderEditor: FinderEditorApp;
   clipboardMaxItems: number;
   nookPrefs: NookReminderPrefs;
+  pomodoro: PomodoroSettings;
 }
 
 export type GeneralSettings = Pick<Settings, 'launchAtLogin' | 'themeMode' | 'toolbarTools' | 'mouseActions' | 'autoCheckUpdates'>;
@@ -101,6 +108,7 @@ export interface Settings {
   finderEditor: FinderEditorApp;
   clipboardMaxItems: number;
   nookPrefs: NookReminderPrefs;
+  pomodoro: PomodoroSettings;
   actionBar: ActionBarConfig;
   defaultApiChat: { connectionId: string; model: string };
   memory: MemorySettings;
@@ -386,6 +394,7 @@ export interface IslandState {
   notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
   nookPrefs: NookReminderPrefs;
   copyTranslateEnabled: boolean;
+  pomodoroPrefs: PomodoroSettings;
   pomodoro: {
     active: boolean;
     paused: boolean;
@@ -533,6 +542,7 @@ export interface IslandAPI {
   setMode(mode: IslandMode): void;
   hit(inside: boolean): void;
   startPomodoro(task?: { id: string | null; title: string }, minutes?: number, kind?: 'focus' | 'slacking'): Promise<void>;
+  setPomodoroPrefs(patch: Partial<PomodoroSettings>): Promise<void>;
   togglePausePomodoro(): Promise<void>;
   stopPomodoro(): Promise<void>;
   completeTask(taskId: string): Promise<void>;

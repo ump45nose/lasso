@@ -598,6 +598,15 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       await wait(300);
       names.push(await save(isl, 'v4-b4-island-pomodoro'));
 
+      isl.setSize(520, 240);
+      isl.webContents.send('island:changed', islFixtures.slackingCard);
+      await wait(350);
+      if (!(await page(isl, `document.body.textContent.includes('开始下一轮 25m') && Boolean(document.querySelector('.isl-drop-card.mode-slacking [aria-label="关闭结束提示音"]'))`))) {
+        throw Error('B4 Island slacking card missing next-round button or sound toggle');
+      }
+      names.push(await save(isl, 'v4-b4-island-slacking'));
+      isl.setSize(520, 64);
+
       isl.webContents.send('island:changed', islFixtures.alertCapsule);
       await wait(300);
       names.push(await save(isl, 'v4-b4-island-alert'));
@@ -621,6 +630,61 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         throw Error('B4 Island board task notes did not expand');
       }
       names.push(await save(isl, 'v4-b4-island-board-routine'));
+
+      // B4 idle pomodoro setup: duration presets, stepper, end-sound toggle
+      await page(isl, `window.island.setMode('board')`);
+      await wait(200);
+      isl.webContents.send('island:changed', islFixtures.boardIdle);
+      await wait(350);
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-pomo-chip')) && Boolean(document.querySelector('.isl-pomo-stepper')) && Boolean(document.querySelector('[aria-label="关闭结束提示音"]'))`))) {
+        throw Error('B4 Island idle timer missing duration presets, stepper or sound toggle');
+      }
+      names.push(await save(isl, 'v4-b4-island-board-timer'));
+
+      await page(isl, `[...document.querySelectorAll('.isl-pomo-chip')].find(b => b.textContent.trim() === '45m')?.click()`);
+      await wait(300);
+      if (!(await page(isl, `[...document.querySelectorAll('.isl-pomo-chip')].some(b => b.textContent.trim() === '45m' && b.classList.contains('on')) && document.body.textContent.includes('45m 专注')`))) {
+        throw Error('B4 Island focus preset did not apply to selection and start button');
+      }
+
+      const stepFocus = (aria, type) => page(isl, `document.querySelector('[aria-label="${aria}"]').dispatchEvent(new PointerEvent('${type}', { bubbles: true }))`);
+      await stepFocus('增加专注分钟', 'pointerdown');
+      await stepFocus('增加专注分钟', 'pointerup');
+      await wait(300);
+      if (!(await page(isl, `document.querySelector('.isl-pomo-value').textContent === '46' && document.body.textContent.includes('46m 专注')`))) {
+        throw Error('B4 Island focus stepper did not increment');
+      }
+      await stepFocus('增加专注分钟', 'pointerdown');
+      await wait(1200);
+      await stepFocus('增加专注分钟', 'pointerup');
+      await wait(300);
+      const held = await page(isl, `Number(document.querySelector('.isl-pomo-value').textContent)`);
+      if (!(held >= 50 && held <= 72)) throw Error('B4 Island focus stepper hold-to-repeat did not run: ' + held);
+      if (!(await page(isl, `document.body.textContent.includes(document.querySelector('.isl-pomo-value').textContent + 'm 专注') && ![...document.querySelectorAll('.isl-pomo-chip')].slice(0, 4).some(b => b.classList.contains('on'))`))) {
+        throw Error('B4 Island custom focus value not reflected on start button or presets');
+      }
+      names.push(await save(isl, 'v4-b4-island-board-timer-custom'));
+      await stepFocus('减少专注分钟', 'pointerdown');
+      await stepFocus('减少专注分钟', 'pointerup');
+      await wait(300);
+      if (!(await page(isl, `Number(document.querySelector('.isl-pomo-value').textContent) === ${held - 1}`))) {
+        throw Error('B4 Island focus stepper did not decrement');
+      }
+
+      await page(isl, `document.querySelector('[aria-label="关闭结束提示音"]').click()`);
+      await wait(300);
+      if (!(await page(isl, `Boolean(document.querySelector('[aria-label="开启结束提示音"]'))`))) {
+        throw Error('B4 Island end-sound toggle did not switch off');
+      }
+      await page(isl, `document.querySelector('[aria-label="开启结束提示音"]').click()`);
+      await wait(300);
+      await page(isl, `[...document.querySelectorAll('.isl-pomo-chip')].find(b => b.textContent.trim() === '25m')?.click()`);
+      await wait(300);
+      if (!(await page(isl, `document.querySelector('.isl-pomo-value').textContent === '25'`))) {
+        throw Error('B4 Island focus preset did not restore after custom value');
+      }
+      await page(isl, `window.island.setMode('idle')`);
+      await wait(150);
       isl.hide();
 
       // B5 Dual-Pane Clipboard History (680×480)
@@ -1096,6 +1160,43 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
           await page(sw, `document.querySelector('.l-set-row.clickable')?.click()`);
           await wait(250);
           names.push(await save(sw, 'v4-b9-3b-preset-editor'));
+        }
+
+        if (shotName === 'v4-b9-7-suite') {
+          if (!(await page(sw, `document.body.textContent.includes('番茄钟') && document.body.textContent.includes('结束提示音')`))) {
+            throw Error('B9 suite pane missing pomodoro group');
+          }
+          await page(sw, `(() => {
+            const row = [...document.querySelectorAll('.l-set-row')].find(r => r.querySelector('.l-set-row-name')?.textContent === '专注时长');
+            [...row.querySelectorAll('.l-seg button')].find(b => b.textContent.includes('自定义')).click();
+          })()`);
+          await wait(300);
+          await page(sw, `(() => {
+            const input = document.querySelector('.l-set-minutes input');
+            input.focus();
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            setter.call(input, '50');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+          })()`);
+          await wait(250);
+          await page(sw, `document.querySelector('.l-set-minutes input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+          await wait(300);
+          const customFocus = await page(sw, `window.desktop.getState().then(s => s.settings.pomodoro.focusMinutes)`);
+          if (customFocus !== 50) throw Error('B9 suite custom focus minutes did not persist: ' + customFocus);
+          await page(sw, `document.querySelector('[aria-label="番茄钟结束提示音"]').click()`);
+          await wait(250);
+          const soundOff = await page(sw, `window.desktop.getState().then(s => s.settings.pomodoro.soundEnabled)`);
+          if (soundOff !== false) throw Error('B9 suite end-sound switch did not persist off state');
+          await page(sw, `document.querySelector('[aria-label="番茄钟结束提示音"]').click()`);
+          await wait(250);
+          await page(sw, `[...document.querySelectorAll('.l-set-row')].find(r => r.querySelector('.l-set-row-name')?.textContent === '结束提示音')?.scrollIntoView({ block: 'end' })`);
+          await wait(250);
+          names.push(await save(sw, 'v4-b9-7b-suite-pomodoro-custom'));
+          await page(sw, `(() => {
+            const row = [...document.querySelectorAll('.l-set-row')].find(r => r.querySelector('.l-set-row-name')?.textContent === '专注时长');
+            [...row.querySelectorAll('.l-seg button')].find(b => b.textContent.includes('25 分钟')).click();
+          })()`);
+          await wait(250);
         }
       }
 
