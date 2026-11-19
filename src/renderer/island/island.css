@@ -320,6 +320,7 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 .en-md-heading-1 { font-size: 21px; }
 .en-md-heading-2 { font-size: 17px; }
 .en-md-heading-3, .en-md-heading-4, .en-md-heading-5, .en-md-heading-6 { font-size: 15.5px; }
+.en-md-bullet { display: inline-block; min-width: 0.8em; color: var(--ink-3); }
 .en-md-strong { font-weight: 700; }
 .en-md-emphasis { font-style: italic; }
 .en-md-strike { text-decoration: line-through; }

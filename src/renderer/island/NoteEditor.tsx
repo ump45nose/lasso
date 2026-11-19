@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Annotation, EditorState, Transaction } from '@codemirror/state';
+import { Annotation, EditorSelection, EditorState, Transaction } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { deleteMarkupBackward, insertNewlineContinueMarkupCommand, markdown } from '@codemirror/lang-markdown';
 import { syntaxTree } from '@codemirror/language';
@@ -7,6 +7,15 @@ import { Decoration, EditorView, keymap, placeholder, ViewPlugin, WidgetType, ty
 import { GFM } from '@lezer/markdown';
 
 const externalChange = Annotation.define<boolean>();
+
+class ListBullet extends WidgetType {
+  toDOM() {
+    const bullet = document.createElement('span');
+    bullet.className = 'en-md-bullet';
+    bullet.textContent = '•';
+    return bullet;
+  }
+}
 
 class TaskCheckbox extends WidgetType {
   constructor(readonly checked: boolean, readonly from: number) { super(); }
@@ -35,14 +44,11 @@ const liveMarkdown = ViewPlugin.fromClass(class {
   build(view: EditorView): DecorationSet {
     const { state } = view;
     const decorations: ReturnType<Decoration['range']>[] = [];
-    const active = state.selection.ranges.map(range => ({ from: state.doc.lineAt(range.from).from, to: state.doc.lineAt(range.to).to }));
-    const isActive = (from: number, to: number) => view.hasFocus && active.some(line => line.from <= to && line.to >= from);
     const mark = (from: number, to: number, className: string) => { if (from < to) decorations.push(Decoration.mark({ class: className }).range(from, to)); };
     const hide = (from: number, to: number) => { if (from < to) decorations.push(Decoration.replace({}).range(from, to)); };
     for (const { from, to } of view.visibleRanges) {
       syntaxTree(state).iterate({ from, to, enter: node => {
         const name = node.name;
-        const current = isActive(node.from, node.to);
         if (/^ATXHeading[1-6]$/.test(name)) {
           decorations.push(Decoration.line({ class: `en-md-heading en-md-heading-${name.slice(-1)}` }).range(state.doc.lineAt(node.from).from));
         } else if (name === 'StrongEmphasis') mark(node.from, node.to, 'en-md-strong');
@@ -65,21 +71,23 @@ const liveMarkdown = ViewPlugin.fromClass(class {
             pos = line.to + 1;
           }
         }
-        if (!current && name === 'ListMark' && node.node.parent?.getChild('Task')) {
+        if (name === 'ListMark' && node.node.parent?.getChild('Task')) {
           let end = node.to;
           if (state.doc.sliceString(end, end + 1) === ' ') end++;
           hide(node.from, end);
-        } else if (!current && ['HeaderMark', 'EmphasisMark', 'StrikethroughMark', 'CodeMark', 'QuoteMark'].includes(name) && !(name === 'CodeMark' && node.node.parent?.name === 'FencedCode')) {
+        } else if (name === 'ListMark' && node.node.parent?.parent?.name === 'BulletList') {
+          decorations.push(Decoration.replace({ widget: new ListBullet() }).range(node.from, node.to));
+        } else if (['HeaderMark', 'EmphasisMark', 'StrikethroughMark', 'CodeMark', 'QuoteMark'].includes(name) && !(name === 'CodeMark' && node.node.parent?.name === 'FencedCode')) {
           let end = node.to;
           if (name === 'HeaderMark' || name === 'QuoteMark') {
             if (state.doc.sliceString(end, end + 1) === ' ') end++;
           }
           hide(node.from, end);
-        } else if (!current && name === 'Link') {
+        } else if (name === 'Link') {
           const text = state.doc.sliceString(node.from, node.to);
           const close = text.lastIndexOf('](');
           if (text.startsWith('[') && close >= 0) { hide(node.from, node.from + 1); hide(node.from + close, node.to); }
-        } else if (!current && name === 'TaskMarker') {
+        } else if (name === 'TaskMarker') {
           const checked = /[xX]/.test(state.doc.sliceString(node.from, node.to));
           decorations.push(Decoration.replace({ widget: new TaskCheckbox(checked, node.from) }).range(node.from, node.to));
         }
@@ -88,6 +96,26 @@ const liveMarkdown = ViewPlugin.fromClass(class {
     return Decoration.set(decorations, true);
   }
 }, { decorations: plugin => plugin.decorations });
+
+// Recognize a freshly typed marker even when the browser batches keystrokes.
+const smartListInput = EditorState.transactionFilter.of(transaction => {
+  if (!transaction.docChanged || transaction.annotation(externalChange) || transaction.isUserEvent('undo') || transaction.isUserEvent('redo')) return transaction;
+  const selection = transaction.newSelection;
+  if (selection.ranges.length !== 1 || !selection.main.empty) return transaction;
+  const pos = selection.main.head;
+  const line = transaction.newDoc.lineAt(pos);
+  const oldPos = transaction.startState.selection.main.head;
+  const oldLine = transaction.startState.doc.lineAt(oldPos);
+  const oldMarker = /^(\s*(?:-|\d+[.)])(?: \[[ xX]\])?) $/.exec(oldLine.text);
+  const compact = oldMarker && line.text.startsWith(oldMarker[1]) && /^\S/.test(line.text.slice(oldMarker[1].length));
+  const marker = pos === line.to && /^\s*(?:-|\d+[.)])$/.test(line.text);
+  if (!marker && !compact) return transaction;
+  for (let node = syntaxTree(transaction.startState).resolveInner(oldPos, -1); node; node = node.parent!) {
+    if (node.name === 'FencedCode' || node.name === 'CodeBlock') return transaction;
+  }
+  const insertAt = compact ? line.from + oldMarker[1].length : pos;
+  return [transaction, { changes: { from: insertAt, insert: ' ' }, selection: EditorSelection.cursor(pos + 1), sequential: true }];
+});
 
 export function NoteEditor({ value, onChange, onBlur, editorRef }: {
   value: string; onChange(value: string): void; onBlur(): void; editorRef: React.RefObject<EditorView | null>;
@@ -102,7 +130,7 @@ export function NoteEditor({ value, onChange, onBlur, editorRef }: {
       state: EditorState.create({ doc: value, extensions: [
         history(), markdown({ extensions: [GFM], addKeymap: false }), keymap.of([{ key: 'Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) }, { key: 'Backspace', run: deleteMarkupBackward }, ...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': '便签内容', spellcheck: 'false' }),
-        placeholder('随手记录灵感、命令片段或待办… 自动保存为本地 Markdown'), liveMarkdown,
+        placeholder('随手记录灵感、命令片段或待办… 自动保存为本地 Markdown'), smartListInput, liveMarkdown,
         EditorView.updateListener.of(update => { if (update.docChanged && !update.transactions.some(transaction => transaction.annotation(externalChange))) callbacks.current.onChange(update.state.doc.toString()); }),
         EditorView.domEventHandlers({ blur: () => { callbacks.current.onBlur(); } })
       ] })

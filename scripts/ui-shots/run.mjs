@@ -724,12 +724,20 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         activeFile: 'Scratchpad.md',
         files: ['Scratchpad.md', 'release-v4.md'],
         content:
-          '# 今日推进备忘\n\n- [x] 收敛截图工具条为两排紧凑布局\n- [ ] 核对独立设置窗 8 个模块自动保存\n- [ ] 验证访达面板发给 AI 动作\n\n失焦时保留光标与滚动位置。'
+          '# 今日推进备忘\n\n- [x] 收敛截图工具条为两排紧凑布局\n- [ ] 核对独立设置窗 8 个模块自动保存\n\n- 直接显示 **重点** 和项目符号\n1. 自动续写编号\n2. 保持编辑与排版一致'
       };
+      await page(notesWin, `window.island.saveNote('Scratchpad.md', ${JSON.stringify(notesPayload.content)})`);
       notesWin.webContents.send('notes:changed', notesPayload);
       await wait(350);
       if (!(await page(notesWin, `Boolean(document.querySelector('.cm-content[contenteditable="true"]') && document.querySelector('.en-md-heading') && document.querySelector('.en-task-checkbox'))`))) {
         throw Error('B6 EdgeNotes live editor did not render Markdown');
+      }
+      notesWin.show();
+      notesWin.focus();
+      await page(notesWin, `document.querySelector('.cm-content').focus()`);
+      await wait(150);
+      if (!(await page(notesWin, `document.activeElement?.classList.contains('cm-content') && document.querySelector('.en-md-bullet') && !document.querySelector('.en-md-heading').textContent.includes('#')`))) {
+        throw Error('B6 EdgeNotes should show formatted Markdown while editing: ' + JSON.stringify(await page(notesWin, `({active: document.activeElement?.className, bullets: document.querySelectorAll('.en-md-bullet').length, heading: document.querySelector('.en-md-heading')?.textContent})`)));
       }
       names.push(await save(notesWin, 'v4-b6-notes-live'));
       notesWin.webContents.send('notes:changed', { ...notesPayload, focused: false });
