@@ -72,8 +72,17 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-src-textarea::placeholder { color: var(--ink-5); }
 .sw-src-tools { display: flex; align-items: center; gap: 8px; margin-top: 4px; margin-left: -6px; }
 
-.sw-engine { display: flex; align-items: center; gap: 8px; padding: 10px 14px 0; font-size: 11.5px; color: var(--ink-4); flex-shrink: 0; }
+.sw-engine { position: relative; display: flex; align-items: center; gap: 6px; padding: 10px 14px 0; font-size: 11.5px; color: var(--ink-4); flex-shrink: 0; }
+.sw-engine-wrap { position: relative; flex: 0 1 auto; min-width: 0; max-width: calc(100% - 32px); display: flex; align-items: center; }
+.sw-engine-btn { height: 24px; max-width: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 0 7px 0 6px; margin-left: -6px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-3); font-size: 11.5px; transition: background var(--t-fast), color var(--t-fast); }
+.sw-engine-btn svg { flex-shrink: 0; }
+.sw-engine-btn:hover { background: var(--clay-wash); color: var(--clay-ink); }
+.sw-engine-btn.open { background: var(--clay-wash-2); color: var(--clay-ink); }
 .sw-engine-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sw-engine-menu { min-width: 268px; max-height: 168px; overflow-y: auto; }
+.sw-mi-sub { font-size: 11px; color: var(--ink-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 156px; }
+.sw-mi-sub.warn { color: var(--danger); }
+.sw-menu-sep { height: 1px; margin: 4px 6px; background: var(--line); flex-shrink: 0; }
 
 .sw-tr-out { flex: 1; min-height: 92px; padding: 10px 16px 14px; overflow-y: auto; user-select: text; }
 .sw-tr-prose { font-family: var(--font-text); font-size: 15px; line-height: 1.75; color: var(--ink); word-break: break-word; }

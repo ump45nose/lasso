@@ -157,18 +157,20 @@ static napi_value copySelectionToProcess(napi_env e, napi_callback_info info) {
   if (n == 1 && napi_get_value_int32(e, args[0], &pid) == napi_ok && pid > 0 && pid != getpid()) {
     @autoreleasepool {
       if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid) {
-        CGEventRef down = CGEventCreateKeyboardEvent(nullptr, 8, true); // Cmd+C
-        CGEventRef up = CGEventCreateKeyboardEvent(nullptr, 8, false);
+        CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStatePrivate);
+        CGEventRef down = CGEventCreateKeyboardEvent(source, 8, true); // Cmd+C
+        CGEventRef up = CGEventCreateKeyboardEvent(source, 8, false);
         if (down && up) {
           for (CGEventRef event : {down, up}) {
             CGEventSetFlags(event, kCGEventFlagMaskCommand);
             CGEventSetIntegerValueField(event, kCGEventSourceUserData, kLassoCopyEvent);
-            CGEventPostToPid(pid, event);
+            CGEventPost(kCGHIDEventTap, event);
           }
           sent = true;
         }
         if (down) CFRelease(down);
         if (up) CFRelease(up);
+        if (source) CFRelease(source);
       }
     }
   }

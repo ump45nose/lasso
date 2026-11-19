@@ -58,6 +58,7 @@ export class CaptureManager {
   private imageLoader: (()=>Promise<NativeImage>)|null=null;
   private native: NativeCapture;
   private screenFrame: NativeFrame | null=null;
+  private displayFrames=new Map<number,{display:Electron.Display;frame:NativeFrame}>();
   private ownedFrames=new Set<string>();
   private pixelSources=new Map<string,{frame:NativeFrame;rect?:CaptureRect}>();
   private handoff: (()=>Promise<void>) | null=null;
@@ -98,8 +99,8 @@ export class CaptureManager {
     }
   },area=>{this.regionsStore.remember(area);if(this.customRequest?.presetId)this.regionsStore.place(this.customRequest.presetId,area);});
   private displayAdded=()=>{this.native.invalidate();};
-  private displayRemoved=(_event:Electron.Event,display:Electron.Display)=>{if(display.id===this.displayId)this.displayChanged();else this.native.invalidate();};
-  private displayMetrics=(_event:Electron.Event,display:Electron.Display,metrics:string[])=>{if(metrics.some(metric=>['bounds','scaleFactor','rotation'].includes(metric))){if(display.id===this.displayId)this.displayChanged();else this.native.invalidate();}};
+  private displayRemoved=(_event:Electron.Event,display:Electron.Display)=>{if(display.id===this.displayId||this.displayFrames.has(display.id))this.displayChanged();else this.native.invalidate();};
+  private displayMetrics=(_event:Electron.Event,display:Electron.Display,metrics:string[])=>{if(metrics.some(metric=>['bounds','scaleFactor','rotation'].includes(metric))){if(display.id===this.displayId||this.displayFrames.has(display.id))this.displayChanged();else this.native.invalidate();}};
   private displayChanged(){
     this.native.invalidate();
     if(this.state?.phase==='selecting'){this.cancel();return;}
@@ -227,7 +228,7 @@ export class CaptureManager {
       this.suspended={directory,bounds:win!.getBounds(),sources};
       this.win=null;this.cachedWindow=null;this.windowReady=null;this.presented=false;
       win!.destroy();this.native.hide();for(const id of this.ownedFrames)this.native.release(id);
-      this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.image=null;this.imageTask=null;this.imageLoader=null;this.ocr.reset();
+      this.ownedFrames.clear();this.displayFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.image=null;this.imageTask=null;this.imageLoader=null;this.ocr.reset();
       delete s.checkpoint;this.idle.active(true);
       console.info('[memory] editor sleeping',s.id);
       this.changed();
@@ -309,16 +310,36 @@ export class CaptureManager {
       this.state={id,editId:randomUUID(),width:this.bounds.width,height:this.bounds.height,pixelWidth:0,pixelHeight:0,candidates:[],windows:[],mode:mode==='rect'?'rect':mode==='window'?'window':'area',captureKind:request?.area?.kind??mode,saveFormat:this.preferences.format,phase:'selecting',selection:null,origin:'screen'};
       if(front){this.state.windows=[{...front,x:front.x-this.bounds.x,y:front.y-this.bounds.y}];await this.captureWindow(front.id,this.preferences.shadow);return Boolean(this.state?.imageFrame);}
       const exclude=excludedCaptureWindows(this.native);this.timing.queued=performance.now()-this.startedAt;
-      const frame=await this.native.capture({displayId:display.id,bounds:this.bounds,includeCursor:this.settings().includeCursor,exclude});
-      if(this.disposed||epoch!==this.epoch){this.native.release(frame.id);return false;}
-      this.ownedFrames.add(frame.id);this.assertCaptureDisplay();this.screenFrame=frame;
+      const includeCursor=this.settings().includeCursor;
+      const interactiveMulti=!custom&&!request?.area&&mode!=='screen';
+      const targetDisplays=interactiveMulti?screen.getAllDisplays():[display];
+      const settled=await Promise.allSettled(targetDisplays.map(async d=>({display:d,frame:await this.native.capture({displayId:d.id,bounds:d.bounds,includeCursor,exclude})})));
+      if(this.disposed||epoch!==this.epoch){for(const entry of settled)if(entry.status==='fulfilled')this.native.release(entry.value.frame.id);return false;}
+      this.displayFrames.clear();
+      for(const entry of settled){
+        if(entry.status==='fulfilled'){
+          this.ownedFrames.add(entry.value.frame.id);
+          this.displayFrames.set(entry.value.display.id,entry.value);
+        }
+      }
+      const cursorDisplay=interactiveMulti?screen.getDisplayNearestPoint(screen.getCursorScreenPoint()):display;
+      const activeEntry=this.displayFrames.get(cursorDisplay.id)??this.displayFrames.get(display.id);
+      if(!activeEntry){
+        const firstFailure=settled.find((entry):entry is PromiseRejectedResult=>entry.status==='rejected');
+        throw firstFailure?.reason??Error('屏幕捕获失败，请确认桌面已解锁');
+      }
+      const activeDisplay=activeEntry.display,frame=activeEntry.frame;
+      this.captureDisplay=bindDisplay(activeDisplay);
+      this.displayId=activeDisplay.id;
+      this.bounds=activeDisplay.bounds;
+      this.assertCaptureDisplay();this.screenFrame=frame;
       this.timing.captured=performance.now()-this.startedAt;this.timing.capture=frame.captureMs;this.timing.nativeQueue=frame.queueMs;this.timing.nativeCompletion=frame.completionMs;this.timing.nativeWork=frame.workMs;
       const {candidates,windows}=this.detection.begin(mode==='rect'||mode==='screen'||request?.area?[]:this.candidateWindows(),mode!=='rect');
-      Object.assign(this.state,{pixelWidth:frame.width,pixelHeight:frame.height,candidates,windows});
-      if(custom){if(custom.width>frame.width||custom.height>frame.height)throw Error('预设尺寸超过此显示器，请换显示器或编辑尺寸');if(bound){await this.select(bound.rect);return true;}this.native.show({frameId:frame.id,session:id,mode:'rect',windows:[],candidates:[],fixedSize:{width:custom.width*this.bounds.width/frame.width,height:custom.height*this.bounds.height/frame.height}});return true;}
+      Object.assign(this.state,{width:this.bounds.width,height:this.bounds.height,pixelWidth:frame.width,pixelHeight:frame.height,candidates,windows});
+      if(custom){if(custom.width>frame.width||custom.height>frame.height)throw Error('预设尺寸超过此显示器，请换显示器或编辑尺寸');if(bound){await this.select(bound.rect);return true;}this.native.show({frameId:frame.id,session:id,mode:'rect',windows:[],candidates:[],fixedSize:{width:custom.width*this.bounds.width/frame.width,height:custom.height*this.bounds.height/frame.height},displayId:activeDisplay.id,allowDisplaySwitch:false});return true;}
       if(request?.area){await this.select(request.area.rect);return true;}
       if(mode==='screen'){this.state.captureKind='screen';await this.select({x:0,y:0,width:this.bounds.width,height:this.bounds.height},false);return true;}
-      this.native.show({frameId:frame.id,session:id,mode:this.state.mode!,windows,candidates});return true;
+      this.native.show({frameId:frame.id,session:id,mode:this.state.mode!,windows,candidates,displayId:activeDisplay.id,allowDisplaySwitch:this.displayFrames.size>1});return true;
     } catch(error){if(this.disposed||epoch!==this.epoch)return false;this.screenPermission=systemPreferences.getMediaAccessStatus('screen')==='granted';this.cancel(true);throw error;}
     finally{request?.signal.removeEventListener('abort',abort);this.busy=false;}
   }
@@ -370,7 +391,21 @@ export class CaptureManager {
     for(const id of new Set([s.imageFrame,s.backdropFrame]))if(id)this.dropSource(id);
     this.pendingCopy=false;
     Object.assign(s,{phase:'selecting',backdropFrame:undefined,checkpoint:undefined,copyIntent:undefined,outputError:undefined,outputStatus:undefined,editableRegion:undefined,annotations:undefined,width:this.bounds.width,height:this.bounds.height,pixelWidth:frame.width,pixelHeight:frame.height,selection:null,imageFrame:undefined,placement:undefined,mode:s.captureKind==='rect'?'rect':'area'});
-    this.publish();this.native.show({frameId:frame.id,session:s.id,mode:s.mode!,windows:[],candidates:[]});
+    this.publish();this.native.show({frameId:frame.id,session:s.id,mode:s.mode!,windows:[],candidates:[],displayId:this.displayId??undefined,allowDisplaySwitch:this.displayFrames.size>1});
+  }
+  private switchDisplay(displayId:number){
+    const s=this.state;
+    if(!s||s.phase!=='selecting'||displayId===this.displayId)return;
+    const entry=this.displayFrames.get(displayId);
+    if(!entry)return;
+    this.detection.stop();
+    this.captureDisplay=bindDisplay(entry.display);
+    this.displayId=entry.display.id;
+    this.bounds=entry.display.bounds;
+    this.screenFrame=entry.frame;
+    const {candidates,windows}=this.detection.begin(s.mode==='rect'?[]:this.candidateWindows(),s.mode!=='rect');
+    Object.assign(s,{width:this.bounds.width,height:this.bounds.height,pixelWidth:entry.frame.width,pixelHeight:entry.frame.height,candidates,windows});
+    this.native.show({frameId:entry.frame.id,session:s.id,mode:s.mode!,windows,candidates,displayId:entry.display.id,allowDisplaySwitch:this.displayFrames.size>1});
   }
   private refreshPixelReferences(){
     const s=this.state;if(!s)return;
@@ -411,6 +446,7 @@ export class CaptureManager {
       void this.detection.start(this.screenFrame).catch(error=>console.warn('[capture-detection]',error));return;
     }
     if(event.type==='hover'){this.detection.hover(event.x!,event.y!);return;}
+    if(event.type==='display'&&typeof event.displayId==='number'){this.switchDisplay(event.displayId);return;}
     if(event.type==='mode'){s.mode=event.mode;if(event.mode!=='window')void this.detection.start(this.screenFrame).catch(error=>console.warn('[capture-detection]',error));return;}
     if(event.type==='cancel'){this.cancel();return;}
     const operation=async()=>{
@@ -472,6 +508,8 @@ export class CaptureManager {
       Object.assign(s,{captureKind:'scroll',editableRegion:undefined,annotations:undefined,pixelScale:{x:frame.width/this.bounds.width,y:frame.height/this.bounds.height},phase:'scrolling',placement:undefined,candidates:[],windows:[],selection:null,scroll:{status:'paused',width:m.width,height:m.height,segments:m.segments,seams:m.seams,direction:m.direction,segmentSizes:m.segmentSizes,reversedTrimmed:m.reversedTrimmed,message:session.message}});
       setWindowPresence(win,false);win.setMinimumSize(0,0);win.setResizable(false);win.setMovable(false);win.setAlwaysOnTop(true,'screen-saver');win.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true});win.setFocusable(false);win.setBounds(controls);win.setBackgroundColor('#141413');this.publish();win.showInactive();
       for(const id of new Set([s.imageFrame,s.backdropFrame]))if(id)this.dropSource(id);s.imageFrame=undefined;s.backdropFrame=undefined;s.imageCrop=undefined;
+      for(const entry of this.displayFrames.values()){this.native.release(entry.frame.id);this.ownedFrames.delete(entry.frame.id);}
+      this.displayFrames.clear();
       this.native.release(frame.id);this.ownedFrames.delete(frame.id);this.screenFrame=null;
       this.publish();
       if(session.metadata.status==='limit')void this.finishScroll('已达到尺寸上限，结果已保留').catch(error=>this.scrollError(error));else session.resume();
@@ -696,8 +734,8 @@ export class CaptureManager {
     if(a==='start-recording'){const c=this.state?.editableRegion;const rect=c?regionPoints(c.currentCrop,c.display.bounds,c.sourceSize):undefined;this.cancel();await this.external.onStartRecording?.(rect);return;}
     throw Error('不支持的截图操作');
   }
-  private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}
-  private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.detection.release();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
+  private dropSource(id:string){const source=this.pixelSources.get(id);this.pixelSources.delete(id);if(source&&!Array.from(this.pixelSources.values()).some(value=>value.frame.id===source.frame.id)&&this.screenFrame?.id!==source.frame.id&&!Array.from(this.displayFrames.values()).some(entry=>entry.frame.id===source.frame.id)){this.native.release(source.frame.id);this.ownedFrames.delete(source.frame.id);}}
+  private release(restore=false){this.historyId=undefined;this.historyOCR=undefined;this.scrollRequested=false;this.sourceApp='';this.pendingCopy=false;this.customRequest=undefined;const restoreWindow=restore&&this.restoreWindow;this.restoreWindow=false;this.checkpointReply?.(null);this.checkpointReply=null;if(this.suspended){void rm(this.suspended.directory,{recursive:true,force:true});this.suspended=null;}this.native.hide();this.handoff=null;this.grabbing=false;this.imageTask=null;this.imageLoader=null;for(const id of this.ownedFrames)this.native.release(id);this.ownedFrames.clear();this.displayFrames.clear();this.pixelSources.clear();this.screenFrame=null;this.automaticReady=null;this.completedEdit=null;this.scroll?.dispose();this.scroll=null;this.scrollFinishing=false;this.scrollEditing=false;this.epoch++;this.detection.release();this.ocr.reset();this.state=null;this.image=null;this.editorKey=null;this.localSource=null;this.captureDisplay=null;this.displayId=null;this.win=null;this.presented=false;if(this.cachedWindow&&!this.cachedWindow.isDestroyed()){setWindowPresence(this.cachedWindow,false);this.cachedWindow.hide();this.cachedWindow.webContents.send('screenshot:changed',null);}this.updateIdle();this.after(restoreWindow);}
   cancel(restore=false){this.release(restore);}
   dispose(){this.recording.dispose();this.disposed=true;this.idle.dispose();app.off('did-resign-active',this.appVisibility);app.off('did-become-active',this.appVisibility);this.efficiency.dispose();this.cancel();this.cachedWindow?.destroy();this.pins.dispose();screen.removeListener('display-added',this.displayAdded);screen.removeListener('display-removed',this.displayRemoved);screen.removeListener('display-metrics-changed',this.displayMetrics);for(const name of ['screenshot:region','screenshot:last-region','screenshot:clear-region','screenshot:start-scroll','screenshot:save-region-preset','screenshot:checkpoint','screenshot:save-annotation-memory','screenshot:pixels','screenshot:state','screenshot:action','screenshot:export','screenshot:scroll-action'])ipcMain.removeHandler(name);for(const name of ['screenshot:load-error','screenshot:ready'])ipcMain.removeAllListeners(name);this.stopEditorServices();}
 }

@@ -1,12 +1,13 @@
 import { app, clipboard, ipcMain, screen } from 'electron';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
-import type { Settings, TranslatorWindowState } from '../shared/contracts';
-import type { TranslationLang, TranslationSettings } from '../shared/media';
+import type { Settings, SettingsSection, TranslatorEngineOption, TranslatorWindowState } from '../shared/contracts';
+import { DEFAULT_OPENAI_CONNECTION_ID, DEFAULT_TRANSLATION_MODEL, type TranslationLang, type TranslationProvider, type TranslationSettings } from '../shared/media';
 import { normalizeTranslationMarkdown } from '../shared/translation-markdown';
 import type { MediaService } from './media-service';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
+import { readClipboardMarkdown, selectionMarkdown } from './selection-markdown';
 
 const WIN_W = 468, WIN_H = 420;
 const LANGUAGES: Record<TranslationLang, string> = { auto: '自动互译', zh: '简体中文', en: '英语', ja: '日语', ko: '韩语', fr: '法语', de: '德语' };
@@ -120,7 +121,7 @@ const TABLE_SEP_RE = /^\s*\|?(?:\s*:?-{2,}:?\s*\|)+\s*:?-{0,}:?\s*\|?\s*$/;
 const HR_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 const PROTECT_RE = /ZXC\s*(\d+)\s*Q/gi;
 
-function protectInlineSyntax(text: string): { masked: string; tokens: string[]; hasLink: boolean } {
+function protectInlineSyntax(text: string): { masked: string; tokens: string[]; hasLink: boolean; hasBold: boolean } {
   const tokens: string[] = [];
   let hasLink = false;
   // 1. Protect inline code spans first so backtick contents containing `](...)` stay untouched
@@ -129,6 +130,7 @@ function protectInlineSyntax(text: string): { masked: string; tokens: string[]; 
     tokens.push(match);
     return `ZXC${id}Q`;
   });
+  const hasBold = /\*\*[^*\n]+\*\*/.test(masked);
   // 2. Protect link/image URL targets while allowing link label text to translate
   masked = masked.replace(/\]\(([^)\n]+)\)/g, (_, url: string) => {
     hasLink = true;
@@ -136,16 +138,19 @@ function protectInlineSyntax(text: string): { masked: string; tokens: string[]; 
     tokens.push(url);
     return `](ZXC${id}Q)`;
   });
-  return { masked, tokens, hasLink };
+  return { masked, tokens, hasLink, hasBold };
 }
 
-function restoreInlineSyntax(translated: string, tokens: string[], hasLink: boolean): string {
+function restoreInlineSyntax(translated: string, tokens: string[], hasLink: boolean, hasBold: boolean): string {
   let out = translated.replace(PROTECT_RE, (full, idxStr: string) => {
     const idx = Number(idxStr);
     return Number.isInteger(idx) && idx >= 0 && idx < tokens.length ? tokens[idx] : full;
   });
   if (hasLink) {
     out = out.replace(/\]\s+\(/g, '](');
+  }
+  if (hasBold) {
+    out = out.replace(/\*\*\s+([^*\n]+?)\s+\*\*/g, '**$1**');
   }
   return out;
 }
@@ -168,8 +173,8 @@ async function translatePreservingFormat(
 
   type LinePlan =
     | { kind: 'literal'; raw: string }
-    | { kind: 'prefix'; prefix: string; suffix: string; tokens: string[]; hasLink: boolean; key: string }
-    | { kind: 'table'; indent: string; cells: ({ literal: string } | { tokens: string[]; hasLink: boolean; key: string })[] };
+    | { kind: 'prefix'; prefix: string; suffix: string; tokens: string[]; hasLink: boolean; hasBold: boolean; key: string }
+    | { kind: 'table'; indent: string; cells: ({ literal: string } | { tokens: string[]; hasLink: boolean; hasBold: boolean; key: string })[] };
 
   const lines = normalized.split('\n');
   const plans: LinePlan[] = [];
@@ -218,9 +223,9 @@ async function translatePreservingFormat(
       const cells = rawCells.map(rawCell => {
         const trimmed = rawCell.trim();
         if (!trimmed) return { literal: rawCell };
-        const { masked, tokens, hasLink } = protectInlineSyntax(trimmed);
+        const { masked, tokens, hasLink, hasBold } = protectInlineSyntax(trimmed);
         enqueue(masked);
-        return { tokens, hasLink, key: masked };
+        return { tokens, hasLink, hasBold, key: masked };
       });
       plans.push({ kind: 'table', indent, cells });
       continue;
@@ -236,9 +241,9 @@ async function translatePreservingFormat(
     // Hard-break syntax belongs to the document, not to the translation service.
     const suffix = body.match(/(?<!\\)\\$| {2,}$/)?.[0] ?? '';
     const content = suffix ? body.slice(0, -suffix.length) : body;
-    const { masked, tokens, hasLink } = protectInlineSyntax(content);
+    const { masked, tokens, hasLink, hasBold } = protectInlineSyntax(content);
     enqueue(masked);
-    plans.push({ kind: 'prefix', prefix, suffix, tokens, hasLink, key: masked });
+    plans.push({ kind: 'prefix', prefix, suffix, tokens, hasLink, hasBold, key: masked });
   }
 
   const translatedUnits = new Map<string, string>();
@@ -254,12 +259,12 @@ async function translatePreservingFormat(
         const rendered = plan.cells.map(cell => {
           if ('literal' in cell) return cell.literal;
           const rawOut = translatedUnits.get(cell.key) ?? cell.key;
-          return ` ${restoreInlineSyntax(rawOut.trim(), cell.tokens, cell.hasLink)} `;
+          return ` ${restoreInlineSyntax(rawOut.trim(), cell.tokens, cell.hasLink, cell.hasBold)} `;
         });
         return `${plan.indent}|${rendered.join('|')}|`;
       }
       const rawOut = translatedUnits.get(plan.key) ?? plan.key;
-      return `${plan.prefix}${restoreInlineSyntax(rawOut.trim(), plan.tokens, plan.hasLink)}${plan.suffix}`;
+      return `${plan.prefix}${restoreInlineSyntax(rawOut.trim(), plan.tokens, plan.hasLink, plan.hasBold)}${plan.suffix}`;
     })
     .join('\n');
 }
@@ -320,21 +325,29 @@ export async function translateTextStream(
   const hasLlm = Boolean(connection && settings.model.trim());
   const provider = settings.provider || (hasLlm ? 'llm' : 'system');
 
-  if (provider === 'llm' && hasLlm && connection) {
-    const result = await mediaService.streamChat(
-      { connectionId: settings.connectionId, model: settings.model.trim(), prompt: translationPrompt(text, targetLang), signal },
-      (translatedText, firstTokenMs) => onDelta?.(normalizeTranslationMarkdown(translatedText), firstTokenMs)
-    );
-    return { text: normalizeTranslationMarkdown(result.text), model: result.model, connectionName: connection.name, firstTokenMs: result.firstTokenMs };
-  }
-
   if (process.env.LASSO_DATA_ROOT) {
     const ms = Math.max(1, Date.now() - startedAt);
     const mock = /[一-鿿]/.test(text)
       ? 'Keep screenshots, pins, and translations on the same warm sheet of paper.'
       : '菜单栏刘海岛下沉到系统状态栏下方，胶囊和控制面板从此不会挡住摄像头和系统图标。';
+    const mockName = provider === 'llm' && connection ? connection.name : provider === 'deepl' ? 'DeepL' : provider === 'google' ? 'Google' : '内置极速';
+    const mockModel = provider === 'llm' && settings.model.trim() ? settings.model.trim() : mockName;
     onDelta?.(mock, ms);
-    return { text: mock, model: '内置极速', connectionName: '内置极速', firstTokenMs: ms };
+    return { text: mock, model: mockModel, connectionName: mockName, firstTokenMs: ms };
+  }
+
+  if (provider === 'llm') {
+    if (!connection || !settings.model.trim()) {
+      throw Error('请先在设置中配置翻译所用的 API 连接与模型，或切换其他翻译引擎');
+    }
+    if (!connection.hasCredential) {
+      throw Error(`${connection.name} 尚未配置 API Key，请点击上方引擎菜单进入「配置 API 连接」填写密钥，或切换为「内置极速」`);
+    }
+    const result = await mediaService.streamChat(
+      { connectionId: settings.connectionId, model: settings.model.trim(), prompt: translationPrompt(text, targetLang), signal },
+      (translatedText, firstTokenMs) => onDelta?.(normalizeTranslationMarkdown(translatedText), firstTokenMs)
+    );
+    return { text: normalizeTranslationMarkdown(result.text), model: result.model, connectionName: connection.name, firstTokenMs: result.firstTokenMs };
   }
 
   const effectiveLang = resolveEffectiveLang(text, targetLang);
@@ -444,6 +457,8 @@ export interface TranslatorPanelDeps {
   mediaService: Pick<MediaService, 'connections' | 'streamChat'>;
   translationSettings: () => TranslationSettings;
   saveTargetLang?: (lang: TranslationLang) => void | Promise<void>;
+  saveTranslation?: (settings: TranslationSettings) => void | Promise<void>;
+  openSettings?: (section?: SettingsSection) => void;
   writeText?: (text: string, options?: { transient?: boolean }) => void | Promise<void>;
   pinText: (text: string, title?: string) => Promise<void>;
   noteText: (text: string) => void | Promise<void>;
@@ -479,8 +494,11 @@ export class TranslatorPanel {
       status: 'idle',
       error: null,
       targetLang: deps.translationSettings().targetLang,
+      provider: 'system',
+      connectionId: '',
       connectionName: '',
       model: '',
+      engines: [],
       firstTokenMs: null,
       canReplace: false,
       fonts
@@ -511,6 +529,13 @@ export class TranslatorPanel {
     });
     ipcMain.on('translator:cancel', event => { check(event); this.cancel(); });
     ipcMain.handle('translator:lang', async (event, lang: TranslationLang) => { check(event); await this.setTargetLang(lang); });
+    ipcMain.handle('translator:engine', (event, req: { provider: TranslationProvider; connectionId?: string; model?: string }) => { check(event); return this.setEngine(req); });
+    ipcMain.handle('translator:open-settings', (event, section?: SettingsSection) => { check(event); this.deps.openSettings?.(section ?? 'connections'); });
+    ipcMain.handle('translator:read-clipboard', event => { check(event); return readClipboardMarkdown(); });
+    ipcMain.handle('translator:html-to-markdown', (event, text: string, html: string) => {
+      check(event);
+      return selectionMarkdown(typeof text === 'string' ? text : '', typeof html === 'string' ? html : '');
+    });
     ipcMain.handle('translator:pinned', (event, pinned: boolean) => { check(event); this.setPinned(pinned); });
     ipcMain.handle('translator:act', (event, action: 'copy' | 'replace' | 'pin' | 'note', text: string) => { check(event); return this.act(action, text); });
     ipcMain.on('translator:close', event => { check(event); this.close(); });
@@ -603,6 +628,30 @@ export class TranslatorPanel {
     if (this.state.sourceText.trim()) void this.translate(this.state.sourceText, lang);
   }
 
+  async setEngine(req: { provider: TranslationProvider; connectionId?: string; model?: string }): Promise<{ error: string | null }> {
+    try {
+      if (!req || !['system', 'deepl', 'google', 'llm'].includes(req.provider)) throw Error('翻译引擎无效');
+      const current = this.deps.translationSettings();
+      const next: TranslationSettings = {
+        ...current,
+        provider: req.provider,
+        ...(req.provider === 'llm'
+          ? {
+              connectionId: typeof req.connectionId === 'string' ? req.connectionId : current.connectionId,
+              model: typeof req.model === 'string' ? req.model.trim() : current.model
+            }
+          : {})
+      };
+      await this.deps.saveTranslation?.(next);
+      this.refreshConnection();
+      this.publish();
+      if (this.state.sourceText.trim()) void this.translate(this.state.sourceText, this.state.targetLang);
+      return { error: null };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
   setPinned(pinned: boolean) {
     if (typeof pinned !== 'boolean') throw Error('置顶状态无效');
     this.state.pinnedOnTop = pinned;
@@ -652,19 +701,55 @@ export class TranslatorPanel {
   destroy() {
     this.quitting = true;
     this.cancel();
-    for (const channel of ['translator:state', 'translator:translate', 'translator:lang', 'translator:pinned', 'translator:act']) ipcMain.removeHandler(channel);
+    for (const channel of ['translator:state', 'translator:translate', 'translator:lang', 'translator:engine', 'translator:open-settings', 'translator:read-clipboard', 'translator:html-to-markdown', 'translator:pinned', 'translator:act']) ipcMain.removeHandler(channel);
     for (const channel of ['translator:cancel', 'translator:close']) ipcMain.removeAllListeners(channel);
     if (!this.window.isDestroyed()) this.window.destroy();
   }
 
   private refreshConnection() {
     const settings = this.deps.translationSettings();
-    const conn = this.deps.mediaService.connections().find(item => item.id === settings.connectionId);
+    const connections = this.deps.mediaService.connections();
+    const conn = connections.find(item => item.id === settings.connectionId);
     const hasLlm = Boolean(conn && settings.model.trim());
-    const provider = settings.provider || (hasLlm ? 'llm' : 'system');
+    const provider: TranslationProvider = settings.provider || (hasLlm ? 'llm' : 'system');
+
+    const engines: TranslatorEngineOption[] = [];
+    for (const item of connections) {
+      const isOpenAI = item.id === DEFAULT_OPENAI_CONNECTION_ID || /^https:\/\/api\.openai\.com(?:\/|$)/i.test(item.baseURL);
+      const model =
+        settings.connectionId === item.id && settings.model.trim()
+          ? settings.model.trim()
+          : isOpenAI
+            ? (item.models.includes(DEFAULT_TRANSLATION_MODEL) ? DEFAULT_TRANSLATION_MODEL : (item.models[0] || DEFAULT_TRANSLATION_MODEL))
+            : (item.models[0] || '');
+      const detail = model
+        ? (item.hasCredential ? model : `${model} · 未配密钥`)
+        : (item.hasCredential ? '需填模型' : '未配密钥');
+      engines.push({
+        id: `llm:${item.id}`,
+        provider: 'llm',
+        label: item.name,
+        detail,
+        connectionId: item.id,
+        model,
+        needsKey: !item.hasCredential
+      });
+    }
+    engines.push(
+      { id: 'system', provider: 'system', label: '内置极速', detail: '免配置' },
+      { id: 'deepl', provider: 'deepl', label: 'DeepL', detail: settings.deeplApiKey?.trim() ? '已配置' : '未配密钥', needsKey: !settings.deeplApiKey?.trim() },
+      { id: 'google', provider: 'google', label: 'Google', detail: settings.googleApiKey?.trim() ? 'Cloud API' : '免配置' }
+    );
+
+    this.state.provider = provider;
+    this.state.connectionId = settings.connectionId;
+    this.state.engines = engines;
     if (provider === 'llm' && hasLlm && conn) {
-      this.state.connectionName = 'LLM';
+      this.state.connectionName = conn.name;
       this.state.model = settings.model.trim();
+    } else if (provider === 'llm' && conn) {
+      this.state.connectionName = conn.name;
+      this.state.model = settings.model.trim() || DEFAULT_TRANSLATION_MODEL;
     } else if (provider === 'deepl') {
       this.state.connectionName = 'DeepL';
       this.state.model = 'DeepL';

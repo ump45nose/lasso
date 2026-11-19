@@ -95,6 +95,34 @@ static NSString* colorValue(unsigned r,unsigned g,unsigned b,NSString*format){
 @end
 static CapturePanel* panel=nil;
 static CaptureView* view=nil;
+static id localMouseMonitor=nil;
+static id globalMouseMonitor=nil;
+static uint32_t activeDisplayId=0;
+static BOOL allowDisplaySwitch=NO;
+static void stopDisplayMonitors(){
+ if(localMouseMonitor){[NSEvent removeMonitor:localMouseMonitor];localMouseMonitor=nil;}
+ if(globalMouseMonitor){[NSEvent removeMonitor:globalMouseMonitor];globalMouseMonitor=nil;}
+}
+static void checkCursorDisplay(){
+ if(!allowDisplaySwitch||!panel||!panel.isVisible||!view||view.frozen||view.pressed||view.dragging||!view.session.length)return;
+ NSPoint loc=NSEvent.mouseLocation;
+ for(NSScreen*s in NSScreen.screens){
+  if(NSPointInRect(loc,s.frame)){
+   uint32_t did=[s.deviceDescription[@"NSScreenNumber"] unsignedIntValue];
+   if(did&&did!=activeDisplayId){
+    activeDisplayId=did;
+    emit(@{@"type":@"display",@"session":view.session,@"displayId":@(did)});
+   }
+   break;
+  }
+ }
+}
+static void startDisplayMonitors(){
+ stopDisplayMonitors();
+ if(!allowDisplaySwitch)return;
+ localMouseMonitor=[NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskMouseMoved handler:^NSEvent*(NSEvent*e){checkCursorDisplay();return e;}];
+ globalMouseMonitor=[NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskMouseMoved handler:^(NSEvent*e){(void)e;checkCursorDisplay();}];
+}
 @implementation CaptureView
 -(BOOL)isFlipped{return YES;}
 -(BOOL)acceptsFirstResponder{return YES;}
@@ -220,6 +248,14 @@ static napi_value show(napi_env e,napi_callback_info info) {
  view.lastHover=CGPointMake(-100,-100);
  CGRect b=f->second->bounds;CGFloat desktopTop=NSScreen.screens[0].frame.size.height;
  NSRect placement=NSMakeRect(b.origin.x,desktopTop-b.origin.y-b.size.height,b.size.width,b.size.height);
+ activeDisplayId=d[@"displayId"]?[d[@"displayId"] unsignedIntValue]:0;
+ if(!activeDisplayId){
+  CGPoint center=CGPointMake(NSMidX(placement),NSMidY(placement));
+  for(NSScreen*s in NSScreen.screens){
+   if(NSPointInRect(center,s.frame)){activeDisplayId=[s.deviceDescription[@"NSScreenNumber"] unsignedIntValue];break;}
+  }
+ }
+ allowDisplaySwitch=[d[@"allowDisplaySwitch"] boolValue];
  withoutCaptureAnimation(^{
    if(!NSEqualRects(panel.frame,placement)){
      if(panel.isVisible)[panel orderOut:nil];
@@ -235,10 +271,11 @@ static napi_value show(napi_env e,napi_callback_info info) {
    [panel invalidateCursorRectsForView:view];
    [view setNeedsDisplay:YES];[view displayIfNeeded];
  });
+ startDisplayMonitors();
  [CATransaction flush];return nullptr;
 }
 static napi_value update(napi_env e,napi_callback_info info){size_t n=1;napi_value a[1];napi_get_cb_info(e,info,&n,a,nullptr,nullptr);NSDictionary*d=json(e,a[0]);if(![view.session isEqual:d[@"session"]])return nullptr;if(d[@"candidates"])view.candidates=d[@"candidates"];if(d[@"message"]){view.message=d[@"message"];view.frozen=YES;[view buildGuide];}if(d[@"resume"]){view.frozen=NO;view.message=@"";[view buildGuide];}[view update];return nullptr;}
-static napi_value hide(napi_env,napi_callback_info){[CATransaction begin];[CATransaction setDisableActions:YES];[panel orderOut:nil];view.pressed=NO;view.dragging=NO;view.frozen=YES;view.imageFrame=nullptr;view.windows=@[];view.candidates=@[];view.options=@[];view.chosen=nil;view.backdrop.contents=nil;if(view.loupe.sublayers.count)view.loupe.sublayers[0].contents=nil;[CATransaction commit];[CATransaction flush];return nullptr;}
+static napi_value hide(napi_env,napi_callback_info){stopDisplayMonitors();activeDisplayId=0;allowDisplaySwitch=NO;[CATransaction begin];[CATransaction setDisableActions:YES];[panel orderOut:nil];view.pressed=NO;view.dragging=NO;view.frozen=YES;view.imageFrame=nullptr;view.windows=@[];view.candidates=@[];view.options=@[];view.chosen=nil;view.backdrop.contents=nil;if(view.loupe.sublayers.count)view.loupe.sublayers[0].contents=nil;[CATransaction commit];[CATransaction flush];return nullptr;}
 static napi_value focus(napi_env,napi_callback_info){if(view.imageFrame){[panel makeKeyAndOrderFront:nil];[panel makeFirstResponder:view];}return nullptr;}
 static napi_value releaseFrame(napi_env e,napi_callback_info info){size_t n=1;napi_value a[1];napi_get_cb_info(e,info,&n,a,nullptr,nullptr);frames.erase(text(e,a[0]).UTF8String);return nullptr;}
 static napi_value invalidate(napi_env,napi_callback_info){dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{getContent(true);});return nullptr;}
@@ -253,7 +290,7 @@ static napi_value snapshot(napi_env e,napi_callback_info){
  if(view.loupe.sublayers.count>4){NSAttributedString*value=((CATextLayer*)view.loupe.sublayers[3]).string;NSAttributedString*position=((CATextLayer*)view.loupe.sublayers[4]).string;napi_set_named_property(e,o,"color",js(e,value.string?:@""));napi_set_named_property(e,o,"position",js(e,position.string?:@""));napi_set_named_property(e,o,"loupe",rectJS(e,view.loupe.frame));set(e,o,"colorTextWidth",value.size.width);for(NSString*key in @[@"loupePicture",@"loupeCenter",@"colorBounds"]){NSUInteger index=[key isEqual:@"loupePicture"]?0:[key isEqual:@"loupeCenter"]?1:3;CGRect r=CGRectOffset(view.loupe.sublayers[index].frame,view.loupe.frame.origin.x,view.loupe.frame.origin.y);napi_set_named_property(e,o,key.UTF8String,rectJS(e,r));}}
  return o;
 }
-static void cleanup(void*){[panel orderOut:nil];view.imageFrame=nullptr;frames.clear();view=nil;panel=nil;if(events){napi_release_threadsafe_function(events,napi_tsfn_abort);events=nullptr;}content=nil;}
+static void cleanup(void*){stopDisplayMonitors();activeDisplayId=0;allowDisplaySwitch=NO;[panel orderOut:nil];view.imageFrame=nullptr;frames.clear();view=nil;panel=nil;if(events){napi_release_threadsafe_function(events,napi_tsfn_abort);events=nullptr;}content=nil;}
 static napi_value init(napi_env e,napi_value exports){napi_property_descriptor defs[]={
  {"createFrame",nullptr,createFrame,nullptr,nullptr,nullptr,napi_default,nullptr},{"render",nullptr,render,nullptr,nullptr,nullptr,napi_default,nullptr},{"warmup",nullptr,warmup,nullptr,nullptr,nullptr,napi_default,nullptr},{"capture",nullptr,capture,nullptr,nullptr,nullptr,napi_default,nullptr},{"pixels",nullptr,pixels,nullptr,nullptr,nullptr,napi_default,nullptr},{"show",nullptr,show,nullptr,nullptr,nullptr,napi_default,nullptr},{"update",nullptr,update,nullptr,nullptr,nullptr,napi_default,nullptr},{"hide",nullptr,hide,nullptr,nullptr,nullptr,napi_default,nullptr},{"focus",nullptr,focus,nullptr,nullptr,nullptr,napi_default,nullptr},{"release",nullptr,releaseFrame,nullptr,nullptr,nullptr,napi_default,nullptr},{"invalidate",nullptr,invalidate,nullptr,nullptr,nullptr,napi_default,nullptr},{"windowID",nullptr,windowID,nullptr,nullptr,nullptr,napi_default,nullptr},{"snapshot",nullptr,snapshot,nullptr,nullptr,nullptr,napi_default,nullptr}};napi_define_properties(e,exports,sizeof(defs)/sizeof(defs[0]),defs);napi_add_env_cleanup_hook(e,cleanup,nullptr);return exports;}
 NAPI_MODULE(NODE_GYP_MODULE_NAME,init)

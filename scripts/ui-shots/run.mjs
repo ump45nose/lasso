@@ -538,6 +538,13 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       if (!(await page(transWin, `Boolean(document.querySelector('.sw-src-box'))`))) throw Error('B3 Translator expanded source box missing');
       names.push(await save(transWin, 'v4-b3-translator-expanded'));
 
+      await page(transWin, `document.querySelector('.sw-engine-btn')?.click()`);
+      await wait(200);
+      if (!(await page(transWin, `Boolean(document.querySelector('.sw-engine-menu'))`))) throw Error('B3 Translator engine menu missing');
+      names.push(await save(transWin, 'v4-b3-translator-engine-menu'));
+      await page(transWin, `document.querySelector('.sw-engine-btn')?.click()`);
+      await wait(120);
+
       transWin.setSize(468, 560);
       const markdownTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'markdown'))`);
       transWin.webContents.send('translator:changed', markdownTrans);

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { validImageOptions, validImageSize, imageRequestSize, type ApiConnection, type ApiConnectionInput, type ImageOptions, type MediaConfig, type MediaConfigInput, type MediaJob, type MediaReference } from '../shared/media';
+import { DEFAULT_OPENAI_CONNECTION_ID, DEFAULT_TRANSLATION_MODEL, validImageOptions, validImageSize, imageRequestSize, type ApiConnection, type ApiConnectionInput, type ImageOptions, type MediaConfig, type MediaConfigInput, type MediaJob, type MediaReference } from '../shared/media';
 import type { Preset, Settings } from '../shared/contracts';
 import type { VisionServiceConfig } from '../shared/intelligence';
 import { writeFileAtomic } from './files';
@@ -148,6 +148,15 @@ export class MediaService {
     const connections = [...this.config.connections];
     if (!connections.length) connections.push({ id: legacyMediaConnectionId, name: '原 API 服务', baseURL: '', models: [] });
     const media = connections.find(connection => connection.id === legacyMediaConnectionId) || connections[0];
+    let openai = connections.find(connection => connection.id === DEFAULT_OPENAI_CONNECTION_ID || /^https:\/\/api\.openai\.com(?:\/|$)/i.test(connection.baseURL));
+    if (!openai) {
+      openai = { id: DEFAULT_OPENAI_CONNECTION_ID, name: 'OpenAI', baseURL: 'https://api.openai.com/v1', models: [DEFAULT_TRANSLATION_MODEL] };
+      connections.push(openai);
+    } else if (!openai.models.length) {
+      openai = { ...openai, models: [DEFAULT_TRANSLATION_MODEL] };
+      const idx = connections.findIndex(connection => connection.id === openai!.id);
+      if (idx >= 0) connections[idx] = openai;
+    }
     const vision = { ...legacyVision, ...settings.vision };
     const visionBaseURL = vision.baseURL?.trim().replace(/\/+$/, '') || '';
     const independentVision = vision.useMediaCredential === false || Boolean(visionBaseURL && visionBaseURL !== media.baseURL.replace(/\/+$/, ''));
@@ -165,8 +174,15 @@ export class MediaService {
       jobsUpdated = true;
     }
     if (jobsUpdated) this.persist();
+    const hasTranslationConn = Boolean(settings.translation.connectionId && connections.some(c => c.id === settings.translation.connectionId));
+    const translationConnectionId = hasTranslationConn ? settings.translation.connectionId : openai.id;
+    const translationModel = settings.translation.model.trim() || (translationConnectionId === openai.id ? DEFAULT_TRANSLATION_MODEL : '');
     return {
-      settings: { ...settings, translation: { ...settings.translation, connectionId: settings.translation.connectionId || media.id }, vision: { ...settings.vision, connectionId: settings.vision.connectionId || visionId } },
+      settings: {
+        ...settings,
+        translation: { ...settings.translation, connectionId: translationConnectionId, model: translationModel },
+        vision: { ...settings.vision, connectionId: settings.vision.connectionId || visionId }
+      },
       presets: presets.map(preset => preset.target === 'api' && !preset.connectionId ? { ...preset, connectionId: media.id } : preset)
     };
   }

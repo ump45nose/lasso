@@ -17,6 +17,7 @@ export interface CandidateDetectionDeps {
 export class CandidateDetection {
   private worker: Worker | null=null;
   private starting=false;
+  private startGen=0;
   private windows: WindowRect[]=[];
   private fixed: RegionCandidate[]=[];
   private elements: RegionCandidate[]=[];
@@ -45,11 +46,12 @@ export class CandidateDetection {
   async start(frame:NativeFrame|null){
     const id=this.state?.id;
     if(!id||this.state?.phase!=='selecting'||(this.state.mode==='rect'||this.state.mode==='window')||!frame||this.worker||this.starting)return;
+    const gen=++this.startGen;
     this.starting=true;
     let reduced;
     try{reduced=await this.deps.native.pixels(frame.id,{format:'rgba',maxWidth:1440});}
-    finally{if(this.state?.id===id)this.starting=false;}
-    if(this.state?.id!==id||this.state.phase!=='selecting')return;
+    finally{if(gen===this.startGen)this.starting=false;}
+    if(gen!==this.startGen||this.state?.id!==id||this.state.phase!=='selecting')return;
     const size={width:reduced.width,height:reduced.height},bitmap=new Uint8Array(reduced.data);
     const sx=this.bounds.width/size.width,sy=this.bounds.height/size.height;
     const worker=new Worker(join(__dirname,'regions-worker.cjs'));this.worker=worker;
@@ -65,10 +67,9 @@ export class CandidateDetection {
     worker.postMessage({type:'init',bytes:bitmap,width:size.width,height:size.height});
     this.detectScale={x:1/sx,y:1/sy};
   }
-  /** Keeps `starting`: a start still reading pixels clears it itself while its session lasts, so a return to selecting cannot start a second worker. */
-  stop(){this.seq++;this.pending=null;this.fixed=[];this.windows=[];this.elements=[];this.edges=[];this.colors=[];this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;}
-  /** Session end: that start no longer clears `starting`. */
-  release(){this.starting=false;this.stop();}
+  /** Invalidates any in-flight pixel read so display switches can immediately restart detection. */
+  stop(){this.startGen++;this.starting=false;this.seq++;this.pending=null;this.fixed=[];this.windows=[];this.elements=[];this.edges=[];this.colors=[];this.colorBusy=false;this.axBusy=false;if(this.hoverTimer)clearTimeout(this.hoverTimer);this.hoverTimer=null;void this.worker?.terminate();this.worker=null;}
+  release(){this.stop();}
   hover(x:number,y:number){
     if(!this.state||this.state.phase!=='selecting'||this.state.mode==='rect')return;
     if(Math.hypot(x-this.hoverPoint.x,y-this.hoverPoint.y)<5)return;

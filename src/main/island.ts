@@ -15,6 +15,7 @@ import type {
   PomodoroSettings,
   SelectionContext,
   Settings,
+  SettingsSection,
   SnapSlot
 } from '../shared/contracts';
 import { fromMainFrame } from './ipc';
@@ -529,6 +530,7 @@ function readNookFocusData(): NookFocusSnapshot {
 
 export interface NotchIslandCallbacks {
   onQuickAction: (action: 'screenshot-area' | 'open-settings') => void;
+  openSettings?: (section?: SettingsSection) => void;
   onPinImage: (image: NativeImage, title?: string) => Promise<void>;
   onPinText: (text: string, title?: string) => Promise<void>;
   onAskAi: (payload: { kind: 'text'; text: string } | { kind: 'image'; imagePath: string }) => void;
@@ -631,6 +633,8 @@ export class NotchIsland {
       mediaService: callbacks.mediaService,
       translationSettings: () => callbacks.settings().translation,
       saveTargetLang: targetLang => callbacks.saveTranslation({ ...callbacks.settings().translation, targetLang }),
+      saveTranslation: next => callbacks.saveTranslation(next),
+      openSettings: section => callbacks.openSettings ? callbacks.openSettings(section) : callbacks.onQuickAction('open-settings'),
       writeText: (text, options) => this.clipboardHistory.writeText(text, options),
       pinText: callbacks.onPinText,
       noteText: text => this.notes.appendScratchpad(text, '翻译'),
@@ -979,7 +983,7 @@ export class NotchIsland {
   async translateSelection(selection: SelectionContext) {
     const source = this.ax.frontmostApp?.();
     let text = selection.text;
-    if (source && source.bundleId === selection.sourceApp) {
+    if (source && (!selection.sourceApp || source.bundleId === selection.sourceApp)) {
       try { text = await this.clipboardHistory.selectionMarkdown(source.pid) ?? text; }
       catch { console.warn('未能读取划词原文的格式，使用所选文字'); }
     }
@@ -995,7 +999,7 @@ export class NotchIsland {
     if (!meta || meta.concealed || meta.changeCount !== copy.changeCount) return;
     this.pendingDoubleCopyAt = 0;
     this.lastTranslatedChangeCount = copy.changeCount;
-    this.translator.open(copy.entry.text, copy.pid);
+    this.translator.open(copy.markdown || copy.entry.text, copy.pid);
   }
 
   private persistDismissedAlerts() {

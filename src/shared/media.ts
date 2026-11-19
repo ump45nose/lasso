@@ -85,10 +85,12 @@ export interface TranslationSettings {
   copyTranslateEnabled: boolean;
   copyTranslateTrigger: 'double-cmd-c' | 'every-copy';
 }
+export const DEFAULT_OPENAI_CONNECTION_ID = 'conn-openai-default';
+export const DEFAULT_TRANSLATION_MODEL = 'gpt-6-luna';
 export const translationDefaults = (): TranslationSettings => ({
-  provider: 'system',
-  connectionId: '',
-  model: '',
+  provider: 'llm',
+  connectionId: DEFAULT_OPENAI_CONNECTION_ID,
+  model: DEFAULT_TRANSLATION_MODEL,
   deeplApiKey: '',
   googleApiKey: '',
   targetLang: 'auto',

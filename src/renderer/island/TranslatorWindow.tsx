@@ -8,6 +8,7 @@ import {
   ClipboardPaste,
   Copy,
   CornerDownLeft,
+  KeyRound,
   Languages,
   Lock,
   LockOpen,
@@ -17,7 +18,7 @@ import {
   Square,
   X
 } from 'lucide-react';
-import type { IslandAPI, TranslatorWindowState } from '../../shared/contracts';
+import type { IslandAPI, TranslatorEngineOption, TranslatorWindowState } from '../../shared/contracts';
 import type { TranslationLang } from '../../shared/media';
 import { normalizeTranslationMarkdown } from '../../shared/translation-markdown';
 import { useFonts } from '../fonts';
@@ -76,6 +77,7 @@ export function TranslatorWindow() {
   const [draft, setDraft] = useState('');
   const [sourceExpanded, setSourceExpanded] = useState(true);
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const [engineMenuOpen, setEngineMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [actError, setActError] = useState<string | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -159,8 +161,9 @@ export function TranslatorWindow() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        if (langMenuOpen) {
+        if (langMenuOpen || engineMenuOpen) {
           setLangMenuOpen(false);
+          setEngineMenuOpen(false);
         } else {
           clearDebounce();
           window.island.closeTranslator();
@@ -192,7 +195,7 @@ export function TranslatorWindow() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [clearDebounce, langMenuOpen, runAct, state?.canReplace, state?.translatedText]);
+  }, [clearDebounce, engineMenuOpen, langMenuOpen, runAct, state?.canReplace, state?.translatedText]);
 
   if (!state) return null;
 
@@ -223,10 +226,22 @@ export function TranslatorWindow() {
     await window.island.setTranslatorLang(lang);
   }
 
+  async function onSelectEngine(option: TranslatorEngineOption) {
+    setEngineMenuOpen(false);
+    clearDebounce();
+    setActError(null);
+    const res = await window.island.setTranslatorEngine({
+      provider: option.provider,
+      connectionId: option.connectionId,
+      model: option.model
+    });
+    if (res?.error) setActError(res.error);
+  }
+
   async function onPasteSource() {
     clearDebounce();
     try {
-      const text = await navigator.clipboard.readText();
+      const text = (await window.island.readTranslatorClipboard()) || (await navigator.clipboard.readText());
       if (!text) return;
       setDraft(text);
       setSourceExpanded(true);
@@ -236,8 +251,16 @@ export function TranslatorWindow() {
     }
   }
 
+  const activeEngineId = state.provider === 'llm' ? `llm:${state.connectionId}` : state.provider;
+
   return (
-    <div className="sw-stage" onClick={() => langMenuOpen && setLangMenuOpen(false)}>
+    <div
+      className="sw-stage"
+      onClick={() => {
+        if (langMenuOpen) setLangMenuOpen(false);
+        if (engineMenuOpen) setEngineMenuOpen(false);
+      }}
+    >
       <section className="sw-win sw-tr" role="dialog" aria-label="翻译浮窗">
         <header className="sw-wbar">
           <span className="sw-wbar-title">
@@ -252,7 +275,10 @@ export function TranslatorWindow() {
               aria-label="目标语言"
               aria-haspopup="listbox"
               aria-expanded={langMenuOpen}
-              onClick={() => setLangMenuOpen(v => !v)}
+              onClick={() => {
+                setEngineMenuOpen(false);
+                setLangMenuOpen(v => !v);
+              }}
             >
               <span>{currentLangChip}</span>
               {langMenuOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
@@ -328,6 +354,31 @@ export function TranslatorWindow() {
                 clearDebounce();
                 debounceRef.current = setTimeout(() => void submitTranslate(next, langRef.current), 420);
               }}
+              onPaste={e => {
+                const html = e.clipboardData.getData('text/html');
+                if (!html.trim()) return;
+                const plain = e.clipboardData.getData('text/plain');
+                const el = e.currentTarget;
+                const start = el.selectionStart ?? draft.length;
+                const end = el.selectionEnd ?? draft.length;
+                const base = draft;
+                e.preventDefault();
+                clearDebounce();
+                void window.island
+                  .htmlToMarkdown(plain, html)
+                  .then(md => {
+                    const inserted = md || plain;
+                    const next = base.slice(0, start) + inserted + base.slice(end);
+                    setDraft(next);
+                    setActError(null);
+                    void submitTranslate(next, langRef.current);
+                  })
+                  .catch(() => {
+                    const next = base.slice(0, start) + plain + base.slice(end);
+                    setDraft(next);
+                    void submitTranslate(next, langRef.current);
+                  });
+              }}
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();
@@ -358,10 +409,62 @@ export function TranslatorWindow() {
         )}
 
         <div className="sw-engine">
-          <span className={'dot ' + dotClass} />
-          <span className="sw-engine-meta mono" title={engineMeta}>
-            {engineMeta}
-          </span>
+          <div className="sw-engine-wrap" onClick={e => e.stopPropagation()}>
+            <button
+              type="button"
+              className={'sw-engine-btn' + (engineMenuOpen ? ' open' : '')}
+              aria-label="切换翻译引擎"
+              aria-haspopup="listbox"
+              aria-expanded={engineMenuOpen}
+              title={engineMeta}
+              onClick={() => {
+                setLangMenuOpen(false);
+                setEngineMenuOpen(v => !v);
+              }}
+            >
+              <span className={'dot ' + dotClass} />
+              <span className="sw-engine-meta mono">{engineMeta}</span>
+              {engineMenuOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            </button>
+
+            {engineMenuOpen && (
+              <div className="sw-menu sw-engine-menu" role="listbox" aria-label="选择翻译引擎">
+                {(state.engines ?? []).map(option => {
+                  const selected = option.id === activeEngineId;
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className={'sw-mi' + (selected ? ' active' : '')}
+                      onClick={() => void onSelectEngine(option)}
+                    >
+                      <span>{option.label}</span>
+                      {option.detail && (
+                        <span className={'sw-mi-sub mono' + (option.needsKey ? ' warn' : '')}>
+                          {option.detail}
+                        </span>
+                      )}
+                      {selected && <Check size={14} className="sw-mi-r clay" />}
+                    </button>
+                  );
+                })}
+                <div className="sw-menu-sep" role="separator" />
+                <button
+                  type="button"
+                  className="sw-mi"
+                  onClick={() => {
+                    setEngineMenuOpen(false);
+                    void window.island.openTranslatorSettings('connections');
+                  }}
+                >
+                  <KeyRound size={13} className="sw-muted-ic" />
+                  <span>配置 API 连接与密钥…</span>
+                </button>
+              </div>
+            )}
+          </div>
           <span className="grow" />
           {state.status === 'streaming' ? (
             <button type="button" className="sw-ib sm" aria-label="停止翻译" title="停止" onClick={() => window.island.cancelTranslation()}>

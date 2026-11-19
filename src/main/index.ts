@@ -960,6 +960,7 @@ function installIPC() {
     assertLocal(event);
     try {
       const connection = media.service.saveConnection(input);
+      island?.translator.updateSettings(state.settings);
       publish();
       return { connections: media.service.connections(), connection, error: null };
     } catch (error) {
@@ -970,6 +971,7 @@ function installIPC() {
     assertLocal(event);
     try {
       const connections = media.service.deleteConnection(id);
+      island?.translator.updateSettings(state.settings);
       publish();
       return { connections, error: null };
     } catch (error) {
@@ -1681,6 +1683,7 @@ async function boot() {
       if (action === 'screenshot-area') void startScreenshot('area');
       else openSettings();
     },
+    openSettings,
     onPinImage: pinImage,
     onPinText: async text => {
       await screenshots.pins.create({ kind: 'text', text });

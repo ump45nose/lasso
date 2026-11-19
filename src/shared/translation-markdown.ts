@@ -1,6 +1,8 @@
 const restoreBlockMarker = (line: string) => line
   .replace(/^( {0,3})\\([-+*]|#{1,6}|>)(?=[ \t])/, '$1$2')
   .replace(/^( {0,3}\d+)\\([.)])(?=\D)/, '$1$2')
+  // Turndown pads list items with 3 spaces ("-   item"); normalize to single space.
+  .replace(/^( {0,3}[-+*]) {2,}(?=\S)/, '$1 ')
   // Rich-text selection may omit the space after a list number ("2.ape").
   .replace(/^( {0,3}\d{1,9}[.)])(?=[^\s\d])/, '$1 ');
 

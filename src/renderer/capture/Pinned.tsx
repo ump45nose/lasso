@@ -296,6 +296,18 @@ export function Pinned() {
     const wheel = (event: WheelEvent) => {
       const pin = current.current;
       if (!pin || pin.editing || editable(event.target) || (event.target instanceof Element && event.target.closest('.pin-bar'))) return;
+      const isTextPin = (pin.kind || 'image') === 'text' && !pin.thumbnail;
+      if (isTextPin) {
+        if (!event.metaKey && !event.altKey) return;
+        event.preventDefault();
+        const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1);
+        if (event.metaKey) {
+          if (!pin.locked) adjust('zoomPercent', Math.round(clamp((pin.zoomPercent ?? 100) * Math.exp(-delta * 0.002), 10, 500)));
+        } else if (event.altKey) {
+          adjust('opacity', Math.round(clamp(pin.opacity - delta * 0.001, 0.1, 1) * 100) / 100);
+        }
+        return;
+      }
       event.preventDefault();
       const opacity = (pin.wheelAction === 'opacity') !== event.altKey;
       const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 100 : 1);
@@ -387,6 +399,8 @@ export function Pinned() {
   };
   const startDrag = (event: PointerEvent<HTMLElement>) => {
     if (event.button !== 0 || state.locked || canSelectText || editable(event.target) || (event.target as HTMLElement).closest('button')) return;
+    const target = event.target as HTMLElement;
+    if (target.scrollHeight > target.clientHeight && event.nativeEvent.offsetX >= target.clientWidth) return;
     event.preventDefault();
     setDragging(true);
     event.currentTarget.setPointerCapture(event.pointerId);

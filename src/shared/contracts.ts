@@ -2,7 +2,7 @@ import type { RecordingAction, RecordingSessionState } from './recording';
 import type { RegionConfiguration, RegionPreset } from './capture-regions';
 import type { ScreenshotSettings } from './screenshot-settings';
 import type { MemorySettings } from './memory';
-import type { ApiConnection, ApiConnectionInput, ImageOptions, MediaConfig, MediaConfigInput, TranslationLang, TranslationSettings } from './media';
+import type { ApiConnection, ApiConnectionInput, ImageOptions, MediaConfig, MediaConfigInput, TranslationLang, TranslationProvider, TranslationSettings } from './media';
 import type { CaptureMode } from './capture';
 import type { VisionServiceConfig, VisionServiceInput } from './intelligence';
 import type { CaptureDelay, CaptureEfficiencyState, EfficiencyCaptureMode } from './capture-efficiency';
@@ -444,6 +444,16 @@ export interface NookReminderPrefs {
 }
 export type IslandQuickAction = 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel' | 'open-translator' | 'open-clipboard';
 
+export interface TranslatorEngineOption {
+  id: string;
+  provider: TranslationProvider;
+  label: string;
+  detail?: string;
+  connectionId?: string;
+  model?: string;
+  needsKey?: boolean;
+}
+
 export interface TranslatorWindowState {
   open: boolean;
   pinnedOnTop: boolean;
@@ -453,8 +463,11 @@ export interface TranslatorWindowState {
   status: 'idle' | 'streaming' | 'done' | 'error';
   error: string | null;
   targetLang: TranslationLang;
+  provider: TranslationProvider;
+  connectionId: string;
   connectionName: string;
   model: string;
+  engines: TranslatorEngineOption[];
   firstTokenMs: number | null;
   canReplace: boolean;
   fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
@@ -557,6 +570,10 @@ export interface IslandAPI {
   translateInput(req: { text: string; targetLang: TranslationLang }): Promise<{ error: string | null }>;
   cancelTranslation(): void;
   setTranslatorLang(lang: TranslationLang): Promise<void>;
+  setTranslatorEngine(req: { provider: TranslationProvider; connectionId?: string; model?: string }): Promise<{ error: string | null }>;
+  openTranslatorSettings(section?: SettingsSection): Promise<void>;
+  readTranslatorClipboard(): Promise<string>;
+  htmlToMarkdown(text: string, html: string): Promise<string>;
   setTranslatorPinned(pinned: boolean): Promise<void>;
   translatorAct(action: 'copy' | 'replace' | 'pin' | 'note', text: string): Promise<{ error: string | null }>;
   closeTranslator(): void;

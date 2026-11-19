@@ -112,3 +112,19 @@ test('compact numbered selections remain separate list items without changing de
   assert.equal(f.selectionMarkdown('1.25 is a decimal\nVersion 2.ape\n```\n2.ape\n```\n`1.literal`', ''),
     '1.25 is a decimal\nVersion 2.ape\n```\n2.ape\n```\n`1.literal`');
 });
+
+test('rich Gemini list with bold, inline code, and links converts cleanly to Markdown', () => {
+  const f = fixture();
+  const geminiHtml = [
+    '<p>但今天周三（<code>2026-11-18</code>）这四笔账你可别想滑过去，老实报数：</p>',
+    '<ul>',
+    '<li><p><strong>19:00 约陈逸静与球课群招人</strong>：按你日历上锁好的 <a href="https://www.google.com/calendar/event?eid=abc&amp;ctz=Asia/Taipei">联系陈逸静约球＋原羽毛球课群招人</a>，记住<strong>明天（周四）下午 <code>14:00</code></strong>。</p></li>',
+    '<li><p><strong>今日身体与睡眠补血</strong>：今天白天在工位还困不困？</p></li>',
+    '</ul>'
+  ].join('');
+  const md = f.selectionMarkdown('plain fallback', geminiHtml);
+  assert.match(md, /^但今天周三（`2026-11-18`）这四笔账你可别想滑过去，老实报数：/);
+  assert.match(md, /\n- \*\*19:00 约陈逸静与球课群招人\*\*：按你日历上锁好的 \[联系陈逸静约球＋原羽毛球课群招人\]\(https:\/\/www\.google\.com\/calendar\/event\?eid=abc&ctz=Asia\/Taipei\)/);
+  assert.match(md, /\*\*明天（周四）下午 `14:00`\*\*/);
+  assert.match(md, /\n- \*\*今日身体与睡眠补血\*\*：今天白天在工位还困不困？$/);
+});

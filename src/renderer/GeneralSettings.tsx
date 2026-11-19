@@ -817,7 +817,7 @@ export function TranslationPane({
                     connectionId={draft.connectionId}
                     model={draft.model}
                     modelId="translation-llm-model"
-                    modelPlaceholder="deepseek-chat / gpt-4.1-mini"
+                    modelPlaceholder="gpt-6-luna / gpt-4.1-mini / deepseek-chat"
                     label="流式翻译模型"
                     onOpenConnections={onOpenConnections}
                     onChange={({ connectionId, model }) => void commit({ ...draft, provider: 'llm', connectionId, model })}

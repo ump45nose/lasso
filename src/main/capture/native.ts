@@ -7,13 +7,13 @@ import type { ScreenshotSettings } from '../../shared/screenshot-settings';
 export type NativeCapturePreferences = Pick<ScreenshotSettings,'includeCursor'|'showCrosshair'|'showLoupeGrid'|'loupeMagnification'|'loupeColorFormat'>;
 export interface NativeFrame { id: string; width: number; height: number; scale: number; bounds: CaptureRect; hostTimeMs: number; captureMs: number; queueMs: number; completionMs: number; workMs: number }
 export interface NativePixels { width: number; height: number; data: Uint8Array }
-export interface NativeCaptureEvent { session: string; type: 'copy'|'last'|'shown'|'hover'|'mode'|'select'|'window'|'scroll'|'screen'|'cancel'|'retry'; x?: number; y?: number; mode?: 'area'|'window'|'scroll'; rect?: CaptureRect; kind?: 'rect'|'area'; id?: number; shadow?: boolean; nativeReadyMs?: number }
+export interface NativeCaptureEvent { session: string; type: 'copy'|'last'|'shown'|'hover'|'mode'|'select'|'window'|'scroll'|'screen'|'cancel'|'retry'|'display'; x?: number; y?: number; mode?: 'area'|'window'|'scroll'; rect?: CaptureRect; kind?: 'rect'|'area'; id?: number; displayId?: number; shadow?: boolean; nativeReadyMs?: number }
 export interface NativeCapture {
   warmup(theme: Record<string, unknown>, callback?: (event: NativeCaptureEvent) => void): void;
   createFrame(options: {width:number;height:number;data:Buffer;logicalX?:number;logicalY?:number;logicalWidth?:number;logicalHeight?:number}): NativeFrame;
   capture(options: { displayId: number; bounds: CaptureRect; windowId?: number; shadow?: boolean; includeCursor: boolean; exclude: number[] }): Promise<NativeFrame>;
   pixels(frameId: string, options: { format: 'rgba'|'bgra'; rect?: CaptureRect; maxWidth?: number }): Promise<NativePixels>;
-  show(options: { frameId: string; session: string; mode: 'rect'|'area'|'window'|'scroll'; windows: CaptureWindow[]; candidates: RegionCandidate[];fixedSize?:{width:number;height:number} }): void;
+  show(options: { frameId: string; session: string; mode: 'rect'|'area'|'window'|'scroll'; windows: CaptureWindow[]; candidates: RegionCandidate[]; fixedSize?:{width:number;height:number}; displayId?: number; allowDisplaySwitch?: boolean }): void;
   update(options: { session: string; candidates?: RegionCandidate[]; message?: string; resume?: boolean }): void;
   hide(): void; focus(): void; release(id: string): void; invalidate(): void;
   windowID(handle: Buffer): number;

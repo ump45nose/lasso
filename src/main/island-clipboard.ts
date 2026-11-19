@@ -10,7 +10,7 @@ import { applicationIcon } from './app-icons';
 import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
-import { readSelectionMarkdown } from './selection-markdown';
+import { readSelectionMarkdown, selectionMarkdown } from './selection-markdown';
 
 const WIN_W = 708, WIN_H = 508;
 const SENSITIVE_APPS = /^(?:com\.agilebits\.onepassword(?:[0-9]|\.|$)|com\.1password(?:\.|$)|com\.bitwarden(?:\.|$)|com\.apple\.Passwords$|com\.apple\.keychainaccess$|org\.keepassxc\.keepassxc$|com\.lastpass(?:\.|$)|com\.keepassx(?:\.|$))/i;
@@ -18,7 +18,7 @@ const SENSITIVE_APPS = /^(?:com\.agilebits\.onepassword(?:[0-9]|\.|$)|com\.1pass
 /** Both copy translation and history must apply this before reading clipboard payloads. */
 export function isSensitiveCopy(bundleId: string, concealed: boolean): boolean { return concealed || SENSITIVE_APPS.test(bundleId); }
 
-export interface ClipboardCopyEvent { entry: ClipboardEntry; pid: number; changeCount: number; timestamp: number }
+export interface ClipboardCopyEvent { entry: ClipboardEntry; pid: number; changeCount: number; timestamp: number; markdown?: string }
 export interface ClipboardHistoryPanelDeps {
   check: (event: IpcMainEvent | IpcMainInvokeEvent) => void;
   pinImage: (image: NativeImage, title?: string) => Promise<void>;
@@ -204,6 +204,7 @@ export class ClipboardHistoryPanel {
       const files = await this.readFiles(items);
       if (!this.copyStillCurrent(meta.changeCount)) return null;
       let entry: ClipboardEntry;
+      let markdown: string | undefined;
       if (files.length) {
         const text = files.join('\n');
         const label = files.length === 1 ? basename(files[0]) : `${basename(files[0])} 等 ${files.length} 个文件`;
@@ -227,14 +228,20 @@ export class ClipboardHistoryPanel {
         if (!this.copyStillCurrent(meta.changeCount)) return null;
         writeFileSync(imagePath, png, { mode: 0o600 });
       } else {
-        const text = (await this.readData(items, 'text/plain')).toString('utf8');
+        const [plainBuf, htmlBuf] = await Promise.all([
+          this.readData(items, 'text/plain'),
+          this.readData(items, 'text/html')
+        ]);
+        const text = plainBuf.toString('utf8');
         if (!text.trim()) return null;
+        const html = htmlBuf.toString('utf8');
+        if (html.trim()) markdown = selectionMarkdown(text, html);
         entry = { ...common, kind: 'text', text, preview: text.replace(/\s+/g, ' ').slice(0, 240), charCount: Array.from(text).length, lineCount: text.split(/\r\n|\r|\n/).length };
       }
       if (!this.copyStillCurrent(meta.changeCount)) return null;
       this.pushEntry(entry);
       if (!isSelf) {
-        this.deps.onCopy?.({ entry: structuredClone(entry), pid: source.pid, changeCount: meta.changeCount, timestamp });
+        this.deps.onCopy?.({ entry: structuredClone(entry), pid: source.pid, changeCount: meta.changeCount, timestamp, markdown });
       }
       return entry;
     } finally { this.polling = false; }
