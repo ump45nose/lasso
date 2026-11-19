@@ -18,10 +18,12 @@ import {
   Square,
   X
 } from 'lucide-react';
+import type { EditorView } from '@codemirror/view';
 import type { IslandAPI, TranslatorEngineOption, TranslatorWindowState } from '../../shared/contracts';
 import type { TranslationLang } from '../../shared/media';
-import { normalizeTranslationMarkdown } from '../../shared/translation-markdown';
+import { formatMarkdownBreaks } from '../../shared/translation-markdown';
 import { useFonts } from '../fonts';
+import { NoteEditor } from './NoteEditor';
 import './suite-windows.css';
 
 declare global {
@@ -49,29 +51,6 @@ function detectSourceTag(text: string): string {
   return 'EN';
 }
 
-function formatMarkdownBreaks(markdown: string): string {
-  const lines = normalizeTranslationMarkdown(markdown).split('\n');
-  let fence: { char: string; length: number } | null = null;
-  const isBlockLine = (line: string) =>
-    /^\s*(?:$|#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\||`{3,}|~{3,}|(?:-{3,}|\*{3,}|_{3,})\s*$)/.test(line);
-  return lines
-    .map((line, idx) => {
-      const marker = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-      if (marker) {
-        if (!fence) fence = { char: marker[1][0], length: marker[1].length };
-        else if (marker[1][0] === fence.char && marker[1].length >= fence.length && !marker[2].trim()) fence = null;
-        return line;
-      }
-      if (fence || idx === lines.length - 1) return line;
-      const next = lines[idx + 1];
-      if (!isBlockLine(line) && !isBlockLine(next) && !line.endsWith('  ') && !/(?<!\\)\\$/.test(line)) {
-        return `${line}  `;
-      }
-      return line;
-    })
-    .join('\n');
-}
-
 export function TranslatorWindow() {
   const [state, setState] = useState<TranslatorWindowState | null>(null);
   const [draft, setDraft] = useState('');
@@ -85,7 +64,7 @@ export function TranslatorWindow() {
   const sourceRef = useRef<string | null>(null);
   const modeKeyRef = useRef<string>('');
   const langRef = useRef<TranslationLang>('auto');
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const editorRef = useRef<EditorView | null>(null);
 
   useFonts(state?.fonts);
 
@@ -142,7 +121,7 @@ export function TranslatorWindow() {
 
   useEffect(() => {
     if (state?.open && sourceExpanded) {
-      setTimeout(() => textareaRef.current?.focus(), 20);
+      setTimeout(() => editorRef.current?.focus(), 20);
     }
   }, [state?.open, sourceExpanded]);
 
@@ -176,7 +155,7 @@ export function TranslatorWindow() {
         (event.metaKey || event.ctrlKey) &&
         event.key.toLowerCase() === 'c' &&
         !window.getSelection()?.toString() &&
-        document.activeElement !== textareaRef.current &&
+        !editorRef.current?.hasFocus &&
         state?.translatedText.trim()
       ) {
         event.preventDefault();
@@ -185,7 +164,7 @@ export function TranslatorWindow() {
         event.key === 'Enter' &&
         !event.shiftKey &&
         !event.isComposing &&
-        document.activeElement !== textareaRef.current &&
+        !editorRef.current?.hasFocus &&
         state?.canReplace &&
         state?.translatedText.trim()
       ) {
@@ -331,7 +310,7 @@ export function TranslatorWindow() {
               className="sw-link-btn"
               onClick={() => {
                 setSourceExpanded(true);
-                setTimeout(() => textareaRef.current?.focus(), 20);
+                setTimeout(() => editorRef.current?.focus(), 20);
               }}
             >
               <span>原文</span>
@@ -340,51 +319,20 @@ export function TranslatorWindow() {
           </div>
         ) : (
           <div className="sw-src-box">
-            <textarea
-              ref={textareaRef}
-              className="sw-src-textarea"
-              aria-label="翻译原文"
-              rows={3}
+            <NoteEditor
+              className="sw-src-editor"
+              ariaLabel="翻译原文"
+              placeholderText="输入或粘贴要翻译的文本（支持 Markdown）…"
               value={draft}
-              placeholder="输入或粘贴要翻译的文本…"
-              onChange={e => {
-                const next = e.target.value;
+              editorRef={editorRef}
+              onChange={next => {
                 setDraft(next);
                 setActError(null);
                 clearDebounce();
                 debounceRef.current = setTimeout(() => void submitTranslate(next, langRef.current), 420);
               }}
-              onPaste={e => {
-                const html = e.clipboardData.getData('text/html');
-                if (!html.trim()) return;
-                const plain = e.clipboardData.getData('text/plain');
-                const el = e.currentTarget;
-                const start = el.selectionStart ?? draft.length;
-                const end = el.selectionEnd ?? draft.length;
-                const base = draft;
-                e.preventDefault();
-                clearDebounce();
-                void window.island
-                  .htmlToMarkdown(plain, html)
-                  .then(md => {
-                    const inserted = md || plain;
-                    const next = base.slice(0, start) + inserted + base.slice(end);
-                    setDraft(next);
-                    setActError(null);
-                    void submitTranslate(next, langRef.current);
-                  })
-                  .catch(() => {
-                    const next = base.slice(0, start) + plain + base.slice(end);
-                    setDraft(next);
-                    void submitTranslate(next, langRef.current);
-                  });
-              }}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
-                  e.preventDefault();
-                  void submitTranslate(draft, state.targetLang);
-                }
-              }}
+              onSubmit={text => void submitTranslate(text, langRef.current)}
+              onPasteHtml={(plain, html) => window.island.htmlToMarkdown(plain, html)}
             />
             <div className="sw-src-tools">
               <button type="button" className="sw-btn ghost sm" onClick={() => void onPasteSource()}>

@@ -1,4 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode, type PointerEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlignLeft,
@@ -37,6 +39,7 @@ import {
 import type { PinAPI, PinAction, PinState, PinWorkspaceAPI } from '../../shared/capture';
 import { presetTargetLabels } from '../../shared/contracts';
 import type { PinGroup, PinWorkspaceState } from '../../shared/history-sync';
+import { formatMarkdownBreaks } from '../../shared/translation-markdown';
 import { spring } from '../motion';
 import { Badge } from '../targets';
 import { PinEdit } from './PinEdit';
@@ -562,7 +565,9 @@ export function Pinned() {
                       </div>
                     </>
                   ) : (
-                    <p>{payload?.text}</p>
+                    <div className="pin-note-prose">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatMarkdownBreaks(payload?.text || '')}</ReactMarkdown>
+                    </div>
                   )}
                 </div>
               ) : kind === 'color' ? (

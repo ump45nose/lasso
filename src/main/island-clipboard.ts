@@ -228,13 +228,14 @@ export class ClipboardHistoryPanel {
         if (!this.copyStillCurrent(meta.changeCount)) return null;
         writeFileSync(imagePath, png, { mode: 0o600 });
       } else {
-        const [plainBuf, htmlBuf] = await Promise.all([
+        const [plainBuf, htmlBuf, publicHtmlBuf] = await Promise.all([
           this.readData(items, 'text/plain'),
-          this.readData(items, 'text/html')
+          this.readData(items, 'text/html'),
+          this.readData(items, 'electron application/osclipboard;format="public.html"')
         ]);
         const text = plainBuf.toString('utf8');
         if (!text.trim()) return null;
-        const html = htmlBuf.toString('utf8');
+        const html = (htmlBuf.length ? htmlBuf : publicHtmlBuf).toString('utf8');
         if (html.trim()) markdown = selectionMarkdown(text, html);
         entry = { ...common, kind: 'text', text, preview: text.replace(/\s+/g, ' ').slice(0, 240), charCount: Array.from(text).length, lineCount: text.split(/\r\n|\r|\n/).length };
       }

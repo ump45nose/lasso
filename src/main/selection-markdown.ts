@@ -13,15 +13,28 @@ export function selectionMarkdown(text: string, html: string): string {
   return normalizeTranslationMarkdown(raw);
 }
 
-async function readClipboardItemText(items: ClipboardItem[], type: string): Promise<string> {
-  const item = items.find(entry => entry.types.includes(type));
-  if (!item) return '';
-  try {
-    const data = await item.getType(type);
-    return data && 'text' in data ? await data.text() : '';
-  } catch {
-    return '';
+const HTML_MIME_TYPES = [
+  'text/html',
+  'electron application/osclipboard;format="public.html"',
+  'electron application/osclipboard;format="Apple HTML pasteboard type"'
+];
+
+async function readClipboardItemText(items: ClipboardItem[], types: string | readonly string[]): Promise<string> {
+  const candidates = typeof types === 'string' ? [types] : types;
+  for (const type of candidates) {
+    const item = items.find(entry => entry.types.includes(type));
+    if (!item) continue;
+    try {
+      const data = await item.getType(type);
+      if (data && 'text' in data) {
+        const text = await data.text();
+        if (text) return text;
+      }
+    } catch {
+      // Try next candidate representation.
+    }
   }
+  return '';
 }
 
 /** Read current clipboard as Markdown when rich HTML is available. */
@@ -29,7 +42,7 @@ export async function readClipboardMarkdown(): Promise<string> {
   const items = await clipboard.read();
   const [text, html] = await Promise.all([
     readClipboardItemText(items, 'text/plain'),
-    readClipboardItemText(items, 'text/html')
+    readClipboardItemText(items, HTML_MIME_TYPES)
   ]);
   return selectionMarkdown(text, html);
 }
@@ -82,7 +95,7 @@ export async function readSelectionMarkdown(pid: number, ax: Partial<NativeAx>):
         const copied = await clipboard.read();
         const [text, html] = await Promise.all([
           readClipboardItemText(copied, 'text/plain'),
-          readClipboardItemText(copied, 'text/html')
+          readClipboardItemText(copied, HTML_MIME_TYPES)
         ]);
         if (ax.pasteboardMeta?.().changeCount !== copiedCount) return null;
         return selectionMarkdown(text, html) || null;

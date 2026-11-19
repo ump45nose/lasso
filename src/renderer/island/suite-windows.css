@@ -68,8 +68,27 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 
 .sw-src-box { margin: 12px 14px 0; padding: 10px 12px 8px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line-strong); flex-shrink: 0; transition: border-color var(--t-fast), box-shadow var(--t-fast); }
 .sw-src-box:focus-within { border-color: var(--clay-line); box-shadow: 0 0 0 3px var(--clay-halo); }
-.sw-src-textarea { width: 100%; min-height: 62px; max-height: 112px; border: 0; outline: none; resize: none; background: transparent; font-family: var(--font-ui); font-size: 14px; line-height: 1.6; color: var(--ink); user-select: text; }
-.sw-src-textarea::placeholder { color: var(--ink-5); }
+.sw-src-editor { width: 100%; min-height: 62px; max-height: 104px; overflow-y: auto; user-select: text; }
+.sw-src-editor .cm-editor { background: transparent; color: var(--ink); font-family: var(--font-ui); font-size: 13.5px; line-height: 1.65; }
+.sw-src-editor .cm-editor.cm-focused { outline: none; }
+.sw-src-editor .cm-scroller { font-family: inherit; overflow: visible; }
+.sw-src-editor .cm-content { padding: 0; caret-color: var(--clay); }
+.sw-src-editor .cm-line { padding: 0; }
+.sw-src-editor .cm-placeholder { color: var(--ink-5); }
+.sw-src-editor .en-md-heading { font-family: var(--font-display); line-height: 1.4; }
+.sw-src-editor .en-md-heading-1 { font-size: 17px; }
+.sw-src-editor .en-md-heading-2 { font-size: 15.5px; }
+.sw-src-editor .en-md-heading-3, .sw-src-editor .en-md-heading-4, .sw-src-editor .en-md-heading-5, .sw-src-editor .en-md-heading-6 { font-size: 14.5px; }
+.sw-src-editor .en-md-bullet { display: inline-block; min-width: 0.8em; color: var(--ink-3); }
+.sw-src-editor .en-md-strong { font-weight: 700; }
+.sw-src-editor .en-md-emphasis { font-style: italic; }
+.sw-src-editor .en-md-strike { text-decoration: line-through; }
+.sw-src-editor .en-md-code, .sw-src-editor .en-md-code-line { font-family: var(--font-mono); font-size: 12px; background: var(--sunken); }
+.sw-src-editor .en-md-code { border-radius: 4px; padding: 0 3px; }
+.sw-src-editor .cm-content .en-md-quote { border-left: 2px solid var(--clay-line); padding-left: 9px; color: var(--ink-3); }
+.sw-src-editor .en-md-link { color: var(--clay-ink); text-decoration: underline; text-underline-offset: 2px; }
+.sw-src-editor .en-task-checkbox { width: 14px; height: 14px; margin: 0 3px; padding: 0; vertical-align: middle; border-radius: 4px; border: 1.5px solid var(--ink-6); background: transparent; color: var(--on-ink); font-size: 11px; line-height: 11px; }
+.sw-src-editor .en-task-checkbox[aria-checked="true"] { background: var(--ink); border-color: var(--ink); }
 .sw-src-tools { display: flex; align-items: center; gap: 8px; margin-top: 4px; margin-left: -6px; }
 
 .sw-engine { position: relative; display: flex; align-items: center; gap: 6px; padding: 10px 14px 0; font-size: 11.5px; color: var(--ink-4); flex-shrink: 0; }

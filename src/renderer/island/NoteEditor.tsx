@@ -117,27 +117,84 @@ const smartListInput = EditorState.transactionFilter.of(transaction => {
   return [transaction, { changes: { from: insertAt, insert: ' ' }, selection: EditorSelection.cursor(pos + 1), sequential: true }];
 });
 
-export function NoteEditor({ value, onChange, onBlur, editorRef }: {
-  value: string; onChange(value: string): void; onBlur(): void; editorRef: React.RefObject<EditorView | null>;
+export function NoteEditor({
+  value,
+  onChange,
+  onBlur,
+  editorRef,
+  className = 'en-editor',
+  ariaLabel = '便签内容',
+  placeholderText = '随手记录灵感、命令片段或待办… 自动保存为本地 Markdown',
+  onSubmit,
+  onPasteHtml
+}: {
+  value: string;
+  onChange(value: string): void;
+  onBlur?(): void;
+  editorRef: React.RefObject<EditorView | null>;
+  className?: string;
+  ariaLabel?: string;
+  placeholderText?: string;
+  onSubmit?(value: string): void;
+  onPasteHtml?(plain: string, html: string): Promise<string>;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onChange, onBlur });
-  callbacks.current = { onChange, onBlur };
+  const callbacks = useRef({ onChange, onBlur, onSubmit, onPasteHtml });
+  callbacks.current = { onChange, onBlur, onSubmit, onPasteHtml };
   useEffect(() => {
     if (!host.current) return;
+    const submitKey = onSubmit
+      ? [
+          {
+            key: 'Enter',
+            run: (view: EditorView) => {
+              if (view.composing) return false;
+              callbacks.current.onSubmit?.(view.state.doc.toString());
+              return true;
+            }
+          },
+          { key: 'Shift-Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) }
+        ]
+      : [{ key: 'Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) }];
     const view = new EditorView({
       parent: host.current,
       state: EditorState.create({ doc: value, extensions: [
-        history(), markdown({ extensions: [GFM], addKeymap: false }), keymap.of([{ key: 'Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) }, { key: 'Backspace', run: deleteMarkupBackward }, ...defaultKeymap, ...historyKeymap]),
-        EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': '便签内容', spellcheck: 'false' }),
-        placeholder('随手记录灵感、命令片段或待办… 自动保存为本地 Markdown'), smartListInput, liveMarkdown,
+        history(), markdown({ extensions: [GFM], addKeymap: false }), keymap.of([...submitKey, { key: 'Backspace', run: deleteMarkupBackward }, ...defaultKeymap, ...historyKeymap]),
+        EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': ariaLabel, spellcheck: 'false' }),
+        placeholder(placeholderText), smartListInput, liveMarkdown,
         EditorView.updateListener.of(update => { if (update.docChanged && !update.transactions.some(transaction => transaction.annotation(externalChange))) callbacks.current.onChange(update.state.doc.toString()); }),
-        EditorView.domEventHandlers({ blur: () => { callbacks.current.onBlur(); } })
+        EditorView.domEventHandlers({
+          blur: () => { callbacks.current.onBlur?.(); },
+          paste: (event, editorView) => {
+            const convert = callbacks.current.onPasteHtml;
+            if (!convert) return false;
+            const html = event.clipboardData?.getData('text/html') ?? '';
+            if (!html.trim()) return false;
+            const plain = event.clipboardData?.getData('text/plain') ?? '';
+            event.preventDefault();
+            const { from, to } = editorView.state.selection.main;
+            void convert(plain, html)
+              .then(md => {
+                const insert = md || plain;
+                editorView.dispatch({
+                  changes: { from, to, insert },
+                  selection: EditorSelection.cursor(from + insert.length)
+                });
+              })
+              .catch(() => {
+                editorView.dispatch({
+                  changes: { from, to, insert: plain },
+                  selection: EditorSelection.cursor(from + plain.length)
+                });
+              });
+            return true;
+          }
+        })
       ] })
     });
     editorRef.current = view;
     return () => { editorRef.current = null; view.destroy(); };
-  }, [editorRef]);
+  }, [editorRef, ariaLabel, placeholderText, Boolean(onSubmit)]);
   useEffect(() => {
     const view = editorRef.current;
     if (view && value !== view.state.doc.toString()) {
@@ -149,5 +206,5 @@ export function NoteEditor({ value, onChange, onBlur, editorRef }: {
       view.dispatch({ changes: { from, to: oldEnd, insert: value.slice(from, newEnd) }, annotations: [externalChange.of(true), Transaction.addToHistory.of(false)] });
     }
   }, [value, editorRef]);
-  return <div className="en-editor" ref={host} />;
+  return <div className={className} ref={host} />;
 }
