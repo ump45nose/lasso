@@ -222,7 +222,9 @@ export class MediaService {
     if (!Array.isArray(value.data)) throw Error('服务未返回有效模型列表');
     const models = [...new Set(value.data.map(model => model.id).filter((id): id is string => typeof id === 'string' && id.length > 0 && id.length <= 512))].sort();
     const current = this.config.connections.find(connection => connection.id === config.id);
-    if (current) this.persistConnections(this.config.connections.map(connection => connection.id === config.id ? { ...current, models } : connection));
+    if (current && current.models.length === 0) {
+      this.persistConnections(this.config.connections.map(connection => connection.id === config.id ? { ...current, models } : connection));
+    }
     return models;
   }
 

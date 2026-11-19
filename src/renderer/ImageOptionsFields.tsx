@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Lock, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Lock, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import type { ShellState } from '../shared/contracts';
 import { imagePixels, mediaAspects, type ApiConnection, type ImageOptions, type MediaAspect, type MediaResolution } from '../shared/media';
@@ -76,6 +76,9 @@ export function ConnectionsPane({
   const [baseURL, setBaseURL] = useState('');
   const [credential, setCredential] = useState('');
   const [clearKey, setClearKey] = useState(false);
+  const [selectedModels, setSelectedModels] = useState<string[]>([]);
+  const [catalogModels, setCatalogModels] = useState<string[]>([]);
+  const [modelQuery, setModelQuery] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState('');
@@ -87,6 +90,9 @@ export function ConnectionsPane({
       setBaseURL('');
       setCredential('');
       setClearKey(false);
+      setSelectedModels([]);
+      setCatalogModels([]);
+      setModelQuery('');
       setConfirmDelete(false);
       setFormError('');
     }
@@ -105,6 +111,9 @@ export function ConnectionsPane({
     setBaseURL(conn.baseURL);
     setCredential('');
     setClearKey(false);
+    setSelectedModels([...conn.models]);
+    setCatalogModels([...conn.models]);
+    setModelQuery('');
     setConfirmDelete(false);
     setFormError('');
   }
@@ -114,6 +123,18 @@ export function ConnectionsPane({
     setConfirmDelete(false);
     setFormError('');
     onDoneCreate();
+  }
+
+  function toggleModel(id: string) {
+    setSelectedModels(prev => (prev.includes(id) ? prev.filter(m => m !== id) : [...prev, id]));
+  }
+
+  function addCustomModel(raw: string) {
+    const id = raw.trim();
+    if (!id) return;
+    setCatalogModels(prev => (prev.includes(id) ? prev : [id, ...prev]));
+    setSelectedModels(prev => (prev.includes(id) ? prev : [...prev, id]));
+    setModelQuery('');
   }
 
   async function saveConnection(editing?: ApiConnection) {
@@ -129,6 +150,7 @@ export function ConnectionsPane({
         ...(editing ? { id: editing.id } : {}),
         name: name.trim(),
         baseURL: baseURL.trim(),
+        models: selectedModels,
         ...(clearKey ? { credential: '' } : credential ? { credential } : {})
       });
       if (result.error) {
@@ -158,6 +180,8 @@ export function ConnectionsPane({
         notify({ error: result.error });
         return;
       }
+      setCatalogModels(prev => [...new Set([...result.models, ...prev, ...selectedModels])].sort());
+      setSelectedModels(prev => (prev.length > 0 ? prev : result.models));
       update(await window.desktop.apiConnections());
       notify({ ok: true });
     } catch (reason) {
@@ -203,7 +227,17 @@ export function ConnectionsPane({
   }
 
   const renderForm = (editing?: ApiConnection) => {
-    const models = editing?.models || [];
+    const terms = modelQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const filteredModels = terms.length
+      ? catalogModels.filter(m => {
+          const lower = m.toLowerCase();
+          return terms.every(term => lower.includes(term));
+        })
+      : catalogModels;
+    const selectedSet = new Set(selectedModels);
+    const allFilteredSelected = filteredModels.length > 0 && filteredModels.every(m => selectedSet.has(m));
+    const trimmedQuery = modelQuery.trim();
+    const canAddCustom = Boolean(trimmedQuery && !catalogModels.includes(trimmedQuery));
     return (
       <div className="l-set-row subform" key={editing ? `${editing.id}-form` : 'new-form'}>
         <div className="l-grid-2">
@@ -265,36 +299,124 @@ export function ConnectionsPane({
               />
             </div>
           </div>
-          {editing && (
-            <div className="l-field l-span-all">
-              <div className="l-field-row">
-                <span className="l-field-label">
-                  可用模型 · <span className="mono">{models.length}</span>
-                </span>
-                <button
-                  type="button"
-                  className="l-text-btn"
-                  disabled={busy || !editing.baseURL || baseURL.trim() !== editing.baseURL || Boolean(credential) || clearKey}
-                  onClick={() => void pullModels(editing.id)}
-                >
-                  <RefreshCw size={12} />
-                  <span>{busy ? '拉取中…' : '重新拉取'}</span>
-                </button>
+          <div className="l-field l-span-all">
+            <div className="l-field-row">
+              <span className="l-field-label">
+                可用模型 · 已选 <span className="mono">{selectedModels.length}</span>
+                {catalogModels.length > 0 && (
+                  <>
+                    {' / '}
+                    <span className="mono">{catalogModels.length}</span>
+                  </>
+                )}
+              </span>
+              <div className="l-model-actions">
+                {filteredModels.length > 0 && (
+                  <button
+                    type="button"
+                    className="l-text-btn"
+                    onClick={() => {
+                      if (allFilteredSelected) {
+                        const remove = new Set(filteredModels);
+                        setSelectedModels(prev => prev.filter(m => !remove.has(m)));
+                      } else {
+                        setSelectedModels(prev => [...new Set([...prev, ...filteredModels])]);
+                      }
+                    }}
+                  >
+                    {allFilteredSelected ? '取消当前' : '全选当前'}
+                  </button>
+                )}
+                {editing && (
+                  <button
+                    type="button"
+                    className="l-text-btn"
+                    disabled={busy || !editing.baseURL || baseURL.trim() !== editing.baseURL || Boolean(credential) || clearKey}
+                    onClick={() => void pullModels(editing.id)}
+                  >
+                    <RefreshCw size={12} />
+                    <span>{busy ? '拉取中…' : '拉取模型'}</span>
+                  </button>
+                )}
               </div>
-              {models.length > 0 ? (
+            </div>
+
+            <div className="l-model-picker">
+              {selectedModels.length > 0 && (
                 <div className="l-wrap">
-                  {models.slice(0, 8).map(m => (
+                  {selectedModels.slice(0, 12).map(m => (
                     <span key={m} className="l-chip mono">
-                      {m}
+                      <span>{m}</span>
+                      <button
+                        type="button"
+                        className="l-chip-rm"
+                        aria-label={`移除模型 ${m}`}
+                        onClick={() => toggleModel(m)}
+                      >
+                        <X size={11} />
+                      </button>
                     </span>
                   ))}
-                  {models.length > 8 && <span className="l-chip mono">+{models.length - 8}</span>}
+                  {selectedModels.length > 12 && <span className="l-chip mono">+{selectedModels.length - 12}</span>}
+                </div>
+              )}
+
+              <div className="l-model-search">
+                <Search size={13} className="faint" />
+                <input
+                  type="text"
+                  aria-label="过滤可用模型"
+                  placeholder="过滤模型（如 gpt、claude、gemini），回车添加自定义模型…"
+                  value={modelQuery}
+                  onChange={e => setModelQuery(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' && trimmedQuery) {
+                      e.preventDefault();
+                      addCustomModel(trimmedQuery);
+                    }
+                  }}
+                />
+                {canAddCustom && (
+                  <button type="button" className="l-text-btn" onClick={() => addCustomModel(trimmedQuery)}>
+                    <Plus size={12} />
+                    <span>添加</span>
+                  </button>
+                )}
+                {modelQuery && (
+                  <button type="button" className="l-chip-rm" aria-label="清空过滤" onClick={() => setModelQuery('')}>
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+
+              {catalogModels.length > 0 ? (
+                <div className="l-model-list" role="listbox" aria-label="可用模型列表" aria-multiselectable="true">
+                  {filteredModels.length > 0 ? (
+                    filteredModels.map(m => {
+                      const selected = selectedSet.has(m);
+                      return (
+                        <button
+                          key={m}
+                          type="button"
+                          role="option"
+                          aria-selected={selected}
+                          className={'l-model-item' + (selected ? ' selected' : '')}
+                          onClick={() => toggleModel(m)}
+                        >
+                          <span className="l-model-check">{selected && <Check size={11} />}</span>
+                          <span className="l-model-id mono">{m}</span>
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <div className="l-model-empty">无匹配模型，按回车可直接添加「{trimmedQuery}」</div>
+                  )}
                 </div>
               ) : (
-                <p className="l-field-help">保存地址与密钥后，点击「重新拉取」缓存模型列表供各处下拉选择。</p>
+                <p className="l-field-help">保存地址与密钥后，点击「拉取模型」获取列表，或在上方输入模型 ID 按回车添加。</p>
               )}
             </div>
-          )}
+          </div>
         </div>
         {formError && (
           <p className="l-field-help l-danger" role="alert">
