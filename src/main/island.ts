@@ -30,7 +30,7 @@ import { EdgeNotes } from './island-notes';
 import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
 
-const WIN_W = 540, WIN_H = 620;
+const WIN_W = 540, WIN_H = 760;
 
 const MODES: readonly IslandMode[] = ['idle', 'focus', 'focus-hover', 'slacking', 'nook-alert', 'toast', 'board'];
 const SNAP_SLOTS: readonly SnapSlot[] = [
@@ -900,10 +900,11 @@ export class NotchIsland {
         : primary.bounds.x + primary.bounds.width / 2;
       const x = Math.round(Math.max(primary.bounds.x, Math.min(targetCenter - WIN_W / 2, primary.bounds.x + primary.bounds.width - WIN_W)));
       const y = primary.bounds.y;
+      const winH = Math.min(WIN_H, Math.max(620, primary.bounds.height - 40));
       const cur = this.window.getBounds();
-      if (Math.abs(x - this.lastAnchorX) >= 2 || Math.abs(cur.x - x) >= 2 || cur.y !== y || cur.width !== WIN_W || cur.height !== WIN_H) {
+      if (Math.abs(x - this.lastAnchorX) >= 2 || Math.abs(cur.x - x) >= 2 || cur.y !== y || cur.width !== WIN_W || cur.height !== winH) {
         this.lastAnchorX = x;
-        this.window.setBounds({ x, y, width: WIN_W, height: WIN_H });
+        this.window.setBounds({ x, y, width: WIN_W, height: winH });
       }
     }
     this.notes.place();

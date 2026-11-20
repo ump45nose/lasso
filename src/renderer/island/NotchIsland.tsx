@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import {
   ArrowUpRight,
   Check,
@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import type { IslandAPI, IslandAlertItem, IslandState, IslandTaskItem } from '../../shared/contracts';
 import { useFonts } from '../fonts';
-import { collapse, spring } from '../motion';
+import { collapse, ease, Glide, spring } from '../motion';
 import './island.css';
 
 declare global {
@@ -346,131 +346,157 @@ export function NotchIsland() {
         role="region"
         aria-label="Lasso 刘海岛"
       >
-        {(wingKind || dropKind) && hasNotch && (
-          <button
-            type="button"
-            className="isl-notch-anchor"
-            aria-label="展开或收起今日聚焦看板"
-            onPointerEnter={event => {
-              if (event.metaKey || (!wingKindRef.current && !dropKindRef.current)) {
-                window.island.hit(false);
-                return;
-              }
-              window.island.hit(true);
-            }}
-            onPointerLeave={() => {
-              if (mode !== 'board') window.island.hit(false);
-            }}
-            onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
-          />
-        )}
+        <AnimatePresence initial={false}>
+          {(wingKind || dropKind) && hasNotch && (
+            <motion.button
+              key="notch-anchor"
+              type="button"
+              className="isl-notch-anchor"
+              aria-label="展开或收起今日聚焦看板"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: 0.14, ease } }}
+              exit={{ opacity: 0, transition: { duration: 0.12, ease: 'easeIn' } }}
+              onPointerEnter={event => {
+                if (event.metaKey || (!wingKindRef.current && !dropKindRef.current)) {
+                  window.island.hit(false);
+                  return;
+                }
+                window.island.hit(true);
+              }}
+              onPointerLeave={() => {
+                if (mode !== 'board') window.island.hit(false);
+              }}
+              onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+            />
+          )}
+        </AnimatePresence>
 
-        {wingKind && (
-          <div
-            className={`isl-menubar-wings mode-${wingKind}${!hasNotch ? ' no-notch' : ''}`}
-            onPointerEnter={event => {
-              if (event.metaKey) {
-                window.island.hit(false);
-                return;
-              }
-              enterWing();
-            }}
-            onPointerMove={event => {
-              if (event.metaKey) window.island.hit(false);
-            }}
-            onPointerDown={event => {
-              if (event.metaKey) window.island.hit(false);
-            }}
-            onPointerLeave={leaveCard}
-          >
-            {wingKind === 'idle' && (
-              <button
-                type="button"
-                className="isl-wing-hit"
-                aria-label="展开今日聚焦看板"
-                onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+        <div className={`isl-menubar-wings-pos${!hasNotch ? ' no-notch' : ''}`}>
+          <AnimatePresence initial={false}>
+            {wingKind && (
+              <motion.div
+                key="wings"
+                className={`isl-menubar-wings mode-${wingKind}${!hasNotch ? ' no-notch' : ''}`}
+                style={{ transformOrigin: hasNotch ? 'right top' : 'center top' }}
+                initial={{ opacity: 0, scaleX: 0.72, scaleY: 0.65, y: -6 }}
+                animate={{ opacity: 1, scaleX: 1, scaleY: 1, y: 0, transition: spring }}
+                exit={{ opacity: 0, scaleX: 0.76, scaleY: 0.65, y: -6, transition: { duration: 0.16, ease } }}
+                onPointerEnter={event => {
+                  if (event.metaKey) {
+                    window.island.hit(false);
+                    return;
+                  }
+                  enterWing();
+                }}
+                onPointerMove={event => {
+                  if (event.metaKey) window.island.hit(false);
+                }}
+                onPointerDown={event => {
+                  if (event.metaKey) window.island.hit(false);
+                }}
+                onPointerLeave={leaveCard}
               >
-                <span className="isl-wing isl-wing-left">
-                  <span className="isl-dot-faint" />
-                  <span className="isl-wing-title">{urgentTitle}</span>
-                </span>
-                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
-                <span className="isl-wing isl-wing-right">
-                  <span className="isl-wing-meta mono">{focusOpenTasks.length > 0 ? `今日剩 ${focusOpenTasks.length} 项` : 'Nook 复盘'}</span>
-                </span>
-              </button>
-            )}
-
-            {wingKind === 'focus' && pomodoro && (
-              <button
-                type="button"
-                className="isl-wing-hit"
-                aria-label={`专注计时 ${pomodoro.taskTitle}`}
-                onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
-              >
-                <span className="isl-wing isl-wing-left">
-                  <Timer size={13} className="isl-wing-ic" />
-                  <span className="isl-wing-title">
-                    {pomodoro.kind === 'slacking' ? '休息' : '专注'} · {pomodoro.taskTitle}
-                  </span>
-                </span>
-                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
-                <span className="isl-wing isl-wing-right">
-                  <span className="isl-clock mono">{formatClock(pomodoro.remainingSeconds)}</span>
-                </span>
-              </button>
-            )}
-
-            {wingKind === 'nook-alert' && (
-              <button
-                type="button"
-                className="isl-wing-hit"
-                aria-label="Nook 紧迫提醒"
-                onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
-              >
-                <span className="isl-wing isl-wing-left">
-                  <span className="isl-dot-clay" />
-                  <span className="isl-wing-title">{compactWingAlertTitle(alerts[0])}</span>
-                </span>
-                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
-                <span className="isl-wing isl-wing-right">
-                  <span className="isl-wing-meta mono">{compactWingAlertMeta(alerts)}</span>
-                </span>
-              </button>
-            )}
-
-            {wingKind === 'toast' && toast && (
-              <div className="isl-wing-hit">
-                <span className="isl-wing isl-wing-left">
-                  <span className="isl-dot-olive" />
-                  <span className="isl-wing-title">{toast.text}</span>
-                </span>
-                {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
-                <span className="isl-wing isl-wing-right">
-                  {toast.badge && <kbd className="isl-kbd mono">{toast.badge}</kbd>}
-                  <button
-                    type="button"
-                    className="isl-ib sm"
-                    aria-label="关闭提示"
-                    onClick={() => window.island.setMode(resolveCollapsedMode())}
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={wingKind}
+                    className="isl-wing-inner"
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+                    exit={{ opacity: 0, y: 4, transition: { duration: 0.1, ease: 'easeIn' } }}
                   >
-                    <X size={11} />
-                  </button>
-                </span>
-              </div>
+                    {wingKind === 'idle' && (
+                      <button
+                        type="button"
+                        className="isl-wing-hit"
+                        aria-label="展开今日聚焦看板"
+                        onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+                      >
+                        <span className="isl-wing isl-wing-left">
+                          <span className="isl-dot-faint" />
+                          <span className="isl-wing-title">{urgentTitle}</span>
+                        </span>
+                        {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
+                        <span className="isl-wing isl-wing-right">
+                          <span className="isl-wing-meta mono">{focusOpenTasks.length > 0 ? `今日剩 ${focusOpenTasks.length} 项` : 'Nook 复盘'}</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {wingKind === 'focus' && pomodoro && (
+                      <button
+                        type="button"
+                        className="isl-wing-hit"
+                        aria-label={`专注计时 ${pomodoro.taskTitle}`}
+                        onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+                      >
+                        <span className="isl-wing isl-wing-left">
+                          <Timer size={13} className="isl-wing-ic" />
+                          <span className="isl-wing-title">
+                            {pomodoro.kind === 'slacking' ? '休息' : '专注'} · {pomodoro.taskTitle}
+                          </span>
+                        </span>
+                        {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
+                        <span className="isl-wing isl-wing-right">
+                          <span className="isl-clock mono">{formatClock(pomodoro.remainingSeconds)}</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {wingKind === 'nook-alert' && (
+                      <button
+                        type="button"
+                        className="isl-wing-hit"
+                        aria-label="Nook 紧迫提醒"
+                        onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+                      >
+                        <span className="isl-wing isl-wing-left">
+                          <span className="isl-dot-clay" />
+                          <span className="isl-wing-title">{compactWingAlertTitle(alerts[0])}</span>
+                        </span>
+                        {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
+                        <span className="isl-wing isl-wing-right">
+                          <span className="isl-wing-meta mono">{compactWingAlertMeta(alerts)}</span>
+                        </span>
+                      </button>
+                    )}
+
+                    {wingKind === 'toast' && toast && (
+                      <div className="isl-wing-hit">
+                        <span className="isl-wing isl-wing-left">
+                          <span className="isl-dot-olive" />
+                          <span className="isl-wing-title">{toast.text}</span>
+                        </span>
+                        {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
+                        <span className="isl-wing isl-wing-right">
+                          {toast.badge && <kbd className="isl-kbd mono">{toast.badge}</kbd>}
+                          <button
+                            type="button"
+                            className="isl-ib sm"
+                            aria-label="关闭提示"
+                            onClick={() => window.island.setMode(resolveCollapsedMode())}
+                          >
+                            <X size={11} />
+                          </button>
+                        </span>
+                      </div>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+              </motion.div>
             )}
-          </div>
-        )}
+          </AnimatePresence>
+        </div>
 
         <div className="isl-drop-wrap">
           <AnimatePresence mode="popLayout" initial={false}>
             {dropKind && (
               <motion.div
+                key={dropKind}
                 layout
-                transition={spring}
-                initial={{ opacity: 0, y: -4, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -4, scale: 0.97 }}
+                style={{ transformOrigin: 'top center' }}
+                initial={{ opacity: 0, y: -14, scale: 0.92 }}
+                animate={{ opacity: 1, y: 0, scale: 1, transition: spring }}
+                exit={{ opacity: 0, y: -10, scale: 0.94, transition: { duration: 0.16, ease } }}
                 className={`isl-drop-card mode-${dropKind}`}
                 onPointerEnter={enterCard}
                 onPointerLeave={leaveCard}
@@ -558,79 +584,95 @@ export function NotchIsland() {
                     </header>
 
                     {/* 1. Alert Block (only when pending alerts exist) */}
-                    {alerts.map(item => (
-                      <IslandAlertCard key={item.id} item={item} />
-                    ))}
+                    <AnimatePresence initial={false}>
+                      {alerts.map(item => (
+                        <motion.div key={item.id} className="isl-alert-motion" {...collapse}>
+                          <IslandAlertCard item={item} />
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
 
                     {/* 2. Focus Timer Block */}
-                    <div className="isl-blk">
-                      {pomodoro?.active ? (
-                        <>
-                          <div className="isl-blk-lbl">
-                            <Timer size={13} />
-                            <span>{pomodoro.kind === 'slacking' ? '休息' : '专注'}</span>
-                            <span className="r trunc">{pomodoro.taskTitle}</span>
-                            <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
-                          </div>
-                          <div className="isl-timer-row">
-                            <span className="isl-timer-big">{formatClock(pomodoro.remainingSeconds)}</span>
-                            <span className="isl-timer-total mono">/ {formatClock(pomodoro.totalSeconds)}</span>
-                            <span className="grow" />
-                            <button
-                              type="button"
-                              className="isl-ib"
-                              aria-label={pomodoro.paused ? '继续' : '暂停'}
-                              onClick={() => void window.island.togglePausePomodoro()}
-                            >
-                              {pomodoro.paused ? <Play size={15} /> : <Pause size={15} />}
-                            </button>
-                            <button type="button" className="isl-ib" aria-label="结束" onClick={() => void window.island.stopPomodoro()}>
-                              <Square size={14} />
-                            </button>
-                          </div>
-                          <div className="isl-bar-track">
-                            <i style={{ width: `${pomoProgress}%` }} />
-                          </div>
-                        </>
-                      ) : (
-                        <>
-                          <div className="isl-blk-lbl">
-                            <Timer size={13} />
-                            <span>专注计时</span>
-                            <span className="r">番茄钟</span>
-                            <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
-                          </div>
-                          <div className="isl-pomo-setup">
-                            <PomoDurationRow
-                              label="专注"
-                              value={pomoPrefs.focusMinutes}
-                              presets={FOCUS_PRESETS}
-                              onChange={focusMinutes => void window.island.setPomodoroPrefs({ focusMinutes })}
-                            />
-                            <PomoDurationRow
-                              label="休息"
-                              value={pomoPrefs.breakMinutes}
-                              presets={BREAK_PRESETS}
-                              onChange={breakMinutes => void window.island.setPomodoroPrefs({ breakMinutes })}
-                            />
-                          </div>
-                          <div className="isl-timer-idle">
-                            <span className="isl-timer-hint">选一条事项开始专注，或直接启动</span>
-                            <div className="isl-timer-idle-btns">
-                              <button type="button" className="isl-ink-btn pri" onClick={() => startFocus()}>
-                                {pomoPrefs.focusMinutes}m 专注
-                              </button>
+                    <div className="isl-blk isl-pomo-blk">
+                      <AnimatePresence mode="wait" initial={false}>
+                        {pomodoro?.active ? (
+                          <motion.div
+                            key="pomo-active"
+                            initial={{ opacity: 0, y: 4 }}
+                            animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+                            exit={{ opacity: 0, y: -4, transition: { duration: 0.1, ease: 'easeIn' } }}
+                          >
+                            <div className="isl-blk-lbl">
+                              <Timer size={13} />
+                              <span>{pomodoro.kind === 'slacking' ? '休息' : '专注'}</span>
+                              <span className="r trunc">{pomodoro.taskTitle}</span>
+                              <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
+                            </div>
+                            <div className="isl-timer-row">
+                              <span className="isl-timer-big">{formatClock(pomodoro.remainingSeconds)}</span>
+                              <span className="isl-timer-total mono">/ {formatClock(pomodoro.totalSeconds)}</span>
+                              <span className="grow" />
                               <button
                                 type="button"
-                                className="isl-ink-btn line"
-                                onClick={() => void window.island.startPomodoro({ id: null, title: '起身活动喝水' }, pomoPrefs.breakMinutes, 'slacking')}
+                                className="isl-ib"
+                                aria-label={pomodoro.paused ? '继续' : '暂停'}
+                                onClick={() => void window.island.togglePausePomodoro()}
                               >
-                                {pomoPrefs.breakMinutes}m 休息
+                                {pomodoro.paused ? <Play size={15} /> : <Pause size={15} />}
+                              </button>
+                              <button type="button" className="isl-ib" aria-label="结束" onClick={() => void window.island.stopPomodoro()}>
+                                <Square size={14} />
                               </button>
                             </div>
-                          </div>
-                        </>
-                      )}
+                            <div className="isl-bar-track">
+                              <i style={{ width: `${pomoProgress}%` }} />
+                            </div>
+                          </motion.div>
+                        ) : (
+                          <motion.div
+                            key="pomo-idle"
+                            initial={{ opacity: 0, y: 4 }}
+                            animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+                            exit={{ opacity: 0, y: -4, transition: { duration: 0.1, ease: 'easeIn' } }}
+                          >
+                            <div className="isl-blk-lbl">
+                              <Timer size={13} />
+                              <span>专注计时</span>
+                              <span className="r">番茄钟</span>
+                              <PomoSoundToggle enabled={pomoPrefs.soundEnabled} />
+                            </div>
+                            <div className="isl-pomo-setup">
+                              <PomoDurationRow
+                                label="专注"
+                                value={pomoPrefs.focusMinutes}
+                                presets={FOCUS_PRESETS}
+                                onChange={focusMinutes => void window.island.setPomodoroPrefs({ focusMinutes })}
+                              />
+                              <PomoDurationRow
+                                label="休息"
+                                value={pomoPrefs.breakMinutes}
+                                presets={BREAK_PRESETS}
+                                onChange={breakMinutes => void window.island.setPomodoroPrefs({ breakMinutes })}
+                              />
+                            </div>
+                            <div className="isl-timer-idle">
+                              <span className="isl-timer-hint">选一条事项开始专注，或直接启动</span>
+                              <div className="isl-timer-idle-btns">
+                                <button type="button" className="isl-ink-btn pri" onClick={() => startFocus()}>
+                                  {pomoPrefs.focusMinutes}m 专注
+                                </button>
+                                <button
+                                  type="button"
+                                  className="isl-ink-btn line"
+                                  onClick={() => void window.island.startPomodoro({ id: null, title: '起身活动喝水' }, pomoPrefs.breakMinutes, 'slacking')}
+                                >
+                                  {pomoPrefs.breakMinutes}m 休息
+                                </button>
+                              </div>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
 
                     {/* 3. Google Tasks Block with List Tabs */}
@@ -651,101 +693,115 @@ export function NotchIsland() {
                         </button>
                       </div>
 
-                      <div className="isl-task-tabs" role="tablist" aria-label="任务清单">
-                        <button
-                          type="button"
-                          role="tab"
-                          aria-selected={effectiveTab === 'focus'}
-                          className={'isl-task-tab' + (effectiveTab === 'focus' ? ' on' : '')}
-                          onClick={() => setActiveListTab('focus')}
-                        >
-                          <span>重点</span>
-                          {focusOpenTasks.length > 0 && <span className="n mono">{focusOpenTasks.length}</span>}
-                        </button>
-                        {nookTaskLists.map(list => (
+                      <LayoutGroup id="isl-task-tabs">
+                        <div className="isl-task-tabs" role="tablist" aria-label="任务清单">
                           <button
-                            key={list.id}
                             type="button"
                             role="tab"
-                            aria-selected={effectiveTab === list.id}
-                            className={'isl-task-tab' + (effectiveTab === list.id ? ' on' : '')}
-                            onClick={() => setActiveListTab(list.id)}
+                            aria-selected={effectiveTab === 'focus'}
+                            className={'isl-task-tab' + (effectiveTab === 'focus' ? ' on' : '')}
+                            onClick={() => setActiveListTab('focus')}
                           >
-                            <span>{list.shortTitle}</span>
-                            {list.openCount > 0 && <span className="n mono">{list.openCount}</span>}
+                            {effectiveTab === 'focus' && <Glide id="isl-task-tab-bg" className="isl-task-tab-glide" />}
+                            <span className="isl-task-tab-lbl">重点</span>
+                            {focusOpenTasks.length > 0 && <span className="n mono">{focusOpenTasks.length}</span>}
                           </button>
-                        ))}
-                      </div>
-
-                      {visibleTasks.length === 0 ? (
-                        <div className="isl-task-empty">{effectiveTab === 'focus' ? '今日重点已全部清空' : '该清单暂无待办'}</div>
-                      ) : (
-                        <div className="isl-task-list">
-                          {visibleTasks.map(task => {
-                            const hasNotes = Boolean(task.notes);
-                            const isExpanded = hasNotes && expandedTaskId === task.id;
-                            const secondaryTag =
-                              effectiveTab === 'focus' && task.listTitle && task.listTitle !== '一般性' && task.listTitle !== 'Google Tasks'
-                                ? shortTag(task.listTitle)
-                                : '';
-                            return (
-                              <div key={task.id} className={'isl-task-wrap' + (isExpanded ? ' open' : '')}>
-                                <div className={'isl-task' + (task.completed ? ' done' : '') + (hasNotes ? ' has-notes' : '')}>
-                                  <button
-                                    type="button"
-                                    className={'isl-chk' + (task.completed ? ' on' : '')}
-                                    aria-label={`完成 ${task.title}`}
-                                    disabled={Boolean(task.completed)}
-                                    onClick={event => {
-                                      event.stopPropagation();
-                                      void window.island.completeTask(task.id);
-                                    }}
-                                  >
-                                    {task.completed && <Check size={11} />}
-                                  </button>
-                                  {hasNotes ? (
-                                    <button
-                                      type="button"
-                                      className="isl-task-main"
-                                      aria-expanded={isExpanded}
-                                      onClick={() => setExpandedTaskId(prev => (prev === task.id ? null : task.id))}
-                                    >
-                                      <span className="t trunc">{task.title}</span>
-                                      <FileText size={11} className="isl-note-ic" aria-hidden="true" />
-                                    </button>
-                                  ) : (
-                                    <span className="t trunc">{task.title}</span>
-                                  )}
-                                  {!task.completed && (
-                                    <button
-                                      type="button"
-                                      className="isl-task-focus"
-                                      onClick={() => startFocus({ id: task.id, title: task.title })}
-                                    >
-                                      <Timer size={12} />
-                                      <span>专注</span>
-                                    </button>
-                                  )}
-                                  {!task.completed && task.routineSlot ? (
-                                    <span className="isl-task-slot">{task.routineSlot}</span>
-                                  ) : !task.completed && task.dueLabel ? (
-                                    <span className={'due mono' + (task.overdue ? ' late' : '')}>{task.dueLabel}</span>
-                                  ) : !task.completed && secondaryTag ? (
-                                    <span className="due">{secondaryTag}</span>
-                                  ) : null}
-                                </div>
-                                <AnimatePresence initial={false}>
-                                  {isExpanded && task.notes && (
-                                    <motion.div className="isl-task-notes-wrap" {...collapse}>
-                                      <div className="isl-task-notes">{task.notes}</div>
-                                    </motion.div>
-                                  )}
-                                </AnimatePresence>
-                              </div>
-                            );
-                          })}
+                          {nookTaskLists.map(list => (
+                            <button
+                              key={list.id}
+                              type="button"
+                              role="tab"
+                              aria-selected={effectiveTab === list.id}
+                              className={'isl-task-tab' + (effectiveTab === list.id ? ' on' : '')}
+                              onClick={() => setActiveListTab(list.id)}
+                            >
+                              {effectiveTab === list.id && <Glide id="isl-task-tab-bg" className="isl-task-tab-glide" />}
+                              <span className="isl-task-tab-lbl">{list.shortTitle}</span>
+                              {list.openCount > 0 && <span className="n mono">{list.openCount}</span>}
+                            </button>
+                          ))}
                         </div>
-                      )}
+                      </LayoutGroup>
+
+                      <AnimatePresence mode="wait" initial={false}>
+                        <motion.div
+                          key={effectiveTab}
+                          className="isl-task-pane"
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+                          exit={{ opacity: 0, y: -3, transition: { duration: 0.09, ease: 'easeIn' } }}
+                        >
+                          {visibleTasks.length === 0 ? (
+                            <div className="isl-task-empty">{effectiveTab === 'focus' ? '今日重点已全部清空' : '该清单暂无待办'}</div>
+                          ) : (
+                            <div className="isl-task-list">
+                              {visibleTasks.map(task => {
+                                const hasNotes = Boolean(task.notes);
+                                const isExpanded = hasNotes && expandedTaskId === task.id;
+                                const secondaryTag =
+                                  effectiveTab === 'focus' && task.listTitle && task.listTitle !== '一般性' && task.listTitle !== 'Google Tasks'
+                                    ? shortTag(task.listTitle)
+                                    : '';
+                                return (
+                                  <div key={task.id} className={'isl-task-wrap' + (isExpanded ? ' open' : '')}>
+                                    <div className={'isl-task' + (task.completed ? ' done' : '') + (hasNotes ? ' has-notes' : '')}>
+                                      <button
+                                        type="button"
+                                        className={'isl-chk' + (task.completed ? ' on' : '')}
+                                        aria-label={`完成 ${task.title}`}
+                                        disabled={Boolean(task.completed)}
+                                        onClick={event => {
+                                          event.stopPropagation();
+                                          void window.island.completeTask(task.id);
+                                        }}
+                                      >
+                                        {task.completed && <Check size={11} />}
+                                      </button>
+                                      {hasNotes ? (
+                                        <button
+                                          type="button"
+                                          className="isl-task-main"
+                                          aria-expanded={isExpanded}
+                                          onClick={() => setExpandedTaskId(prev => (prev === task.id ? null : task.id))}
+                                        >
+                                          <span className="t trunc">{task.title}</span>
+                                          <FileText size={11} className="isl-note-ic" aria-hidden="true" />
+                                        </button>
+                                      ) : (
+                                        <span className="t trunc">{task.title}</span>
+                                      )}
+                                      {!task.completed && (
+                                        <button
+                                          type="button"
+                                          className="isl-task-focus"
+                                          onClick={() => startFocus({ id: task.id, title: task.title })}
+                                        >
+                                          <Timer size={12} />
+                                          <span>专注</span>
+                                        </button>
+                                      )}
+                                      {!task.completed && task.routineSlot ? (
+                                        <span className="isl-task-slot">{task.routineSlot}</span>
+                                      ) : !task.completed && task.dueLabel ? (
+                                        <span className={'due mono' + (task.overdue ? ' late' : '')}>{task.dueLabel}</span>
+                                      ) : !task.completed && secondaryTag ? (
+                                        <span className="due">{secondaryTag}</span>
+                                      ) : null}
+                                    </div>
+                                    <AnimatePresence initial={false}>
+                                      {isExpanded && task.notes && (
+                                        <motion.div className="isl-task-notes-wrap" {...collapse}>
+                                          <div className="isl-task-notes">{task.notes}</div>
+                                        </motion.div>
+                                      )}
+                                    </AnimatePresence>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </motion.div>
+                      </AnimatePresence>
                     </div>
 
                     {/* 5. 6 Quick Tools */}
