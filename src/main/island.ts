@@ -644,6 +644,8 @@ export class NotchIsland {
 
     this.placeWindows();
     screen.on('display-metrics-changed', this.onDisplayMetricsChanged);
+    screen.on('display-added', this.onDisplayMetricsChanged);
+    screen.on('display-removed', this.onDisplayMetricsChanged);
 
     ipcMain.handle('island:state', event => {
       check(event);
@@ -891,20 +893,22 @@ export class NotchIsland {
     return this.nookTasks.some(t => !t.completed && t.inFocus) || Boolean(this.nookReviewBadge?.hot);
   }
 
-  private placeWindows(anchorX?: number) {
+  private placeWindows(geo?: ReturnType<NonNullable<NativeAx['notchGeometry']>>) {
     const primary = screen.getPrimaryDisplay();
     if (!this.window.isDestroyed()) {
-      const geoAnchor = anchorX ?? this.ax.notchGeometry?.(this.isCapsuleActive())?.anchorX;
-      const targetCenter = typeof geoAnchor === 'number' && geoAnchor > 0
-        ? primary.bounds.x + geoAnchor
-        : primary.bounds.x + primary.bounds.width / 2;
-      const x = Math.round(Math.max(primary.bounds.x, Math.min(targetCenter - WIN_W / 2, primary.bounds.x + primary.bounds.width - WIN_W)));
+      const resolved = geo ?? this.ax.notchGeometry?.(this.isCapsuleActive());
+      const centerOffset = resolved?.hasNotch && typeof resolved.anchorX === 'number' && resolved.anchorX > 0
+        ? resolved.anchorX
+        : primary.bounds.width / 2;
+      const targetCenter = primary.bounds.x + centerOffset;
+      const winW = Math.min(WIN_W, primary.bounds.width);
+      const winH = Math.min(WIN_H, Math.max(520, primary.bounds.height - 40));
+      const x = Math.round(Math.max(primary.bounds.x, Math.min(targetCenter - winW / 2, primary.bounds.x + primary.bounds.width - winW)));
       const y = primary.bounds.y;
-      const winH = Math.min(WIN_H, Math.max(620, primary.bounds.height - 40));
       const cur = this.window.getBounds();
-      if (Math.abs(x - this.lastAnchorX) >= 2 || Math.abs(cur.x - x) >= 2 || cur.y !== y || cur.width !== WIN_W || cur.height !== winH) {
+      if (Math.abs(x - this.lastAnchorX) >= 1 || Math.abs(cur.x - x) >= 1 || cur.y !== y || cur.width !== winW || cur.height !== winH) {
         this.lastAnchorX = x;
-        this.window.setBounds({ x, y, width: WIN_W, height: winH });
+        this.window.setBounds({ x, y, width: winW, height: winH });
       }
     }
     this.notes.place();
@@ -919,7 +923,7 @@ export class NotchIsland {
   private snapshot(): IslandState {
     const active = this.isCapsuleActive();
     const geo = this.ax.notchGeometry?.(active);
-    if (geo?.anchorX) this.placeWindows(geo.anchorX);
+    this.placeWindows(geo);
     return {
       mode: this.islandEnabled ? this.mode : 'idle',
       notch: geo
@@ -1450,6 +1454,8 @@ export class NotchIsland {
     if (this.destroyed) return;
     this.destroyed = true;
     screen.off('display-metrics-changed', this.onDisplayMetricsChanged);
+    screen.off('display-added', this.onDisplayMetricsChanged);
+    screen.off('display-removed', this.onDisplayMetricsChanged);
     if (this.tickTimer) clearInterval(this.tickTimer);
     if (this.toastTimer) clearTimeout(this.toastTimer);
     if (this.copyTimer) clearTimeout(this.copyTimer);

@@ -1195,12 +1195,14 @@ static void runBlockerCalibStep(int gen, int step, double lo, double hi, double 
   });
 }
 
-static void startBlockerCalibration(double screenOriginX, double screenTopY, double screenCenterX, double width) {
+static void startBlockerCalibration(double screenOriginX, double screenTopY, double screenWidth, double screenCenterX, double width) {
   onMain(^{
     int gen = ++g_blocker_calib_gen;
     g_blocker_calibrating = true;
     clearBlockerDefaults();
-    runBlockerCalibStep(gen, 1, 240.0, 1600.0, 700.0, 1e9, screenOriginX, screenTopY, screenCenterX, width);
+    double lo = std::max(120.0, screenWidth * 0.15);
+    double hi = std::max(lo + 200.0, screenWidth * 0.85);
+    runBlockerCalibStep(gen, 1, lo, hi, screenWidth * 0.5, 1e9, screenOriginX, screenTopY, screenCenterX, width);
   });
 }
 
@@ -1264,7 +1266,8 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
       menuBarHeight = std::max(24.0, (double)(NSMaxY(frame) - NSMaxY(visible)));
       double screenWidth = frame.size.width;
       double screenCenterX = frame.origin.x + screenWidth / 2.0;
-      anchorX = screenCenterX;
+      // anchorX is relative to the primary display's left edge (frame.origin.x).
+      anchorX = screenWidth / 2.0;
 
       bool physicalNotch = false;
       double notchLeftX = frame.origin.x + (screenWidth - notchWidth) / 2.0;
@@ -1284,7 +1287,7 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
       }
 
       double now = CFAbsoluteTimeGetCurrent();
-      double leftMenuRightX = frame.origin.x + 310.0;
+      double leftMenuRightX = frame.origin.x + std::min(310.0, screenWidth * 0.22);
 
       if (AXIsProcessTrusted()) {
         NSRunningApplication* front = [[NSWorkspace sharedWorkspace] frontmostApplication];
@@ -1338,10 +1341,10 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
         double leftFree = (notchLeftX - 6.0) - (leftMenuRightX + 12.0);
         leftSafeWidth = std::clamp(leftFree, 140.0, 216.0);
         rightSafeWidth = 0.0;
-        anchorX = (notchLeftX + notchRightX) / 2.0;
+        anchorX = ((notchLeftX + notchRightX) / 2.0) - frame.origin.x;
       } else {
         // Approach 2 (Continuous Menu Bar without active cutout — external monitor or 16:10 scaled mode):
-        // Place a 248pt native NSStatusItem slot at screen center only when the island capsule is visible.
+        // Always center the island on the primary display; optionally place a native NSStatusItem slot to reserve space.
         hasNotch = false;
         const double blockerItemLength = 232.0; // 232 + 16 system padding = 248pt slot
         leftSafeWidth = 152.0;
@@ -1355,16 +1358,10 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
         } else if ((!g_island_blocker_item && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
           g_blocker_screen_w = screenWidth;
           g_cached_has_blocker = false;
-          startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenCenterX, blockerItemLength);
+          startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenWidth, screenCenterX, blockerItemLength);
         }
 
-        NSRect bf = NSZeroRect;
-        if (!g_blocker_calibrating && validBlockerWindowFrame(frame.origin.x, NSMaxY(frame), &bf)) {
-          double center = NSMidX(bf);
-          g_cached_blocker_center_x = (bf.origin.x > screenCenterX + 124.0) ? screenCenterX : center;
-          g_cached_has_blocker = true;
-        }
-        anchorX = g_cached_has_blocker ? g_cached_blocker_center_x : screenCenterX;
+        anchorX = screenWidth / 2.0;
       }
     }
   }
