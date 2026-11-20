@@ -11,6 +11,7 @@ export interface NativeAx {
   frontmostApp(): { bundleId: string; name: string; pid: number };
   paste(): void;
   pasteboardMeta(): { changeCount: number; concealed: boolean };
+  pasteboardRich(): { text: string; html: string };
   pasteToProcess(pid: number): boolean;
   copySelectionToProcess(pid: number): boolean;
   startCopyWatch(cb: (event: { doubleCopy: boolean; timestamp: number }) => void): void;
@@ -29,7 +30,7 @@ export interface NativeAx {
   startIslandStatusClick(cb: () => void): void;
   startFullscreenWatch(cb: (fullscreen: boolean) => void): void;
   stopFullscreenWatch(): void;
-  setStationaryWindow(handle: Buffer): void;
+  setStationaryWindow(handle: Buffer, visibleOnFullScreen?: boolean): void;
 }
 
 let ax: NativeAx | undefined;

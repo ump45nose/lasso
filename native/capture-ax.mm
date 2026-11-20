@@ -154,6 +154,24 @@ static napi_value pasteToProcess(napi_env e, napi_callback_info info) {
   return result;
 }
 
+static napi_value pasteboardRich(napi_env e, napi_callback_info) {
+  napi_value result, textVal, htmlVal;
+  napi_create_object(e, &result);
+  std::string text, html;
+  @autoreleasepool {
+    NSPasteboard* board = NSPasteboard.generalPasteboard;
+    NSString* plain = [board stringForType:NSPasteboardTypeString];
+    NSString* rich = [board stringForType:NSPasteboardTypeHTML];
+    if (plain) text = plain.UTF8String;
+    if (rich) html = rich.UTF8String;
+  }
+  napi_create_string_utf8(e, text.c_str(), text.size(), &textVal);
+  napi_create_string_utf8(e, html.c_str(), html.size(), &htmlVal);
+  napi_set_named_property(e, result, "text", textVal);
+  napi_set_named_property(e, result, "html", htmlVal);
+  return result;
+}
+
 static napi_value copySelectionToProcess(napi_env e, napi_callback_info info) {
   size_t n = 1;
   napi_value args[1], result;
@@ -167,11 +185,14 @@ static napi_value copySelectionToProcess(napi_env e, napi_callback_info info) {
         CGEventRef down = CGEventCreateKeyboardEvent(source, 8, true); // Cmd+C
         CGEventRef up = CGEventCreateKeyboardEvent(source, 8, false);
         if (down && up) {
-          for (CGEventRef event : {down, up}) {
-            CGEventSetFlags(event, kCGEventFlagMaskCommand);
-            CGEventSetIntegerValueField(event, kCGEventSourceUserData, kLassoCopyEvent);
-            CGEventPost(kCGHIDEventTap, event);
-          }
+          CGEventSetFlags(down, kCGEventFlagMaskCommand);
+          CGEventSetFlags(up, kCGEventFlagMaskCommand);
+          CGEventSetIntegerValueField(down, kCGEventSourceUserData, kLassoCopyEvent);
+          CGEventSetIntegerValueField(up, kCGEventSourceUserData, kLassoCopyEvent);
+          // Separate keyDown and keyUp briefly and target the frontmost pid directly so browsers never drop Cmd+C.
+          CGEventPostToPid((pid_t)pid, down);
+          usleep(8000);
+          CGEventPostToPid((pid_t)pid, up);
           sent = true;
         }
         if (down) CFRelease(down);
@@ -1571,9 +1592,14 @@ static napi_value stopFullscreenWatch(napi_env e, napi_callback_info) {
 
 /** Keeps the window in place during Mission Control and out of Cmd-` cycling; Electron exposes neither behavior. */
 static napi_value setStationaryWindow(napi_env e, napi_callback_info info) {
-  size_t n = 1;
-  napi_value args[1];
+  size_t n = 2;
+  napi_value args[2];
   napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  bool visibleOnFullScreen = false;
+  if (n >= 2) {
+    bool flag = false;
+    if (napi_get_value_bool(e, args[1], &flag) == napi_ok) visibleOnFullScreen = flag;
+  }
   void* bytes = nullptr;
   size_t length = 0;
   if (n >= 1 && napi_get_buffer_info(e, args[0], &bytes, &length) == napi_ok && length >= sizeof(void*)) {
@@ -1584,6 +1610,7 @@ static napi_value setStationaryWindow(napi_env e, napi_callback_info info) {
                                                                        NSWindowCollectionBehaviorTransient |
                                                                        NSWindowCollectionBehaviorParticipatesInCycle |
                                                                        NSWindowCollectionBehaviorFullScreenAuxiliary);
+      if (visibleOnFullScreen) behavior |= NSWindowCollectionBehaviorFullScreenAuxiliary;
       win.collectionBehavior = behavior | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
     }
   }
@@ -1600,6 +1627,7 @@ static napi_value init(napi_env e,napi_value exports){
     {"requestScreen",nullptr,requestScreen,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"paste",nullptr,paste,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"pasteboardMeta",nullptr,pasteboardMeta,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"pasteboardRich",nullptr,pasteboardRich,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"pasteToProcess",nullptr,pasteToProcess,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"copySelectionToProcess",nullptr,copySelectionToProcess,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"startCopyWatch",nullptr,startCopyWatch,nullptr,nullptr,nullptr,napi_default,nullptr},

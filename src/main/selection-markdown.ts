@@ -99,11 +99,16 @@ export async function readSelectionMarkdown(pid: number, ax: Partial<NativeAx>):
       if (current && current.changeCount !== before.changeCount) {
         copiedCount = current.changeCount;
         if (current.concealed || ax.frontmostApp?.().pid !== pid) return null;
-        const copied = await clipboard.read();
-        const [text, html] = await Promise.all([
-          readClipboardItemText(copied, 'text/plain'),
-          readClipboardItemText(copied, HTML_MIME_TYPES)
-        ]);
+        const nativeRich = ax.pasteboardRich?.();
+        let text = nativeRich?.text ?? '';
+        let html = nativeRich?.html ?? '';
+        if (!text && !html) {
+          const copied = await clipboard.read();
+          [text, html] = await Promise.all([
+            readClipboardItemText(copied, 'text/plain'),
+            readClipboardItemText(copied, HTML_MIME_TYPES)
+          ]);
+        }
         if (ax.pasteboardMeta?.().changeCount !== copiedCount) return null;
         return selectionMarkdown(text, html) || null;
       }
