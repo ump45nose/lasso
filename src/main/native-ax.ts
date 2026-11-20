@@ -12,6 +12,7 @@ export interface NativeAx {
   paste(): void;
   pasteboardMeta(): { changeCount: number; concealed: boolean };
   pasteboardRich(): { text: string; html: string };
+  activateProcess(pid: number): boolean;
   pasteToProcess(pid: number): boolean;
   copySelectionToProcess(pid: number, forceKey?: boolean): boolean;
   startCopyWatch(cb: (event: { doubleCopy: boolean; timestamp: number }) => void): void;

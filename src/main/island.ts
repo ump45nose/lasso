@@ -1058,17 +1058,19 @@ export class NotchIsland {
   }
 
   async translateSelection(selection: SelectionContext) {
-    const source = this.ax.frontmostApp?.();
+    const front = this.ax.frontmostApp?.();
+    const targetPid =
+      selection.sourcePid && selection.sourcePid > 0 && selection.sourcePid !== process.pid
+        ? selection.sourcePid
+        : front && front.pid > 0 && front.pid !== process.pid && (!selection.sourceApp || front.bundleId === selection.sourceApp || front.name === selection.sourceApp)
+          ? front.pid
+          : 0;
     let text = selection.text;
-    const matchesSource =
-      !selection.sourceApp ||
-      source?.bundleId === selection.sourceApp ||
-      source?.name === selection.sourceApp;
-    if (source && source.pid !== process.pid && matchesSource) {
-      try { text = await this.clipboardHistory.selectionMarkdown(source.pid) ?? text; }
+    if (targetPid) {
+      try { text = await this.clipboardHistory.selectionMarkdown(targetPid) ?? text; }
       catch { console.warn('未能读取划词原文的格式，使用所选文字'); }
     }
-    this.translator.open(text, source?.pid);
+    this.translator.open(text, targetPid || undefined);
   }
 
   private translateCopy() {

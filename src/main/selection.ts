@@ -4,6 +4,7 @@ import type { TextSelectionData } from 'selection-hook';
 import type { KeystrokeCue, MouseClickCue } from '../shared/recording';
 import type { CaptureStatus, SelectionContext, Settings } from '../shared/contracts';
 import type { IgnoredAppRule, IgnoredAppScope } from '../shared/shortcuts';
+import { nativeAx } from './native-ax';
 
 export function ignoresApplication(rules: IgnoredAppRule[], bundleId: string, scope: IgnoredAppScope) {
   return rules.some(rule => rule.enabled && rule.bundleId === bundleId && rule.scopes.includes(scope));
@@ -129,7 +130,9 @@ export class SelectionCapture {
       const mouse = data.mousePosEnd.x === SelectionHook.INVALID_COORDINATE ? screen.getCursorScreenPoint() : data.mousePosEnd;
       anchor = { x: mouse.x, y: mouse.y, width: 0, height: 0 };
     }
-    this.onSelection({ text: data.text, sourceApp: data.programName, anchor });
+    const front = process.env.LASSO_DATA_ROOT ? undefined : nativeAx().frontmostApp?.();
+    const sourcePid = front && front.pid > 0 && front.pid !== process.pid ? front.pid : undefined;
+    this.onSelection({ text: data.text, sourceApp: data.programName, sourcePid, anchor });
   }
   current() {
     if (this.inputs.size || this.disposed) return;

@@ -85,7 +85,21 @@ async function snapshotClipboard(items: ClipboardItem[]): Promise<ClipboardItem[
 /** Explicit translation only: copy the selected rich text and restore every clipboard format. */
 export async function readSelectionMarkdown(pid: number, ax: Partial<NativeAx>): Promise<string | null> {
   const before = ax.pasteboardMeta?.();
-  if (!before || before.concealed || !ax.copySelectionToProcess || ax.frontmostApp?.().pid !== pid) return null;
+  if (!before || before.concealed || !ax.copySelectionToProcess) return null;
+
+  // Clicking ActionBar activates Lasso on macOS; restore focus to the source app before copying.
+  const initialFront = ax.frontmostApp?.();
+  if (!initialFront) return null;
+  if (initialFront.pid !== pid) {
+    if (initialFront.pid !== process.pid || !ax.activateProcess?.(pid)) return null;
+    const activateDeadline = Date.now() + 250;
+    while (Date.now() < activateDeadline && ax.frontmostApp?.().pid !== pid) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    if (ax.frontmostApp?.().pid !== pid) return null;
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+
   const items = await clipboard.read();
   const snapshot = await snapshotClipboard(items);
   if (ax.pasteboardMeta?.().changeCount !== before.changeCount || ax.frontmostApp?.().pid !== pid) return null;

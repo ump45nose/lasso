@@ -150,6 +150,7 @@ export interface Preset extends ExecutionProfile {
 export interface SelectionContext {
   text: string;
   sourceApp: string;
+  sourcePid?: number;
   anchor: { x: number; y: number; width: number; height: number };
 }
 export interface CaptureStatus { status: 'active' | 'paused' | 'permission' | 'error'; message: string }

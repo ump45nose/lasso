@@ -108,7 +108,7 @@ export class ClipboardHistoryPanel {
 
   async selectionMarkdown(pid: number): Promise<string | null> {
     const source = this.ax.frontmostApp?.();
-    if (this.writing || !source || source.pid !== pid || isSensitiveCopy(source.bundleId, false)) return null;
+    if (this.writing || !source || (source.pid !== pid && source.pid !== process.pid) || (source.pid === pid && isSensitiveCopy(source.bundleId, false))) return null;
     ++this.writing;
     try { return await readSelectionMarkdown(pid, this.ax); }
     finally { this.ignoreCurrentCopy(); --this.writing; }

@@ -155,6 +155,24 @@ static napi_value pasteToProcess(napi_env e, napi_callback_info info) {
   return result;
 }
 
+static napi_value activateProcess(napi_env e, napi_callback_info info) {
+  size_t n = 1;
+  napi_value args[1], result;
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  int32_t pid = 0;
+  bool ok = false;
+  if (n == 1 && napi_get_value_int32(e, args[0], &pid) == napi_ok && pid > 0 && pid != getpid()) {
+    __block bool activated = false;
+    onMain(^{
+      NSRunningApplication* app = [NSRunningApplication runningApplicationWithProcessIdentifier:(pid_t)pid];
+      activated = app && !app.terminated && [app activateWithOptions:NSApplicationActivateIgnoringOtherApps];
+    });
+    ok = activated;
+  }
+  napi_get_boolean(e, ok, &result);
+  return result;
+}
+
 static napi_value pasteboardRich(napi_env e, napi_callback_info) {
   napi_value result, textVal, htmlVal;
   napi_create_object(e, &result);
@@ -1705,6 +1723,7 @@ static napi_value init(napi_env e,napi_value exports){
     {"paste",nullptr,paste,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"pasteboardMeta",nullptr,pasteboardMeta,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"pasteboardRich",nullptr,pasteboardRich,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"activateProcess",nullptr,activateProcess,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"pasteToProcess",nullptr,pasteToProcess,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"copySelectionToProcess",nullptr,copySelectionToProcess,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"startCopyWatch",nullptr,startCopyWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
