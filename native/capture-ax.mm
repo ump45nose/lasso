@@ -51,6 +51,12 @@ static int g_snap_dwell_ms = 250;
 static SnapPreviewOverlay* g_snap_preview = nil;
 static DragSnapSession g_drag_snap;
 static std::vector<SnappedOrigin> g_snapped_origins;
+static napi_threadsafe_function g_fullscreen_tsfn = nullptr;
+static id g_fullscreen_space_obs = nil;
+static id g_fullscreen_app_obs = nil;
+static id g_fullscreen_screen_obs = nil;
+static dispatch_source_t g_fullscreen_timer = nil;
+static int g_last_fullscreen_state = -1;
 
 static void onMain(void (^block)(void));
 
@@ -1374,6 +1380,192 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
   return obj;
 }
 
+static bool isPrimaryDisplayFullscreen() {
+  @autoreleasepool {
+    NSScreen* primary = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
+    if (!primary) return false;
+    NSRect frame = primary.frame;
+    double screenW = frame.size.width;
+    double screenH = frame.size.height;
+    if (screenW <= 0.0 || screenH <= 0.0) return false;
+
+    double notchTop = 0.0;
+    if (@available(macOS 12.0, *)) {
+      notchTop = std::max(0.0, (double)primary.safeAreaInsets.top);
+    }
+
+    pid_t selfPid = getpid();
+    NSRunningApplication* front = NSWorkspace.sharedWorkspace.frontmostApplication;
+    pid_t frontPid = front ? front.processIdentifier : 0;
+
+    if (frontPid > 0 && frontPid != selfPid && AXIsProcessTrusted()) {
+      AXUIElementRef appRef = AXUIElementCreateApplication(frontPid);
+      AXUIElementSetMessagingTimeout(appRef, 0.04f);
+      CFTypeRef winRef = nullptr;
+      if (AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute, &winRef) == kAXErrorSuccess && winRef) {
+        CFTypeRef fsRef = nullptr;
+        bool axFullscreen = false;
+        if (AXUIElementCopyAttributeValue((AXUIElementRef)winRef, CFSTR("AXFullScreen"), &fsRef) == kAXErrorSuccess && fsRef) {
+          axFullscreen = CFGetTypeID(fsRef) == CFBooleanGetTypeID() && CFBooleanGetValue((CFBooleanRef)fsRef);
+          CFRelease(fsRef);
+        }
+        if (axFullscreen) {
+          CFTypeRef posRef = nullptr, sizeRef = nullptr;
+          CGPoint p = CGPointZero;
+          CGSize s = CGSizeZero;
+          bool hasBounds = false;
+          if (AXUIElementCopyAttributeValue((AXUIElementRef)winRef, kAXPositionAttribute, &posRef) == kAXErrorSuccess && posRef) {
+            hasBounds = AXValueGetValue((AXValueRef)posRef, kAXValueTypeCGPoint, &p);
+            CFRelease(posRef);
+          }
+          if (hasBounds && AXUIElementCopyAttributeValue((AXUIElementRef)winRef, kAXSizeAttribute, &sizeRef) == kAXErrorSuccess && sizeRef) {
+            hasBounds = AXValueGetValue((AXValueRef)sizeRef, kAXValueTypeCGSize, &s);
+            CFRelease(sizeRef);
+          }
+          if (hasBounds) {
+            double cx = p.x + s.width * 0.5;
+            double cy = p.y + s.height * 0.5;
+            if (cx >= 0.0 && cx <= screenW && cy >= 0.0 && cy <= screenH) {
+              CFRelease(winRef);
+              CFRelease(appRef);
+              return true;
+            }
+          }
+        }
+        CFRelease(winRef);
+      }
+      CFRelease(appRef);
+    }
+
+    NSArray* list = CFBridgingRelease(CGWindowListCopyWindowInfo(
+      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+      kCGNullWindowID
+    ));
+    for (NSDictionary* w in list) {
+      pid_t pid = [w[(id)kCGWindowOwnerPID] intValue];
+      if (pid <= 0 || pid == selfPid) continue;
+      int layer = [w[(id)kCGWindowLayer] intValue];
+      if (layer < 0) continue;
+      NSString* owner = w[(id)kCGWindowOwnerName];
+      if (!owner ||
+          [owner isEqualToString:@"Dock"] ||
+          [owner isEqualToString:@"Window Server"] ||
+          [owner isEqualToString:@"SystemUIServer"] ||
+          [owner isEqualToString:@"Control Center"] ||
+          [owner isEqualToString:@"ControlCenter"] ||
+          [owner isEqualToString:@"Notification Center"] ||
+          [owner isEqualToString:@"NotificationCenter"] ||
+          [owner isEqualToString:@"Wallpaper"] ||
+          [owner isEqualToString:@"Spotlight"] ||
+          [owner isEqualToString:@"Finder"]) {
+        continue;
+      }
+      NSNumber* alphaNum = w[(id)kCGWindowAlpha];
+      if (alphaNum && [alphaNum doubleValue] <= 0.01) continue;
+
+      CGRect r = CGRectZero;
+      if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)w[(id)kCGWindowBounds], &r)) continue;
+      if (r.origin.x > 2.0 || (r.origin.x + r.size.width) < screenW - 2.0) continue;
+
+      bool coversFullHeight = (r.origin.y <= 2.0 && (r.origin.y + r.size.height) >= screenH - 2.0);
+      bool coversBelowNotch = (notchTop > 0.0 && r.origin.y <= notchTop + 2.0 && (r.origin.y + r.size.height) >= screenH - 2.0);
+      if (coversFullHeight || (layer > 0 && coversBelowNotch)) return true;
+    }
+    return false;
+  }
+}
+
+static void callFullscreenJS(napi_env env, napi_value cb, void*, void* data) {
+  auto* state = (bool*)data;
+  if (env && cb && state) {
+    napi_value recv, val;
+    napi_get_undefined(env, &recv);
+    napi_get_boolean(env, *state, &val);
+    napi_call_function(env, recv, cb, 1, &val, nullptr);
+  }
+  delete state;
+}
+
+static void checkFullscreenState() {
+  if (!g_fullscreen_tsfn) return;
+  int current = isPrimaryDisplayFullscreen() ? 1 : 0;
+  if (current == g_last_fullscreen_state) return;
+  g_last_fullscreen_state = current;
+  auto* payload = new bool(current == 1);
+  if (napi_call_threadsafe_function(g_fullscreen_tsfn, payload, napi_tsfn_nonblocking) != napi_ok) {
+    delete payload;
+  }
+}
+
+static void stopFullscreenMonitoring() {
+  onMain(^{
+    NSNotificationCenter* wsCenter = [NSWorkspace sharedWorkspace].notificationCenter;
+    if (g_fullscreen_space_obs) [wsCenter removeObserver:g_fullscreen_space_obs];
+    if (g_fullscreen_app_obs) [wsCenter removeObserver:g_fullscreen_app_obs];
+    if (g_fullscreen_screen_obs) [[NSNotificationCenter defaultCenter] removeObserver:g_fullscreen_screen_obs];
+    g_fullscreen_space_obs = g_fullscreen_app_obs = g_fullscreen_screen_obs = nil;
+    if (g_fullscreen_timer) {
+      dispatch_source_cancel(g_fullscreen_timer);
+      g_fullscreen_timer = nil;
+    }
+    g_last_fullscreen_state = -1;
+    if (g_fullscreen_tsfn) {
+      napi_release_threadsafe_function(g_fullscreen_tsfn, napi_tsfn_abort);
+      g_fullscreen_tsfn = nullptr;
+    }
+  });
+}
+
+static napi_value startFullscreenWatch(napi_env e, napi_callback_info info) {
+  size_t n = 1;
+  napi_value args[1];
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  napi_valuetype type;
+  if (n != 1 || napi_typeof(e, args[0], &type) != napi_ok || type != napi_function) {
+    napi_throw_type_error(e, nullptr, "fullscreen watch callback required");
+    return nullptr;
+  }
+  stopFullscreenMonitoring();
+  napi_value name;
+  napi_create_string_utf8(e, "lasso-fullscreen-watch", NAPI_AUTO_LENGTH, &name);
+  if (napi_create_threadsafe_function(e, args[0], nullptr, name, 0, 1, nullptr, nullptr, nullptr,
+                                      callFullscreenJS, &g_fullscreen_tsfn) != napi_ok) {
+    napi_throw_error(e, nullptr, "Could not create fullscreen watch callback");
+    return nullptr;
+  }
+  napi_unref_threadsafe_function(e, g_fullscreen_tsfn);
+
+  onMain(^{
+    NSNotificationCenter* wsCenter = [NSWorkspace sharedWorkspace].notificationCenter;
+    auto handler = ^(NSNotification*) {
+      checkFullscreenState();
+    };
+    g_fullscreen_space_obs = [wsCenter addObserverForName:NSWorkspaceActiveSpaceDidChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:handler];
+    g_fullscreen_app_obs = [wsCenter addObserverForName:NSWorkspaceDidActivateApplicationNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:handler];
+    g_fullscreen_screen_obs = [[NSNotificationCenter defaultCenter] addObserverForName:NSApplicationDidChangeScreenParametersNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:handler];
+
+    g_fullscreen_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    dispatch_source_set_timer(g_fullscreen_timer, dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC), 1000 * NSEC_PER_MSEC, 250 * NSEC_PER_MSEC);
+    dispatch_source_set_event_handler(g_fullscreen_timer, ^{
+      checkFullscreenState();
+    });
+    dispatch_resume(g_fullscreen_timer);
+
+    checkFullscreenState();
+  });
+
+  napi_value undefined;
+  napi_get_undefined(e, &undefined);
+  return undefined;
+}
+
+static napi_value stopFullscreenWatch(napi_env e, napi_callback_info) {
+  stopFullscreenMonitoring();
+  napi_value undefined;
+  napi_get_undefined(e, &undefined);
+  return undefined;
+}
+
 /** Keeps the window in place during Mission Control and out of Cmd-` cycling; Electron exposes neither behavior. */
 static napi_value setStationaryWindow(napi_env e, napi_callback_info info) {
   size_t n = 1;
@@ -1387,7 +1579,8 @@ static napi_value setStationaryWindow(napi_env e, napi_callback_info info) {
       // AppKit allows one behavior per group, and Chromium marks every top-level window Managed.
       NSWindowCollectionBehavior behavior = win.collectionBehavior & ~(NSWindowCollectionBehaviorManaged |
                                                                        NSWindowCollectionBehaviorTransient |
-                                                                       NSWindowCollectionBehaviorParticipatesInCycle);
+                                                                       NSWindowCollectionBehaviorParticipatesInCycle |
+                                                                       NSWindowCollectionBehaviorFullScreenAuxiliary);
       win.collectionBehavior = behavior | NSWindowCollectionBehaviorStationary | NSWindowCollectionBehaviorIgnoresCycle;
     }
   }
@@ -1421,6 +1614,8 @@ static napi_value init(napi_env e,napi_value exports){
     {"frontmostApp",nullptr,frontmostApp,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"notchGeometry",nullptr,notchGeometry,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"startIslandStatusClick",nullptr,startIslandStatusClick,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"startFullscreenWatch",nullptr,startFullscreenWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"stopFullscreenWatch",nullptr,stopFullscreenWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"setStationaryWindow",nullptr,setStationaryWindow,nullptr,nullptr,nullptr,napi_default,nullptr}
   };
   napi_define_properties(e,exports,sizeof(d)/sizeof(d[0]),d);
@@ -1430,6 +1625,7 @@ static napi_value init(napi_env e,napi_value exports){
     stopCopyMonitoring();
     stopDragSnapMonitoring();
     stopIslandBlocker();
+    stopFullscreenMonitoring();
   }, nullptr);
   return exports;
 }

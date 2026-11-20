@@ -551,6 +551,7 @@ export class NotchIsland {
   private ax: Partial<NativeAx>;
   private mode: IslandMode = 'idle';
   private islandEnabled = true;
+  private fullscreenHidden = false;
   private pomodoro: IslandState['pomodoro'] = null;
   private toastItem: IslandState['toast'] = null;
   private alerts: IslandAlertItem[] = [];
@@ -598,7 +599,7 @@ export class NotchIsland {
     this.window = createIslandWindow(WIN_W, WIN_H, { focusable: false, fullscreenable: false, enableLargerThanScreen: true });
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'screen-saver', 2);
-    this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
     // Must follow setAlwaysOnTop: Chromium adds the Managed behavior back whenever the level is set.
     this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
 
@@ -791,6 +792,7 @@ export class NotchIsland {
       if (this.mode === 'board') this.closeBoard();
       else this.openBoard();
     });
+    this.ax.startFullscreenWatch?.(fullscreen => this.setFullscreenHidden(fullscreen));
     this.ax.startCopyWatch?.(event => {
       if (!event.doubleCopy || !this.callbacks.settings().translation.copyTranslateEnabled || this.callbacks.settings().translation.copyTranslateTrigger !== 'double-cmd-c') return;
       this.pendingDoubleCopyAt = event.timestamp;
@@ -802,7 +804,7 @@ export class NotchIsland {
     });
 
     this.window.once('ready-to-show', () => {
-      if (!process.env.LASSO_DATA_ROOT && this.islandEnabled) this.window.showInactive();
+      if (this.shouldShowWindow()) this.window.showInactive();
       this.placeWindows();
       this.publish();
       if (!process.env.LASSO_DATA_ROOT) {
@@ -856,8 +858,35 @@ export class NotchIsland {
     }
   }
 
+  private shouldShowWindow(): boolean {
+    if (process.env.LASSO_DATA_ROOT || this.destroyed || this.fullscreenHidden) return false;
+    return this.islandEnabled || this.mode === 'board';
+  }
+
+  private setFullscreenHidden(fullscreen: boolean) {
+    if (this.fullscreenHidden === fullscreen || this.destroyed) return;
+    this.fullscreenHidden = fullscreen;
+    if (fullscreen) {
+      if (this.mode === 'board') {
+        this.mode = this.resolveBaseMode();
+      }
+      this.syncMousePassthrough();
+      this.ax.notchGeometry?.(false);
+      if (!this.window.isDestroyed() && this.window.isVisible()) {
+        this.window.hide();
+      }
+    } else {
+      if (!this.window.isDestroyed() && this.shouldShowWindow() && !this.window.isVisible()) {
+        this.window.showInactive();
+        this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
+      }
+      this.placeWindows();
+      this.publish();
+    }
+  }
+
   private isCapsuleActive(): boolean {
-    if (!this.islandEnabled) return false;
+    if (!this.islandEnabled || this.fullscreenHidden) return false;
     if (this.mode === 'board' || this.toastItem || this.alerts.length > 0 || this.pomodoro?.active) return true;
     return this.nookTasks.some(t => !t.completed && t.inFocus) || Boolean(this.nookReviewBadge?.hot);
   }
@@ -950,7 +979,7 @@ export class NotchIsland {
         this.mode = 'idle';
         this.syncMousePassthrough();
         if (!this.window.isDestroyed() && this.window.isVisible()) this.window.hide();
-      } else if (!process.env.LASSO_DATA_ROOT && !this.window.isDestroyed() && !this.window.isVisible()) {
+      } else if (this.shouldShowWindow() && !this.window.isDestroyed() && !this.window.isVisible()) {
         this.window.showInactive();
       }
     }
@@ -1018,6 +1047,7 @@ export class NotchIsland {
   }
 
   openBoard() {
+    if (this.fullscreenHidden) return;
     if (!this.islandEnabled && !process.env.LASSO_DATA_ROOT) {
       this.window.showInactive();
     }
@@ -1426,6 +1456,7 @@ export class NotchIsland {
     for (const watcher of this.nookWatchers.values()) watcher.close();
     this.nookWatchers.clear();
     this.ax.notchGeometry?.(false);
+    this.ax.stopFullscreenWatch?.();
     this.ax.stopFinderTrigger?.();
     this.ax.stopCopyWatch?.();
     this.ax.setWindowDragSnapEnabled?.(false);

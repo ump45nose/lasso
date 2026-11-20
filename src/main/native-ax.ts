@@ -27,6 +27,8 @@ export interface NativeAx {
   tileTwoWindows(x1: number, y1: number, w1: number, h1: number, x2: number, y2: number, w2: number, h2: number): number;
   notchGeometry(active?: boolean): { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
   startIslandStatusClick(cb: () => void): void;
+  startFullscreenWatch(cb: (fullscreen: boolean) => void): void;
+  stopFullscreenWatch(): void;
   setStationaryWindow(handle: Buffer): void;
 }
 
