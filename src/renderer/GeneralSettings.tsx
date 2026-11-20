@@ -7,6 +7,7 @@ import {
   type FinderEditorApp,
   type FinderTerminalApp,
   type GeneralSettings as GeneralPreferences,
+  type NotchFullscreenMode,
   type ShellState,
   type SuiteSettings
 } from '../shared/contracts';
@@ -975,6 +976,28 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
               change={() => void saveSuite({ notchIslandEnabled: !settings.notchIslandEnabled })}
             />
           </div>
+          <AnimatePresence initial={false}>
+            {settings.notchIslandEnabled && (
+              <motion.div key="notch-fs" className="l-set-collapse" {...collapse}>
+                <div className="l-set-row">
+                  <div className="l-set-row-main">
+                    <div className="l-set-row-name">全屏应用时</div>
+                    <div className="l-set-row-sub">全屏看电影或演示时控制刘海显示方式</div>
+                  </div>
+                  <Segmented
+                    label="全屏时刘海显示"
+                    value={settings.notchFullscreenMode ?? 'hide'}
+                    onChange={(notchFullscreenMode: NotchFullscreenMode) => void saveSuite({ notchFullscreenMode })}
+                    options={[
+                      ['hide', '不显示'],
+                      ['show', '显示'],
+                      ['clock', '黑底时间']
+                    ]}
+                  />
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
           <div className="l-set-row">
             <div className="l-set-row-main">
               <div className="l-set-row-name">接收 Nook 待办与紧迫提醒</div>

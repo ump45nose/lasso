@@ -188,10 +188,15 @@ function PomoDurationRow({ label, value, presets, onChange }: { label: string; v
   );
 }
 
+function formatNowClock(now: Date): string {
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+}
+
 export function NotchIsland() {
   const [state, setState] = useState<IslandState | null>(null);
   const [activeListTab, setActiveListTab] = useState<string>('focus');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [clockText, setClockText] = useState<string>(() => formatNowClock(new Date()));
   useFonts(state?.fonts);
 
   useEffect(() => {
@@ -201,6 +206,15 @@ export function NotchIsland() {
     void window.island.getState().then(setState);
     return () => stop();
   }, []);
+
+  const fullscreenClock = Boolean(state?.fullscreenClock);
+
+  useEffect(() => {
+    if (!fullscreenClock) return;
+    setClockText(formatNowClock(new Date()));
+    const timer = setInterval(() => setClockText(formatNowClock(new Date())), 1000);
+    return () => clearInterval(timer);
+  }, [fullscreenClock]);
 
   const mode = state?.mode ?? 'idle';
   const pomodoro = state?.pomodoro ?? null;
@@ -237,7 +251,7 @@ export function NotchIsland() {
 
   // State 1: All-Clear hidden when nothing pending and not expanded
   const wingKind =
-    !state
+    !state || fullscreenClock
       ? null
       : mode === 'toast' && toast
         ? 'toast'
@@ -250,7 +264,7 @@ export function NotchIsland() {
               : null;
 
   const dropKind =
-    !state
+    !state || fullscreenClock
       ? null
       : mode === 'board'
         ? 'board'
@@ -346,6 +360,22 @@ export function NotchIsland() {
         role="region"
         aria-label="Lasso 刘海岛"
       >
+        <AnimatePresence initial={false}>
+          {fullscreenClock && (
+            <motion.div
+              key="fs-clock"
+              className="isl-fs-clock"
+              role="status"
+              aria-label={`当前时间 ${clockText}`}
+              initial={{ opacity: 0, y: -6, scale: 0.9 }}
+              animate={{ opacity: 1, y: 0, scale: 1, transition: spring }}
+              exit={{ opacity: 0, y: -6, scale: 0.9, transition: { duration: 0.14, ease } }}
+            >
+              <span className="mono">{clockText}</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <AnimatePresence initial={false}>
           {(wingKind || dropKind) && hasNotch && (
             <motion.button

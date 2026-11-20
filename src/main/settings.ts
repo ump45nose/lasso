@@ -97,7 +97,7 @@ export function normalizeActionBarConfig(value: unknown, hideLegacyTranslate = f
 
 export function normalizeSuiteSettings(value: Partial<Settings>, defaults: Settings): Pick<
   Settings,
-  'notchIslandEnabled' | 'windowDragSnap' | 'snapDwellMs' | 'finderTriggers' | 'finderTerminal' | 'finderEditor' | 'clipboardMaxItems' | 'nookPrefs' | 'pomodoro'
+  'notchIslandEnabled' | 'notchFullscreenMode' | 'windowDragSnap' | 'snapDwellMs' | 'finderTriggers' | 'finderTerminal' | 'finderEditor' | 'clipboardMaxItems' | 'nookPrefs' | 'pomodoro'
 > {
   const rawNook: Partial<NookReminderPrefs> = value.nookPrefs && typeof value.nookPrefs === 'object' ? value.nookPrefs : {};
   const nookPrefs: NookReminderPrefs = {
@@ -110,6 +110,9 @@ export function normalizeSuiteSettings(value: Partial<Settings>, defaults: Setti
   const rawFinder: Partial<Settings['finderTriggers']> = value.finderTriggers && typeof value.finderTriggers === 'object' ? value.finderTriggers : {};
   return {
     notchIslandEnabled: typeof value.notchIslandEnabled === 'boolean' ? value.notchIslandEnabled : defaults.notchIslandEnabled,
+    notchFullscreenMode: ['hide', 'show', 'clock'].includes(value.notchFullscreenMode as string)
+      ? value.notchFullscreenMode!
+      : defaults.notchFullscreenMode,
     windowDragSnap: typeof value.windowDragSnap === 'boolean' ? value.windowDragSnap : defaults.windowDragSnap,
     snapDwellMs: typeof value.snapDwellMs === 'number' && Number.isFinite(value.snapDwellMs)
       ? Math.max(80, Math.min(1200, Math.round(value.snapDwellMs)))
@@ -143,6 +146,7 @@ export function defaultSettings(): Settings {
     vision: visionDefaults(),
     translation: translationDefaults(),
     notchIslandEnabled: true,
+    notchFullscreenMode: 'hide',
     windowDragSnap: true,
     snapDwellMs: 250,
     finderTriggers: { middleClick: true, rightHold: true },

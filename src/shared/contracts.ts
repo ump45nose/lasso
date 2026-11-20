@@ -77,8 +77,11 @@ export interface PomodoroSettings {
   soundEnabled: boolean;
 }
 
+export type NotchFullscreenMode = 'hide' | 'show' | 'clock';
+
 export interface SuiteSettings {
   notchIslandEnabled: boolean;
+  notchFullscreenMode: NotchFullscreenMode;
   windowDragSnap: boolean;
   snapDwellMs: number;
   finderTriggers: { middleClick: boolean; rightHold: boolean };
@@ -101,6 +104,7 @@ export interface Settings {
   vision: Omit<VisionServiceConfig, 'hasCredential'>;
   translation: TranslationSettings;
   notchIslandEnabled: boolean;
+  notchFullscreenMode: NotchFullscreenMode;
   windowDragSnap: boolean;
   snapDwellMs: number;
   finderTriggers: { middleClick: boolean; rightHold: boolean };
@@ -391,6 +395,7 @@ export interface NookReviewBadge {
 }
 export interface IslandState {
   mode: IslandMode;
+  fullscreenClock?: boolean;
   notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
   nookPrefs: NookReminderPrefs;
   copyTranslateEnabled: boolean;

@@ -613,6 +613,13 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       await wait(300);
       names.push(await save(isl, 'v4-b4-island-focus'));
 
+      isl.webContents.send('island:changed', { ...islFixtures.focusCapsule, fullscreenClock: true });
+      await wait(250);
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-fs-clock') && /^\\d{2}:\\d{2}$/.test(document.querySelector('.isl-fs-clock').textContent.trim()))`))) {
+        throw Error('B4 Island fullscreen clock pill missing or malformed');
+      }
+      names.push(await save(isl, 'v4-b4-island-fullscreen-clock'));
+
       isl.webContents.send('island:changed', islFixtures.pomodoroCapsule);
       await wait(300);
       names.push(await save(isl, 'v4-b4-island-pomodoro'));

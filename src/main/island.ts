@@ -12,6 +12,7 @@ import type {
   IslandTaskListMeta,
   NookReminderPrefs,
   NookReviewBadge,
+  NotchFullscreenMode,
   PomodoroSettings,
   SelectionContext,
   Settings,
@@ -551,6 +552,8 @@ export class NotchIsland {
   private ax: Partial<NativeAx>;
   private mode: IslandMode = 'idle';
   private islandEnabled = true;
+  private fullscreenMode: NotchFullscreenMode = 'hide';
+  private primaryFullscreen = false;
   private fullscreenHidden = false;
   private pomodoro: IslandState['pomodoro'] = null;
   private toastItem: IslandState['toast'] = null;
@@ -596,12 +599,11 @@ export class NotchIsland {
     }
     this.refreshNookData();
 
+    this.fullscreenMode = callbacks.settings().notchFullscreenMode ?? 'hide';
     this.window = createIslandWindow(WIN_W, WIN_H, { focusable: false, fullscreenable: false, enableLargerThanScreen: true });
     this.window.setIgnoreMouseEvents(true, { forward: true });
     this.window.setAlwaysOnTop(true, 'screen-saver', 2);
-    this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
-    // Must follow setAlwaysOnTop: Chromium adds the Managed behavior back whenever the level is set.
-    this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
+    this.applyFullscreenWindowPolicy();
 
     const check = (event: IpcMainEvent | IpcMainInvokeEvent) => {
       if (![this.window, this.notes?.window, this.finder?.window, this.translator?.window, this.clipboardHistory?.window].some(win => win && fromMainFrame(event, win))) {
@@ -860,15 +862,30 @@ export class NotchIsland {
     }
   }
 
+  private applyFullscreenWindowPolicy() {
+    if (this.window.isDestroyed()) return;
+    const allowFullScreen = this.fullscreenMode !== 'hide';
+    this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: allowFullScreen });
+    // Must follow setAlwaysOnTop/setVisibleOnAllWorkspaces: keep Stationary + IgnoresCycle and desired fullscreen flag.
+    this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle(), allowFullScreen);
+  }
+
+  private isFullscreenClock(): boolean {
+    return this.islandEnabled && this.primaryFullscreen && this.fullscreenMode === 'clock';
+  }
+
   private shouldShowWindow(): boolean {
     if (process.env.LASSO_DATA_ROOT || this.destroyed || this.fullscreenHidden) return false;
     return this.islandEnabled || this.mode === 'board';
   }
 
-  private setFullscreenHidden(fullscreen: boolean) {
-    if (this.fullscreenHidden === fullscreen || this.destroyed) return;
-    this.fullscreenHidden = fullscreen;
-    if (fullscreen) {
+  private syncFullscreenState() {
+    if (this.destroyed) return;
+    const nextHidden = this.primaryFullscreen && this.fullscreenMode === 'hide';
+    const clockMode = this.isFullscreenClock();
+    this.fullscreenHidden = nextHidden;
+
+    if (nextHidden) {
       if (this.mode === 'board') {
         this.mode = this.resolveBaseMode();
       }
@@ -877,18 +894,33 @@ export class NotchIsland {
       if (!this.window.isDestroyed() && this.window.isVisible()) {
         this.window.hide();
       }
-    } else {
-      if (!this.window.isDestroyed() && this.shouldShowWindow() && !this.window.isVisible()) {
-        this.window.showInactive();
-        this.ax.setStationaryWindow?.(this.window.getNativeWindowHandle());
-      }
-      this.placeWindows();
-      this.publish();
+      return;
     }
+
+    if (clockMode) {
+      if (this.mode === 'board') {
+        this.mode = this.resolveBaseMode();
+      }
+      this.syncMousePassthrough();
+      this.ax.notchGeometry?.(false);
+    }
+
+    if (!this.window.isDestroyed() && this.shouldShowWindow() && !this.window.isVisible()) {
+      this.window.showInactive();
+      this.applyFullscreenWindowPolicy();
+    }
+    this.placeWindows();
+    this.publish();
+  }
+
+  private setFullscreenHidden(fullscreen: boolean) {
+    if (this.primaryFullscreen === fullscreen || this.destroyed) return;
+    this.primaryFullscreen = fullscreen;
+    this.syncFullscreenState();
   }
 
   private isCapsuleActive(): boolean {
-    if (!this.islandEnabled || this.fullscreenHidden) return false;
+    if (!this.islandEnabled || this.fullscreenHidden || this.isFullscreenClock()) return false;
     if (this.mode === 'board' || this.toastItem || this.alerts.length > 0 || this.pomodoro?.active) return true;
     return this.nookTasks.some(t => !t.completed && t.inFocus) || Boolean(this.nookReviewBadge?.hot);
   }
@@ -926,6 +958,7 @@ export class NotchIsland {
     this.placeWindows(geo);
     return {
       mode: this.islandEnabled ? this.mode : 'idle',
+      fullscreenClock: this.isFullscreenClock(),
       notch: geo
         ? {
             hasNotch: geo.hasNotch,
@@ -977,6 +1010,12 @@ export class NotchIsland {
     this.nookPrefs = { ...settings.nookPrefs };
     this.pomodoroPrefs = { ...settings.pomodoro };
     const nextEnabled = settings.notchIslandEnabled !== false;
+    const nextFullscreenMode: NotchFullscreenMode = settings.notchFullscreenMode ?? 'hide';
+    const fullscreenModeChanged = this.fullscreenMode !== nextFullscreenMode;
+    this.fullscreenMode = nextFullscreenMode;
+    if (fullscreenModeChanged) {
+      this.applyFullscreenWindowPolicy();
+    }
     if (this.islandEnabled !== nextEnabled) {
       this.islandEnabled = nextEnabled;
       if (!nextEnabled) {
@@ -986,7 +1025,11 @@ export class NotchIsland {
         if (!this.window.isDestroyed() && this.window.isVisible()) this.window.hide();
       } else if (this.shouldShowWindow() && !this.window.isDestroyed() && !this.window.isVisible()) {
         this.window.showInactive();
+        this.applyFullscreenWindowPolicy();
       }
+    }
+    if (fullscreenModeChanged) {
+      this.syncFullscreenState();
     }
 
     if (this.dragSnapEnabled !== settings.windowDragSnap || this.snapDwellMs !== settings.snapDwellMs) {
