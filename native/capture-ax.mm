@@ -1434,6 +1434,9 @@ static bool isPrimaryDisplayFullscreen() {
       CFRelease(appRef);
     }
 
+    double menuBarInset = (double)(NSMaxY(frame) - NSMaxY(primary.visibleFrame));
+    bool menuBarHidden = menuBarInset < 18.0;
+
     NSArray* list = CFBridgingRelease(CGWindowListCopyWindowInfo(
       kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
       kCGNullWindowID
@@ -1443,6 +1446,9 @@ static bool isPrimaryDisplayFullscreen() {
       if (pid <= 0 || pid == selfPid) continue;
       int layer = [w[(id)kCGWindowLayer] intValue];
       if (layer < 0) continue;
+      // Ignore normal-layer background windows; only a frontmost window with hidden menu bar
+      // or a menu-bar-level+ fullscreen overlay (layer >= 24) truly covers the screen in fullscreen.
+      if (layer < 24 && (pid != frontPid || !menuBarHidden)) continue;
       NSString* owner = w[(id)kCGWindowOwnerName];
       if (!owner ||
           [owner isEqualToString:@"Dock"] ||
@@ -1466,7 +1472,7 @@ static bool isPrimaryDisplayFullscreen() {
 
       bool coversFullHeight = (r.origin.y <= 2.0 && (r.origin.y + r.size.height) >= screenH - 2.0);
       bool coversBelowNotch = (notchTop > 0.0 && r.origin.y <= notchTop + 2.0 && (r.origin.y + r.size.height) >= screenH - 2.0);
-      if (coversFullHeight || (layer > 0 && coversBelowNotch)) return true;
+      if (coversFullHeight || (layer >= 24 && coversBelowNotch)) return true;
     }
     return false;
   }

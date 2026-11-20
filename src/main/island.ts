@@ -1017,7 +1017,11 @@ export class NotchIsland {
   async translateSelection(selection: SelectionContext) {
     const source = this.ax.frontmostApp?.();
     let text = selection.text;
-    if (source && (!selection.sourceApp || source.bundleId === selection.sourceApp)) {
+    const matchesSource =
+      !selection.sourceApp ||
+      source?.bundleId === selection.sourceApp ||
+      source?.name === selection.sourceApp;
+    if (source && source.pid !== process.pid && matchesSource) {
       try { text = await this.clipboardHistory.selectionMarkdown(source.pid) ?? text; }
       catch { console.warn('未能读取划词原文的格式，使用所选文字'); }
     }
