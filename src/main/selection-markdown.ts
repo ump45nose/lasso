@@ -8,8 +8,15 @@ const converter = new TurndownService({ headingStyle: 'atx', bulletListMarker: '
 converter.use(gfm);
 converter.remove(['script', 'style', 'iframe', 'object']);
 
+const SEMANTIC_HTML_RE = /<(?:h[1-6]|strong|b|em|i|ul|ol|li|table|thead|tbody|tr|th|td|blockquote|a|del|s)\b/i;
+const MARKDOWN_SYNTAX_RE = /(?:^|\n)\s*(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\|.+\||`{3,}|~{3,})|\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]]+\]\([^)\n]+\)/;
+
 export function selectionMarkdown(text: string, html: string): string {
-  const raw = html.trim() ? converter.turndown(html) || text : text;
+  const plain = text.replace(/\r\n?|[\u2028\u2029]/g, '\n');
+  if (plain.trim() && MARKDOWN_SYNTAX_RE.test(plain) && !SEMANTIC_HTML_RE.test(html)) {
+    return normalizeTranslationMarkdown(plain);
+  }
+  const raw = html.trim() ? converter.turndown(html) || plain : plain;
   return normalizeTranslationMarkdown(raw);
 }
 

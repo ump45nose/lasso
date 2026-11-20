@@ -8,11 +8,13 @@ import {
   ClipboardPaste,
   Copy,
   CornerDownLeft,
+  Eye,
   KeyRound,
   Languages,
   Lock,
   LockOpen,
   NotebookPen,
+  Pencil,
   Pin,
   RotateCcw,
   Square,
@@ -54,7 +56,8 @@ function detectSourceTag(text: string): string {
 export function TranslatorWindow() {
   const [state, setState] = useState<TranslatorWindowState | null>(null);
   const [draft, setDraft] = useState('');
-  const [sourceExpanded, setSourceExpanded] = useState(true);
+  const [sourceFolded, setSourceFolded] = useState(false);
+  const [sourceEditing, setSourceEditing] = useState(true);
   const [langMenuOpen, setLangMenuOpen] = useState(false);
   const [engineMenuOpen, setEngineMenuOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -106,7 +109,9 @@ export function TranslatorWindow() {
       }
       if (nextModeKey !== modeKeyRef.current) {
         modeKeyRef.current = nextModeKey;
-        setSourceExpanded(!(next.fromSelection && next.sourceText.trim()));
+        const hasSource = Boolean(next.sourceText.trim());
+        setSourceFolded(false);
+        setSourceEditing(!hasSource);
       }
       setState(next);
     };
@@ -120,10 +125,10 @@ export function TranslatorWindow() {
   }, [clearDebounce]);
 
   useEffect(() => {
-    if (state?.open && sourceExpanded) {
+    if (state?.open && !sourceFolded && sourceEditing) {
       setTimeout(() => editorRef.current?.focus(), 20);
     }
-  }, [state?.open, sourceExpanded]);
+  }, [state?.open, sourceFolded, sourceEditing]);
 
   const runAct = useCallback(
     async (action: 'copy' | 'replace' | 'pin' | 'note', okMsg: string) => {
@@ -223,7 +228,8 @@ export function TranslatorWindow() {
       const text = (await window.island.readTranslatorClipboard()) || (await navigator.clipboard.readText());
       if (!text) return;
       setDraft(text);
-      setSourceExpanded(true);
+      setSourceFolded(false);
+      setSourceEditing(false);
       await submitTranslate(text, langRef.current);
     } catch (error) {
       setActError(error instanceof Error ? error.message : '读取剪贴板失败');
@@ -301,7 +307,7 @@ export function TranslatorWindow() {
           </button>
         </header>
 
-        {!sourceExpanded && draft.trim() ? (
+        {sourceFolded && draft.trim() ? (
           <div className="sw-src-fold">
             <span className="sw-src-tag mono">{detectSourceTag(draft)}</span>
             <span className="sw-src-trunc">{draft.replace(/\s+/g, ' ')}</span>
@@ -309,8 +315,8 @@ export function TranslatorWindow() {
               type="button"
               className="sw-link-btn"
               onClick={() => {
-                setSourceExpanded(true);
-                setTimeout(() => editorRef.current?.focus(), 20);
+                setSourceFolded(false);
+                setSourceEditing(false);
               }}
             >
               <span>原文</span>
@@ -318,40 +324,74 @@ export function TranslatorWindow() {
             </button>
           </div>
         ) : (
-          <div className="sw-src-box">
-            <NoteEditor
-              className="sw-src-editor"
-              ariaLabel="翻译原文"
-              placeholderText="输入或粘贴要翻译的文本（支持 Markdown）…"
-              value={draft}
-              editorRef={editorRef}
-              onChange={next => {
-                setDraft(next);
-                setActError(null);
-                clearDebounce();
-                debounceRef.current = setTimeout(() => void submitTranslate(next, langRef.current), 420);
-              }}
-              onSubmit={text => void submitTranslate(text, langRef.current)}
-              onPasteHtml={(plain, html) => window.island.htmlToMarkdown(plain, html)}
-            />
+          <div className={'sw-src-box' + (!sourceEditing && draft.trim() ? ' preview' : '')}>
+            {!sourceEditing && draft.trim() ? (
+              <div
+                className="sw-src-preview sw-tr-prose sw-src-prose"
+                role="region"
+                aria-label="翻译原文预览"
+                onClick={event => {
+                  if ((event.target as HTMLElement | null)?.closest('a')) return;
+                  if (window.getSelection()?.toString()) return;
+                  setSourceEditing(true);
+                }}
+              >
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatMarkdownBreaks(draft)}</ReactMarkdown>
+              </div>
+            ) : (
+              <NoteEditor
+                className="sw-src-editor"
+                ariaLabel="翻译原文"
+                placeholderText="输入或粘贴要翻译的文本（支持 Markdown）…"
+                value={draft}
+                editorRef={editorRef}
+                onChange={next => {
+                  setDraft(next);
+                  setActError(null);
+                  clearDebounce();
+                  debounceRef.current = setTimeout(() => void submitTranslate(next, langRef.current), 420);
+                }}
+                onSubmit={text => {
+                  if (text.trim()) setSourceEditing(false);
+                  void submitTranslate(text, langRef.current);
+                }}
+                onPasteHtml={(plain, html) => window.island.htmlToMarkdown(plain, html)}
+              />
+            )}
             <div className="sw-src-tools">
               <button type="button" className="sw-btn ghost sm" onClick={() => void onPasteSource()}>
                 <ClipboardPaste size={13} />
                 <span>粘贴原文</span>
               </button>
-              {state.fromSelection && draft.trim() && (
-                <button type="button" className="sw-btn ghost sm" onClick={() => setSourceExpanded(false)}>
+              {draft.trim() && (
+                <button
+                  type="button"
+                  className="sw-btn ghost sm"
+                  onClick={() => setSourceEditing(v => !v)}
+                >
+                  {sourceEditing ? <Eye size={13} /> : <Pencil size={12} />}
+                  <span>{sourceEditing ? '预览' : '编辑'}</span>
+                </button>
+              )}
+              {draft.trim() && (
+                <button type="button" className="sw-btn ghost sm" onClick={() => setSourceFolded(true)}>
                   <span>折叠</span>
                   <ChevronUp size={12} />
                 </button>
               )}
               <span className="grow" />
-              <span className="sw-keyhint">
-                <kbd className="sw-kbd">↵</kbd>翻译
-              </span>
-              <span className="sw-keyhint">
-                <kbd className="sw-kbd">⇧↵</kbd>换行
-              </span>
+              {sourceEditing ? (
+                <>
+                  <span className="sw-keyhint">
+                    <kbd className="sw-kbd">↵</kbd>翻译
+                  </span>
+                  <span className="sw-keyhint">
+                    <kbd className="sw-kbd">⇧↵</kbd>换行
+                  </span>
+                </>
+              ) : (
+                <span className="sw-src-tag mono">{detectSourceTag(draft)} · Markdown</span>
+              )}
             </div>
           </div>
         )}

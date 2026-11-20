@@ -9,7 +9,7 @@ import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
 import { readClipboardMarkdown, selectionMarkdown } from './selection-markdown';
 
-const WIN_W = 468, WIN_H = 420;
+const WIN_W = 488, WIN_H = 520;
 const LANGUAGES: Record<TranslationLang, string> = { auto: '自动互译', zh: '简体中文', en: '英语', ja: '日语', ko: '韩语', fr: '法语', de: '德语' };
 
 function resolveEffectiveLang(text: string, targetLang: TranslationLang): Exclude<TranslationLang, 'auto'> {
@@ -563,7 +563,7 @@ export class TranslatorPanel {
     this.window.show();
     this.window.focus();
     this.publish();
-    if (text !== undefined) void this.translate(text);
+    if (text !== undefined) void this.translate(normalizeTranslationMarkdown(text));
   }
 
   async translate(text: string, targetLang: TranslationLang = this.state.targetLang): Promise<{ error: string | null }> {

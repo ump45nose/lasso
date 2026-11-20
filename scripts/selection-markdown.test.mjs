@@ -128,3 +128,23 @@ test('rich Gemini list with bold, inline code, and links converts cleanly to Mar
   assert.match(md, /\*\*明天（周四）下午 `14:00`\*\*/);
   assert.match(md, /\n- \*\*今日身体与睡眠补血\*\*：今天白天在工位还困不困？$/);
 });
+
+test('styled editor HTML wrapping raw Markdown preserves Markdown syntax without escaping', () => {
+  const f = fixture();
+  const rawMd = [
+    '## Design Principle',
+    '',
+    '- **Focused**: run `npm run build`',
+    '- See [guide](https://example.com)',
+    '',
+    '| Key | Value |',
+    '| --- | --- |',
+    '| Mode | Markdown |'
+  ].join('\n');
+  const vscodeHtml = `<div style="font-family: Menlo"><div><span>## Design Principle</span></div><br><div><span>- **Focused**: run \`npm run build\`</span></div><div><span>- See [guide](https://example.com)</span></div><br><div><span>| Key | Value |</span></div><div><span>| --- | --- |</span></div><div><span>| Mode | Markdown |</span></div></div>`;
+  const result = f.selectionMarkdown(rawMd, vscodeHtml);
+  assert.equal(result, rawMd);
+  assert.ok(!result.includes('\\#'));
+  assert.ok(!result.includes('\\*'));
+  assert.ok(!result.includes('\\|'));
+});

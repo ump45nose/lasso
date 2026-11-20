@@ -67,8 +67,18 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-link-btn:hover { background: var(--clay-wash); }
 
 .sw-src-box { margin: 12px 14px 0; padding: 10px 12px 8px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line-strong); flex-shrink: 0; transition: border-color var(--t-fast), box-shadow var(--t-fast); }
+.sw-src-box.preview { background: var(--sunken); border-color: var(--line); }
 .sw-src-box:focus-within { border-color: var(--clay-line); box-shadow: 0 0 0 3px var(--clay-halo); }
-.sw-src-editor { width: 100%; min-height: 62px; max-height: 104px; overflow-y: auto; user-select: text; }
+.sw-src-preview { width: 100%; min-height: 44px; max-height: 152px; overflow-y: auto; user-select: text; cursor: text; }
+.sw-src-prose { font-family: var(--font-ui); font-size: 13px; line-height: 1.62; color: var(--ink-2); }
+.sw-src-prose h1 { font-size: 16px; }
+.sw-src-prose h2 { font-size: 14.5px; }
+.sw-src-prose h3, .sw-src-prose h4 { font-size: 13.5px; }
+.sw-src-prose p { margin: 0 0 6px; }
+.sw-src-prose ul, .sw-src-prose ol { margin: 3px 0 6px; padding-left: 18px; }
+.sw-src-prose pre { margin: 6px 0; padding: 7px 9px; font-size: 11.5px; }
+.sw-src-prose table { margin: 6px 0; font-size: 12px; }
+.sw-src-editor { width: 100%; min-height: 62px; max-height: 152px; overflow-y: auto; user-select: text; }
 .sw-src-editor .cm-editor { background: transparent; color: var(--ink); font-family: var(--font-ui); font-size: 13.5px; line-height: 1.65; }
 .sw-src-editor .cm-editor.cm-focused { outline: none; }
 .sw-src-editor .cm-scroller { font-family: inherit; overflow: visible; }

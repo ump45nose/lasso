@@ -519,23 +519,31 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       const { find, page, wait, ready, save, artDataUrl } = global.uiShots;
       const names = [];
 
-      // B3 Translator (folded selection vs expanded input)
+      // B3 Translator (default Markdown preview on both source & target, plus edit & fold toggles)
       const transWin = find('translate');
       await ready(transWin, `Boolean(window.island && document.querySelector('.sw-win'))`);
-      transWin.setSize(440, 340);
+      transWin.setSize(488, 520);
       transWin.setOpacity(1);
       transWin.showInactive();
       const foldedTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'folded'))`);
       transWin.webContents.send('translator:changed', foldedTrans);
       await wait(350);
-      if (!(await page(transWin, `Boolean(document.querySelector('.sw-src-fold'))`))) throw Error('B3 Translator folded source bar missing');
+      if (!(await page(transWin, `Boolean(document.querySelector('.sw-src-preview'))`))) throw Error('B3 Translator selection must default to Markdown source preview');
+      await page(transWin, `[...document.querySelectorAll('.sw-src-tools button')].find(b => b.textContent.includes('折叠'))?.click()`);
+      await wait(150);
+      if (!(await page(transWin, `Boolean(document.querySelector('.sw-src-fold'))`))) throw Error('B3 Translator folded source bar missing after clicking 折叠');
       names.push(await save(transWin, 'v4-b3-translator-folded'));
 
-      transWin.setSize(440, 420);
+      transWin.setSize(488, 520);
       const expandedTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'expanded'))`);
       transWin.webContents.send('translator:changed', expandedTrans);
       await wait(350);
-      if (!(await page(transWin, `Boolean(document.querySelector('.sw-src-box'))`))) throw Error('B3 Translator expanded source box missing');
+      if (!(await page(transWin, `(() => {
+        const src = document.querySelector('.sw-src-preview');
+        const dst = document.querySelector('.sw-tr-out .sw-tr-prose');
+        return Boolean(src?.querySelector('h2') && src?.querySelector('strong') && src?.querySelector('code') && src?.querySelector('ul > li') &&
+          dst?.querySelector('h2') && dst?.querySelector('code'));
+      })()`))) throw Error('B3 Translator must render Markdown preview in both source and target');
       names.push(await save(transWin, 'v4-b3-translator-expanded'));
 
       await page(transWin, `document.querySelector('.sw-engine-btn')?.click()`);
@@ -545,32 +553,34 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       await page(transWin, `document.querySelector('.sw-engine-btn')?.click()`);
       await wait(120);
 
-      transWin.setSize(468, 560);
+      transWin.setSize(488, 600);
       const markdownTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'markdown'))`);
       transWin.webContents.send('translator:changed', markdownTrans);
       await wait(200);
       if (!(await page(transWin, `(() => {
-        const prose = document.querySelector('.sw-tr-prose');
-        return prose.querySelectorAll('ul > li').length === 2 && prose.textContent.includes('~/WorkSpace') && !prose.textContent.includes('\\\\');
-      })()`))) throw Error('B3 escaped translation must preview as a two-item list without literal backslashes');
+        const src = document.querySelector('.sw-src-preview');
+        const prose = document.querySelector('.sw-tr-out .sw-tr-prose');
+        return src?.querySelectorAll('ul > li').length === 2 && !src.textContent.includes('\\\\') &&
+          prose.querySelectorAll('ul > li').length === 2 && prose.textContent.includes('~/WorkSpace') && !prose.textContent.includes('\\\\');
+      })()`))) throw Error('B3 escaped translation must preview as a two-item list without literal backslashes in both source and target');
       names.push(await save(transWin, 'v4-b3-translator-markdown'));
 
       transWin.setSize(375, 620);
       transWin.webContents.send('translator:changed', { ...markdownTrans, status: 'streaming' });
       await wait(200);
-      if (!(await page(transWin, `Boolean(document.querySelector('.sw-tr-prose ul') && document.querySelector('.sw-caret'))`))) throw Error('B3 Markdown preview missing while streaming');
+      if (!(await page(transWin, `Boolean(document.querySelector('.sw-tr-out .sw-tr-prose ul') && document.querySelector('.sw-caret'))`))) throw Error('B3 Markdown preview missing while streaming');
       if (!(await page(transWin, `(() => {
         const footer = document.querySelector('.sw-tr .sw-wfoot');
         return [...footer.querySelectorAll('button')].every(button => button.getBoundingClientRect().right <= footer.getBoundingClientRect().right);
       })()`))) throw Error('B3 narrow translator footer clips an action');
       names.push(await save(transWin, 'v4-b3-translator-markdown-streaming-narrow'));
 
-      transWin.setSize(468, 660);
+      transWin.setSize(488, 680);
       const codeTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'markdown-code'))`);
       transWin.webContents.send('translator:changed', codeTrans);
       await wait(200);
       if (!(await page(transWin, `(() => {
-        const prose = document.querySelector('.sw-tr-prose');
+        const prose = document.querySelector('.sw-tr-out .sw-tr-prose');
         return prose.querySelectorAll('ol > li').length === 2 && prose.querySelector('h2') && prose.querySelector('strong') &&
           prose.querySelector('a') && prose.querySelector('blockquote') && prose.querySelector('table') &&
           prose.querySelector('p > br') && prose.querySelector('pre code').textContent === '\\\\- literal\\n\u0060\u0060\u0060\\n\\\\# literal heading\\n' &&
@@ -578,14 +588,16 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       })()`))) throw Error('B3 Markdown structures, hard breaks, or fenced code were changed');
       names.push(await save(transWin, 'v4-b3-translator-markdown-code'));
 
-      transWin.setSize(468, 470);
+      transWin.setSize(488, 540);
       const selectedTrans = await page(transWin, `window.island.getTranslatorState().then(b => window.__uiShotsFixtures.translatorState(b, 'selection'))`);
       transWin.webContents.send('translator:changed', selectedTrans);
       await wait(200);
       if (!(await page(transWin, `(() => {
-        const prose = document.querySelector('.sw-tr-prose');
-        return prose.querySelectorAll(':scope > p').length === 2 && prose.querySelectorAll('ol > li').length === 2 && Boolean(prose.querySelector('code'));
-      })()`))) throw Error('B3 rich selection lost paragraphs, ordered list items, or inline code');
+        const src = document.querySelector('.sw-src-preview');
+        const prose = document.querySelector('.sw-tr-out .sw-tr-prose');
+        return Boolean(src?.querySelectorAll('ol > li').length === 2 && src?.querySelector('code') &&
+          prose.querySelectorAll(':scope > p').length === 2 && prose.querySelectorAll('ol > li').length === 2 && prose.querySelector('code'));
+      })()`))) throw Error('B3 rich selection lost paragraphs, ordered list items, or inline code in source or target');
       names.push(await save(transWin, 'v4-b3-translator-selection-format'));
       transWin.hide();
 
@@ -618,13 +630,21 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       await wait(300);
       names.push(await save(isl, 'v4-b4-island-alert'));
 
-      isl.setSize(440, 680);
+      isl.setSize(440, 740);
       isl.webContents.send('island:changed', islFixtures.board);
       await wait(400);
       if (await page(isl, `document.body.textContent.includes('Codex')`)) throw Error('B4 Island board still contains retired CLI');
       if (await page(isl, `document.body.textContent.includes('阶段主线')`)) throw Error('B4 Island board still contains retired 阶段主线');
       if (!(await page(isl, `Boolean(document.querySelector('.isl-review-pill')) && Boolean(document.querySelector('.isl-task-tabs'))`))) {
         throw Error('B4 Island board missing review pill or task tabs');
+      }
+      if (!(await page(isl, `(() => {
+        const card = document.querySelector('.isl-drop-card.mode-board');
+        const tools = document.querySelector('.isl-tools6');
+        if (!card || !tools) return false;
+        return tools.getBoundingClientRect().bottom <= card.getBoundingClientRect().bottom + 1;
+      })()`))) {
+        throw Error('B4 Island board quick tools (剪贴板等) clipped below visible card bounds');
       }
       names.push(await save(isl, 'v4-b4-island-board'));
 
