@@ -582,6 +582,7 @@ export interface IslandAPI {
   htmlToMarkdown(text: string, html: string): Promise<string>;
   setTranslatorPinned(pinned: boolean): Promise<void>;
   translatorAct(action: 'copy' | 'replace' | 'pin' | 'note', text: string): Promise<{ error: string | null }>;
+  resizeTranslator(size: { width?: number; height: number }): void;
   closeTranslator(): void;
   onTranslatorState(callback: (state: TranslatorWindowState) => void): () => void;
   getClipboardState(): Promise<ClipboardWindowState>;

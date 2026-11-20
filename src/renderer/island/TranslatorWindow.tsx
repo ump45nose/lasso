@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -68,6 +68,8 @@ export function TranslatorWindow() {
   const modeKeyRef = useRef<string>('');
   const langRef = useRef<TranslationLang>('auto');
   const editorRef = useRef<EditorView | null>(null);
+  const winRef = useRef<HTMLElement | null>(null);
+  const lastSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
   useFonts(state?.fonts);
 
@@ -129,6 +131,41 @@ export function TranslatorWindow() {
       setTimeout(() => editorRef.current?.focus(), 20);
     }
   }, [state?.open, sourceFolded, sourceEditing]);
+
+  useLayoutEffect(() => {
+    if (!state?.open) return;
+    const fitWindow = () => {
+      const winEl = winRef.current;
+      if (!winEl) return;
+      const barH = winEl.querySelector<HTMLElement>('.sw-wbar')?.offsetHeight ?? 44;
+      const srcEl = winEl.querySelector<HTMLElement>('.sw-src-box, .sw-src-fold');
+      const srcH = srcEl ? srcEl.offsetHeight + 12 : 0;
+      const engineH = winEl.querySelector<HTMLElement>('.sw-engine')?.offsetHeight ?? 34;
+      const footH = winEl.querySelector<HTMLElement>('.sw-wfoot')?.offsetHeight ?? 50;
+      const contentEl = winEl.querySelector<HTMLElement>('.sw-tr-out .sw-tr-prose, .sw-tr-out .sw-tr-error, .sw-tr-out .sw-tr-placeholder');
+      const contentH = contentEl ? Math.ceil(contentEl.scrollHeight) : 64;
+      const combined = `${draft}\n${state.translatedText || ''}`;
+      const maxLen = Math.max(draft.trim().length, (state.translatedText || '').trim().length);
+      const lineCount = Math.max(draft.split('\n').length, (state.translatedText || '').split('\n').length);
+      const hasWideBlock = /```|\n\s*\|.+\|/.test(combined);
+      const width = hasWideBlock || maxLen > 340 ? 660 : maxLen > 140 || lineCount >= 4 ? 580 : 520;
+      // 28px stage padding + 26px .sw-tr-out vertical padding + 6px border/breathing room
+      const height = Math.max(340, barH + srcH + engineH + Math.max(92, contentH) + footH + 60);
+      const prev = lastSizeRef.current;
+      if (Math.abs(width - prev.width) >= 6 || Math.abs(height - prev.height) >= 6) {
+        lastSizeRef.current = { width, height };
+        window.island.resizeTranslator?.({ width, height });
+      }
+    };
+    const raf = requestAnimationFrame(fitWindow);
+    const proseEl = winRef.current?.querySelector<HTMLElement>('.sw-tr-out .sw-tr-prose');
+    const ro = proseEl && typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fitWindow) : null;
+    if (proseEl && ro) ro.observe(proseEl);
+    return () => {
+      cancelAnimationFrame(raf);
+      ro?.disconnect();
+    };
+  }, [state?.open, state?.translatedText, state?.status, state?.error, draft, sourceFolded, sourceEditing]);
 
   const runAct = useCallback(
     async (action: 'copy' | 'replace' | 'pin' | 'note', okMsg: string) => {
@@ -246,7 +283,7 @@ export function TranslatorWindow() {
         if (engineMenuOpen) setEngineMenuOpen(false);
       }}
     >
-      <section className="sw-win sw-tr" role="dialog" aria-label="翻译浮窗">
+      <section ref={winRef} className="sw-win sw-tr" role="dialog" aria-label="翻译浮窗">
         <header className="sw-wbar">
           <span className="sw-wbar-title">
             <Languages size={15} className="sw-muted-ic" />

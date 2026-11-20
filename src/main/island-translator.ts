@@ -9,8 +9,18 @@ import { createIslandWindow } from './island-window';
 import { nativeAx, type NativeAx } from './native-ax';
 import { readClipboardMarkdown, selectionMarkdown } from './selection-markdown';
 
-const WIN_W = 488, WIN_H = 520;
+const WIN_W = 540, WIN_H = 440, MIN_W = 500, MAX_W = 700, MIN_H = 340;
 const LANGUAGES: Record<TranslationLang, string> = { auto: '自动互译', zh: '简体中文', en: '英语', ja: '日语', ko: '韩语', fr: '法语', de: '德语' };
+
+function preferredTranslatorWidth(text: string): number {
+  const trimmed = text.trim();
+  if (!trimmed) return 520;
+  const hasWideBlock = /```|\n\s*\|.+\|/.test(trimmed);
+  const lineCount = trimmed.split('\n').length;
+  if (hasWideBlock || trimmed.length > 340) return 660;
+  if (trimmed.length > 140 || lineCount >= 4) return 580;
+  return 520;
+}
 
 function resolveEffectiveLang(text: string, targetLang: TranslationLang): Exclude<TranslationLang, 'auto'> {
   if (targetLang !== 'auto') return targetLang;
@@ -538,6 +548,10 @@ export class TranslatorPanel {
     });
     ipcMain.handle('translator:pinned', (event, pinned: boolean) => { check(event); this.setPinned(pinned); });
     ipcMain.handle('translator:act', (event, action: 'copy' | 'replace' | 'pin' | 'note', text: string) => { check(event); return this.act(action, text); });
+    ipcMain.on('translator:resize', (event, size: { width?: number; height: number }) => {
+      check(event);
+      this.resize(size);
+    });
     ipcMain.on('translator:close', event => { check(event); this.close(); });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'translate' } });
   }
@@ -556,14 +570,33 @@ export class TranslatorPanel {
     this.state.open = true;
     this.refreshConnection();
     const cursor = screen.getCursorScreenPoint(), area = screen.getDisplayNearestPoint(cursor).workArea;
-    this.window.setPosition(
-      Math.round(Math.max(area.x, Math.min(cursor.x - WIN_W / 2, area.x + area.width - WIN_W))),
-      Math.round(Math.max(area.y, Math.min(cursor.y + 12, area.y + area.height - WIN_H)))
-    );
+    const width = Math.min(preferredTranslatorWidth(text ?? ''), Math.max(MIN_W, area.width - 24));
+    const height = Math.min(WIN_H, Math.max(MIN_H, area.height - 24));
+    this.window.setBounds({
+      x: Math.round(Math.max(area.x, Math.min(cursor.x - width / 2, area.x + area.width - width))),
+      y: Math.round(Math.max(area.y, Math.min(cursor.y + 12, area.y + area.height - height))),
+      width,
+      height
+    });
     this.window.show();
     this.window.focus();
     this.publish();
     if (text !== undefined) void this.translate(normalizeTranslationMarkdown(text));
+  }
+
+  resize(size: { width?: number; height: number }) {
+    if (process.env.LASSO_DATA_ROOT || !this.state.open || this.window.isDestroyed() || !size || !Number.isFinite(size.height)) return;
+    const cur = this.window.getBounds();
+    const area = screen.getDisplayMatching(cur).workArea;
+    const maxW = Math.min(MAX_W, Math.max(MIN_W, area.width - 24));
+    const maxH = Math.min(Math.round(area.height * 0.86), Math.max(MIN_H, area.height - 24));
+    const rawW = typeof size.width === 'number' && Number.isFinite(size.width) ? size.width : cur.width;
+    const nextW = Math.round(Math.max(MIN_W, Math.min(rawW, maxW)));
+    const nextH = Math.round(Math.max(MIN_H, Math.min(size.height, maxH)));
+    if (Math.abs(nextW - cur.width) < 6 && Math.abs(nextH - cur.height) < 6) return;
+    const nextX = Math.round(Math.max(area.x, Math.min(cur.x + (cur.width - nextW) / 2, area.x + area.width - nextW)));
+    const nextY = Math.round(Math.max(area.y, Math.min(cur.y, area.y + area.height - nextH)));
+    this.window.setBounds({ x: nextX, y: nextY, width: nextW, height: nextH });
   }
 
   async translate(text: string, targetLang: TranslationLang = this.state.targetLang): Promise<{ error: string | null }> {
@@ -702,7 +735,7 @@ export class TranslatorPanel {
     this.quitting = true;
     this.cancel();
     for (const channel of ['translator:state', 'translator:translate', 'translator:lang', 'translator:engine', 'translator:open-settings', 'translator:read-clipboard', 'translator:html-to-markdown', 'translator:pinned', 'translator:act']) ipcMain.removeHandler(channel);
-    for (const channel of ['translator:cancel', 'translator:close']) ipcMain.removeAllListeners(channel);
+    for (const channel of ['translator:cancel', 'translator:resize', 'translator:close']) ipcMain.removeAllListeners(channel);
     if (!this.window.isDestroyed()) this.window.destroy();
   }
 

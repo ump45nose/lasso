@@ -28,6 +28,7 @@ const api: IslandAPI = {
   htmlToMarkdown: (text, html) => ipcRenderer.invoke('translator:html-to-markdown', text, html),
   setTranslatorPinned: pinned => ipcRenderer.invoke('translator:pinned', pinned),
   translatorAct: (action, text) => ipcRenderer.invoke('translator:act', action, text),
+  resizeTranslator: size => ipcRenderer.send('translator:resize', size),
   closeTranslator: () => ipcRenderer.send('translator:close'),
   onTranslatorState: callback => on<TranslatorWindowState>('translator:changed', callback),
   getClipboardState: () => ipcRenderer.invoke('clipboard-history:state'),

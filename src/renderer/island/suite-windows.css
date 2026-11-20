@@ -69,7 +69,7 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-src-box { margin: 12px 14px 0; padding: 10px 12px 8px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line-strong); flex-shrink: 0; transition: border-color var(--t-fast), box-shadow var(--t-fast); }
 .sw-src-box.preview { background: var(--sunken); border-color: var(--line); }
 .sw-src-box:focus-within { border-color: var(--clay-line); box-shadow: 0 0 0 3px var(--clay-halo); }
-.sw-src-preview { width: 100%; min-height: 44px; max-height: 152px; overflow-y: auto; user-select: text; cursor: text; }
+.sw-src-preview { width: 100%; min-height: 34px; max-height: 82px; overflow-y: auto; user-select: text; cursor: text; }
 .sw-src-prose { font-family: var(--font-ui); font-size: 13px; line-height: 1.62; color: var(--ink-2); }
 .sw-src-prose h1 { font-size: 16px; }
 .sw-src-prose h2 { font-size: 14.5px; }
