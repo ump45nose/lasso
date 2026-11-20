@@ -57,6 +57,7 @@ static id g_fullscreen_app_obs = nil;
 static id g_fullscreen_screen_obs = nil;
 static dispatch_source_t g_fullscreen_timer = nil;
 static int g_last_fullscreen_state = -1;
+static int g_fullscreen_exit_streak = 0;
 
 static void onMain(void (^block)(void));
 
@@ -172,32 +173,99 @@ static napi_value pasteboardRich(napi_env e, napi_callback_info) {
   return result;
 }
 
+static bool pressCopyMenuItem(pid_t pid) {
+  if (!AXIsProcessTrusted()) return false;
+  AXUIElementRef appRef = AXUIElementCreateApplication(pid);
+  if (!appRef) return false;
+  AXUIElementSetMessagingTimeout(appRef, 0.12f);
+  bool pressed = false;
+  CFTypeRef menuBarRef = nullptr;
+  if (AXUIElementCopyAttributeValue(appRef, kAXMenuBarAttribute, &menuBarRef) == kAXErrorSuccess && menuBarRef) {
+    CFTypeRef menusRef = nullptr;
+    if (AXUIElementCopyAttributeValue((AXUIElementRef)menuBarRef, kAXChildrenAttribute, &menusRef) == kAXErrorSuccess && menusRef) {
+      for (id menuBarItem in (__bridge NSArray*)menusRef) {
+        CFTypeRef subMenusRef = nullptr;
+        if (AXUIElementCopyAttributeValue((__bridge AXUIElementRef)menuBarItem, kAXChildrenAttribute, &subMenusRef) != kAXErrorSuccess || !subMenusRef) continue;
+        for (id subMenu in (__bridge NSArray*)subMenusRef) {
+          CFTypeRef itemsRef = nullptr;
+          if (AXUIElementCopyAttributeValue((__bridge AXUIElementRef)subMenu, kAXChildrenAttribute, &itemsRef) != kAXErrorSuccess || !itemsRef) continue;
+          for (id itemObj in (__bridge NSArray*)itemsRef) {
+            AXUIElementRef item = (__bridge AXUIElementRef)itemObj;
+            CFTypeRef cmdRef = nullptr;
+            if (AXUIElementCopyAttributeValue(item, kAXMenuItemCmdCharAttribute, &cmdRef) == kAXErrorSuccess && cmdRef) {
+              bool isC = CFGetTypeID(cmdRef) == CFStringGetTypeID() &&
+                [(__bridge NSString*)cmdRef caseInsensitiveCompare:@"C"] == NSOrderedSame;
+              CFRelease(cmdRef);
+              if (isC) {
+                int mods = 0;
+                CFTypeRef modRef = nullptr;
+                if (AXUIElementCopyAttributeValue(item, kAXMenuItemCmdModifiersAttribute, &modRef) == kAXErrorSuccess && modRef) {
+                  if (CFGetTypeID(modRef) == CFNumberGetTypeID()) {
+                    CFNumberGetValue((CFNumberRef)modRef, kCFNumberIntType, &mods);
+                  }
+                  CFRelease(modRef);
+                }
+                if (mods == 0) {
+                  bool enabled = true;
+                  CFTypeRef enRef = nullptr;
+                  if (AXUIElementCopyAttributeValue(item, kAXEnabledAttribute, &enRef) == kAXErrorSuccess && enRef) {
+                    if (CFGetTypeID(enRef) == CFBooleanGetTypeID()) enabled = CFBooleanGetValue((CFBooleanRef)enRef);
+                    CFRelease(enRef);
+                  }
+                  if (enabled && AXUIElementPerformAction(item, kAXPressAction) == kAXErrorSuccess) {
+                    pressed = true;
+                    break;
+                  }
+                }
+              }
+            }
+          }
+          CFRelease(itemsRef);
+          if (pressed) break;
+        }
+        CFRelease(subMenusRef);
+        if (pressed) break;
+      }
+      CFRelease(menusRef);
+    }
+    CFRelease(menuBarRef);
+  }
+  CFRelease(appRef);
+  return pressed;
+}
+
 static napi_value copySelectionToProcess(napi_env e, napi_callback_info info) {
-  size_t n = 1;
-  napi_value args[1], result;
+  size_t n = 2;
+  napi_value args[2], result;
   napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
   int32_t pid = 0;
+  bool forceKey = false;
+  if (n >= 2) {
+    bool flag = false;
+    if (napi_get_value_bool(e, args[1], &flag) == napi_ok) forceKey = flag;
+  }
   bool sent = false;
-  if (n == 1 && napi_get_value_int32(e, args[0], &pid) == napi_ok && pid > 0 && pid != getpid()) {
+  if (n >= 1 && napi_get_value_int32(e, args[0], &pid) == napi_ok && pid > 0 && pid != getpid()) {
     @autoreleasepool {
       if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == pid) {
-        CGEventSourceRef source = CGEventSourceCreate(kCGEventSourceStatePrivate);
-        CGEventRef down = CGEventCreateKeyboardEvent(source, 8, true); // Cmd+C
-        CGEventRef up = CGEventCreateKeyboardEvent(source, 8, false);
-        if (down && up) {
-          CGEventSetFlags(down, kCGEventFlagMaskCommand);
-          CGEventSetFlags(up, kCGEventFlagMaskCommand);
-          CGEventSetIntegerValueField(down, kCGEventSourceUserData, kLassoCopyEvent);
-          CGEventSetIntegerValueField(up, kCGEventSourceUserData, kLassoCopyEvent);
-          // Separate keyDown and keyUp briefly and target the frontmost pid directly so browsers never drop Cmd+C.
-          CGEventPostToPid((pid_t)pid, down);
-          usleep(8000);
-          CGEventPostToPid((pid_t)pid, up);
+        if (!forceKey && pressCopyMenuItem((pid_t)pid)) {
           sent = true;
+        } else {
+          CGEventRef down = CGEventCreateKeyboardEvent(nullptr, 8, true); // Cmd+C
+          CGEventRef up = CGEventCreateKeyboardEvent(nullptr, 8, false);
+          if (down && up) {
+            CGEventSetFlags(down, kCGEventFlagMaskCommand);
+            CGEventSetFlags(up, kCGEventFlagMaskCommand);
+            CGEventSetIntegerValueField(down, kCGEventSourceUserData, kLassoCopyEvent);
+            CGEventSetIntegerValueField(up, kCGEventSourceUserData, kLassoCopyEvent);
+            CGEventPost(kCGHIDEventTap, down);
+            usleep(12000);
+            CGEventPost(kCGHIDEventTap, up);
+            sent = true;
+          }
+          if (down) CFRelease(down);
+          if (up) CFRelease(up);
         }
-        if (down) CFRelease(down);
-        if (up) CFRelease(up);
-        if (source) CFRelease(source);
       }
     }
   }
@@ -1418,7 +1486,7 @@ static bool isPrimaryDisplayFullscreen() {
 
     if (frontPid > 0 && frontPid != selfPid && AXIsProcessTrusted()) {
       AXUIElementRef appRef = AXUIElementCreateApplication(frontPid);
-      AXUIElementSetMessagingTimeout(appRef, 0.04f);
+      AXUIElementSetMessagingTimeout(appRef, 0.12f);
       CFTypeRef winRef = nullptr;
       if (AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute, &winRef) == kAXErrorSuccess && winRef) {
         CFTypeRef fsRef = nullptr;
@@ -1510,9 +1578,17 @@ static void callFullscreenJS(napi_env env, napi_value cb, void*, void* data) {
   delete state;
 }
 
-static void checkFullscreenState() {
+static void checkFullscreenState(bool immediateExit = false) {
   if (!g_fullscreen_tsfn) return;
   int current = isPrimaryDisplayFullscreen() ? 1 : 0;
+  if (current == 1) {
+    g_fullscreen_exit_streak = 0;
+  } else if (g_last_fullscreen_state == 1 && !immediateExit) {
+    // Require 2 consecutive non-fullscreen polls to avoid flickering during video decode / brief OSD.
+    if (++g_fullscreen_exit_streak < 2) return;
+  } else {
+    g_fullscreen_exit_streak = 0;
+  }
   if (current == g_last_fullscreen_state) return;
   g_last_fullscreen_state = current;
   auto* payload = new bool(current == 1);
@@ -1533,6 +1609,7 @@ static void stopFullscreenMonitoring() {
       g_fullscreen_timer = nil;
     }
     g_last_fullscreen_state = -1;
+    g_fullscreen_exit_streak = 0;
     if (g_fullscreen_tsfn) {
       napi_release_threadsafe_function(g_fullscreen_tsfn, napi_tsfn_abort);
       g_fullscreen_tsfn = nullptr;
@@ -1562,7 +1639,7 @@ static napi_value startFullscreenWatch(napi_env e, napi_callback_info info) {
   onMain(^{
     NSNotificationCenter* wsCenter = [NSWorkspace sharedWorkspace].notificationCenter;
     auto handler = ^(NSNotification*) {
-      checkFullscreenState();
+      checkFullscreenState(true);
     };
     g_fullscreen_space_obs = [wsCenter addObserverForName:NSWorkspaceActiveSpaceDidChangeNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:handler];
     g_fullscreen_app_obs = [wsCenter addObserverForName:NSWorkspaceDidActivateApplicationNotification object:nil queue:[NSOperationQueue mainQueue] usingBlock:handler];
@@ -1571,11 +1648,11 @@ static napi_value startFullscreenWatch(napi_env e, napi_callback_info info) {
     g_fullscreen_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
     dispatch_source_set_timer(g_fullscreen_timer, dispatch_time(DISPATCH_TIME_NOW, 1000 * NSEC_PER_MSEC), 1000 * NSEC_PER_MSEC, 250 * NSEC_PER_MSEC);
     dispatch_source_set_event_handler(g_fullscreen_timer, ^{
-      checkFullscreenState();
+      checkFullscreenState(false);
     });
     dispatch_resume(g_fullscreen_timer);
 
-    checkFullscreenState();
+    checkFullscreenState(true);
   });
 
   napi_value undefined;

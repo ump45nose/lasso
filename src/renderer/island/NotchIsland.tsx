@@ -447,7 +447,16 @@ export function NotchIsland() {
                         </span>
                         {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
                         <span className="isl-wing isl-wing-right">
-                          <span className="isl-wing-meta mono">{focusOpenTasks.length > 0 ? `今日剩 ${focusOpenTasks.length} 项` : 'Nook 复盘'}</span>
+                          <span className="isl-wing-meta mono">
+                            {focusOpenTasks.length > 0 ? (
+                              <>
+                                <ListChecks size={11} className="isl-wing-meta-ic" aria-hidden="true" />
+                                <span>{focusOpenTasks.length}</span>
+                              </>
+                            ) : (
+                              '复盘'
+                            )}
+                          </span>
                         </span>
                       </button>
                     )}

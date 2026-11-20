@@ -92,8 +92,10 @@ export async function readSelectionMarkdown(pid: number, ax: Partial<NativeAx>):
 
   let copiedCount: number | null = null;
   try {
-    if (!ax.copySelectionToProcess(pid)) return null;
-    const deadline = Date.now() + 800;
+    if (!ax.copySelectionToProcess(pid, false)) return null;
+    const startedAt = Date.now();
+    const deadline = startedAt + 800;
+    let retriedWithKey = false;
     while (Date.now() < deadline) {
       const current = ax.pasteboardMeta?.();
       if (current && current.changeCount !== before.changeCount) {
@@ -111,6 +113,10 @@ export async function readSelectionMarkdown(pid: number, ax: Partial<NativeAx>):
         }
         if (ax.pasteboardMeta?.().changeCount !== copiedCount) return null;
         return selectionMarkdown(text, html) || null;
+      }
+      if (!retriedWithKey && Date.now() - startedAt >= 180) {
+        retriedWithKey = true;
+        ax.copySelectionToProcess(pid, true);
       }
       await new Promise(resolve => setTimeout(resolve, 15));
     }
