@@ -246,8 +246,8 @@ export function NotchIsland() {
   const menuH = notch?.menuBarHeight ?? (hasNotch ? (notch?.height ?? 30) : 28);
   const leftSafeW = hasNotch
     ? Math.min(220, Math.max(140, notch?.leftSafeWidth ?? 180))
-    : Math.min(184, Math.max(124, notch?.leftSafeWidth ?? 156));
-  const rightSafeW = hasNotch ? 0 : Math.min(124, Math.max(76, notch?.rightSafeWidth ?? 92));
+    : Math.min(160, Math.max(116, notch?.leftSafeWidth ?? 132));
+  const rightSafeW = hasNotch ? 0 : Math.min(88, Math.max(48, notch?.rightSafeWidth ?? 56));
 
   // State 1: All-Clear hidden when nothing pending and not expanded
   const wingKind =
