@@ -1146,14 +1146,12 @@ static napi_value frontmostApp(napi_env e, napi_callback_info) {
 static pid_t g_cached_front_pid = 0;
 static double g_cached_menu_time = 0.0;
 static double g_cached_left_menu_right = 320.0;
-static double g_cached_blocker_center_x = 0.0;
-static bool g_cached_has_blocker = false;
-
 static NSStatusItem* g_island_blocker_item = nil;
 static NSString* g_blocker_current_key = nil;
 static napi_threadsafe_function g_island_click_tsfn = nullptr;
 static double g_blocker_screen_w = 0.0;
 static bool g_blocker_calibrating = false;
+static bool g_blocker_calibrated_for_screen = false;
 static int g_blocker_seq = 0;
 static int g_blocker_calib_gen = 0;
 
@@ -1205,6 +1203,7 @@ static void stopIslandBlocker() {
   onMain(^{
     g_blocker_calib_gen++;
     g_blocker_calibrating = false;
+    g_blocker_calibrated_for_screen = false;
     g_blocker_screen_w = 0.0;
     removeBlockerItemOnMain();
     clearBlockerDefaults();
@@ -1256,66 +1255,130 @@ static void pollBlockerFrame(int gen, double screenOriginX, double screenTopY, i
   });
 }
 
+static void finalizeBlockerWidth(int gen, double screenOriginX, double screenTopY,
+                                 double capsuleLeft, double capsuleRight, double probeWidth,
+                                 bool sawLeftOfRightEdge, NSRect bf) {
+  if (gen != g_blocker_calib_gen) return;
+  double rightEdge = NSMaxX(bf);
+
+  // If every status item already sits to the right of the capsule even when the probe is pushed
+  // all the way left, no menu bar icon overlaps the capsule — remove the blocker to avoid empty padding.
+  if (!sawLeftOfRightEdge && rightEdge >= capsuleRight + 4.0) {
+    removeBlockerItemOnMain();
+    g_blocker_calibrated_for_screen = true;
+    g_blocker_calibrating = false;
+    return;
+  }
+
+  // Expand the existing NSStatusItem in-place from its anchored right edge to cover down to capsuleLeft.
+  // A 2pt inset accounts for macOS's built-in horizontal padding around adjacent status items.
+  double targetLeft = capsuleLeft + 2.0;
+  double pad = std::max(0.0, (double)bf.size.width - probeWidth);
+  double capsuleW = capsuleRight - capsuleLeft;
+  double desiredSpan = std::clamp(rightEdge - targetLeft, probeWidth, capsuleW + 48.0);
+  double targetLen = std::max(probeWidth, std::round(desiredSpan - pad));
+  if (g_island_blocker_item) {
+    g_island_blocker_item.length = targetLen;
+  }
+
+  // One closed-loop readback to eliminate any residual macOS padding/rounding mismatch on the left edge.
+  pollBlockerFrame(gen, screenOriginX, screenTopY, 0, ^(NSRect settledBf, bool settledValid) {
+    if (gen != g_blocker_calib_gen) return;
+    if (settledValid && g_island_blocker_item) {
+      double leftErr = settledBf.origin.x - targetLeft;
+      if (std::abs(leftErr) >= 2.0) {
+        double nextLen = std::clamp(std::round(g_island_blocker_item.length + leftErr), probeWidth, capsuleW + 48.0);
+        if (std::abs(nextLen - g_island_blocker_item.length) >= 1.0) {
+          g_island_blocker_item.length = nextLen;
+        }
+      }
+    }
+    g_blocker_calibrated_for_screen = true;
+    g_blocker_calibrating = false;
+  });
+}
+
 static void runBlockerCalibStep(int gen, int step, double lo, double hi, double bestPos, double bestScore,
-                                double screenOriginX, double screenTopY, double screenCenterX, double capsuleW, double width) {
+                                bool sawLeftOfRightEdge, double screenOriginX, double screenTopY,
+                                double capsuleLeft, double capsuleRight, double probeWidth) {
   if (gen != g_blocker_calib_gen) return;
   double mid = std::round((lo + hi) * 0.5);
-  createBlockerItemAtPos(mid, width);
+  createBlockerItemAtPos(mid, probeWidth);
   pollBlockerFrame(gen, screenOriginX, screenTopY, 0, ^(NSRect bf, bool valid) {
     if (gen != g_blocker_calib_gen) return;
     if (!valid) {
-      g_blocker_calibrating = false;
-      return;
-    }
-    double capsuleLeft = screenCenterX - capsuleW * 0.5;
-    double capsuleRight = screenCenterX + capsuleW * 0.5;
-    double center = NSMidX(bf);
-    double diff = center - screenCenterX;
-    double absDiff = std::abs(diff);
-    // Heavily penalize any placement that leaves part of the centered capsule uncovered by the blocker slot.
-    double uncovered = std::max(0.0, bf.origin.x - capsuleLeft) + std::max(0.0, capsuleRight - NSMaxX(bf));
-    double score = uncovered * 10.0 + absDiff;
-    double nextBestScore = bestScore;
-    double nextBestPos = bestPos;
-    if (score <= nextBestScore + 0.5) {
-      nextBestScore = score;
-      nextBestPos = mid;
-    }
-    g_cached_blocker_center_x = (bf.origin.x > screenCenterX + 124.0) ? screenCenterX : center;
-    g_cached_has_blocker = true;
-
-    if ((uncovered <= 1.0 && absDiff <= 12.0) || step >= 8) {
-      if (std::abs(mid - nextBestPos) >= 1.0) {
-        createBlockerItemAtPos(nextBestPos, width);
+      if (step < 8 && (hi - lo) >= 2.0) {
+        // Probe was likely pushed off-bar to the left; back off rightwards.
+        runBlockerCalibStep(gen, step + 1, lo, mid, bestPos, bestScore, true,
+                            screenOriginX, screenTopY, capsuleLeft, capsuleRight, probeWidth);
+        return;
+      }
+      if (bestScore < 1e8) {
+        createBlockerItemAtPos(bestPos, probeWidth);
         pollBlockerFrame(gen, screenOriginX, screenTopY, 0, ^(NSRect finalBf, bool finalValid) {
           if (gen != g_blocker_calib_gen) return;
           if (finalValid) {
-            double fc = NSMidX(finalBf);
-            g_cached_blocker_center_x = (finalBf.origin.x > screenCenterX + 124.0) ? screenCenterX : fc;
-            g_cached_has_blocker = true;
+            finalizeBlockerWidth(gen, screenOriginX, screenTopY, capsuleLeft, capsuleRight, probeWidth, true, finalBf);
+          } else {
+            g_blocker_calibrating = false;
           }
-          g_blocker_calibrating = false;
         });
       } else {
         g_blocker_calibrating = false;
       }
       return;
     }
+
+    double rightEdge = NSMaxX(bf);
+    double overshoot = rightEdge - capsuleRight;
+    bool nextSawLeft = sawLeftOfRightEdge || (overshoot < -2.0);
+    // Anchor the blocker's right edge as tightly as possible at/just right of capsuleRight (-2pt tolerance)
+    // so right-side icons are neither covered nor pushed away leaving an empty gap on the right.
+    double score = (overshoot >= -2.0) ? std::max(0.0, overshoot) : (1000.0 + (-overshoot));
+    double nextBestScore = bestScore;
+    double nextBestPos = bestPos;
+    if (score < nextBestScore - 0.5 || (std::abs(score - nextBestScore) <= 0.5 && mid > nextBestPos)) {
+      nextBestScore = score;
+      nextBestPos = mid;
+    }
+
+    if ((overshoot >= -2.0 && overshoot <= 4.0) || step >= 8 || (hi - lo) < 2.0) {
+      if (std::abs(mid - nextBestPos) >= 1.0) {
+        createBlockerItemAtPos(nextBestPos, probeWidth);
+        pollBlockerFrame(gen, screenOriginX, screenTopY, 0, ^(NSRect finalBf, bool finalValid) {
+          if (gen != g_blocker_calib_gen) return;
+          if (finalValid) {
+            finalizeBlockerWidth(gen, screenOriginX, screenTopY, capsuleLeft, capsuleRight, probeWidth, nextSawLeft, finalBf);
+          } else {
+            g_blocker_calibrating = false;
+          }
+        });
+      } else {
+        finalizeBlockerWidth(gen, screenOriginX, screenTopY, capsuleLeft, capsuleRight, probeWidth, nextSawLeft, bf);
+      }
+      return;
+    }
     // Larger Preferred Position pushes the NSStatusItem further left (smaller X); smaller pushes it right.
-    double nextLo = diff > 0.0 ? mid : lo;
-    double nextHi = diff > 0.0 ? hi : mid;
-    runBlockerCalibStep(gen, step + 1, nextLo, nextHi, nextBestPos, nextBestScore, screenOriginX, screenTopY, screenCenterX, capsuleW, width);
+    double nextLo = overshoot > 0.0 ? mid : lo;
+    double nextHi = overshoot > 0.0 ? hi : mid;
+    runBlockerCalibStep(gen, step + 1, nextLo, nextHi, nextBestPos, nextBestScore, nextSawLeft,
+                        screenOriginX, screenTopY, capsuleLeft, capsuleRight, probeWidth);
   });
 }
 
-static void startBlockerCalibration(double screenOriginX, double screenTopY, double screenWidth, double screenCenterX, double capsuleW, double width) {
+static void startBlockerCalibration(double screenOriginX, double screenTopY, double screenWidth, double screenCenterX, double capsuleW) {
   onMain(^{
     int gen = ++g_blocker_calib_gen;
     g_blocker_calibrating = true;
+    g_blocker_calibrated_for_screen = false;
     clearBlockerDefaults();
-    double lo = std::max(120.0, screenWidth * 0.12);
+    const double probeWidth = 16.0;
+    double capsuleLeft = screenCenterX - capsuleW * 0.5;
+    double capsuleRight = screenCenterX + capsuleW * 0.5;
+    double lo = 20.0;
     double hi = std::max(lo + 200.0, screenWidth * 0.88);
-    runBlockerCalibStep(gen, 1, lo, hi, screenWidth * 0.5, 1e9, screenOriginX, screenTopY, screenCenterX, capsuleW, width);
+    runBlockerCalibStep(gen, 1, lo, hi, screenWidth * 0.5, 1e9, false,
+                        screenOriginX, screenTopY, capsuleLeft, capsuleRight, probeWidth);
   });
 }
 
@@ -1323,6 +1386,7 @@ static void disableBlockerSlot() {
   onMain(^{
     g_blocker_calib_gen++;
     g_blocker_calibrating = false;
+    g_blocker_calibrated_for_screen = false;
     g_blocker_screen_w = 0.0;
     removeBlockerItemOnMain();
     clearBlockerDefaults();
@@ -1368,8 +1432,8 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
   double notchWidth = 156.0;
   double notchHeight = 28.0;
   double menuBarHeight = 28.0;
-  double leftSafeWidth = 152.0;
-  double rightSafeWidth = 88.0;
+  double leftSafeWidth = 132.0;
+  double rightSafeWidth = 56.0;
   double anchorX = 0.0;
   @autoreleasepool {
     NSScreen* screen = NSScreen.screens.firstObject ?: [NSScreen mainScreen];
@@ -1446,8 +1510,7 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
 
       if (physicalNotch) {
         // Approach 1 (Hardware Notch Display with active cutout): lock to physical notch center, expand left wing only (0px on right).
-        if (g_island_blocker_item || g_blocker_calibrating) {
-          g_cached_has_blocker = false;
+        if (g_island_blocker_item || g_blocker_calibrating || g_blocker_calibrated_for_screen) {
           disableBlockerSlot();
         }
         hasNotch = true;
@@ -1457,23 +1520,20 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
         anchorX = ((notchLeftX + notchRightX) / 2.0) - frame.origin.x;
       } else {
         // Approach 2 (Continuous Menu Bar without active cutout — external monitor or 16:10 scaled mode):
-        // Compact centered capsule (132 + 56 = 188pt) with a slightly wider NSStatusItem slot (196 + 16 = 212pt)
-        // calibrated to cover [center - 94, center + 94] so tray icons like OneDrive are pushed clear on both sides.
+        // Compact centered capsule (132 + 56 = 188pt). Calibrate the NSStatusItem blocker's right edge tightly
+        // to capsuleRight and size its length in-place to match capsuleLeft so neither side wastes menu bar space.
         hasNotch = false;
         leftSafeWidth = 132.0;
         rightSafeWidth = 56.0;
         const double capsuleW = leftSafeWidth + rightSafeWidth;
-        const double blockerItemLength = 196.0; // 196 + 16 system padding = 212pt slot
 
         if (!wantBlocker) {
-          if (g_island_blocker_item || g_blocker_calibrating) {
-            g_cached_has_blocker = false;
+          if (g_island_blocker_item || g_blocker_calibrating || g_blocker_calibrated_for_screen) {
             disableBlockerSlot();
           }
-        } else if ((!g_island_blocker_item && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
+        } else if ((!g_blocker_calibrated_for_screen && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
           g_blocker_screen_w = screenWidth;
-          g_cached_has_blocker = false;
-          startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenWidth, screenCenterX, capsuleW, blockerItemLength);
+          startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenWidth, screenCenterX, capsuleW);
         }
 
         anchorX = screenWidth / 2.0;

@@ -966,11 +966,11 @@ export class NotchIsland {
             width: Math.round(geo.width),
             height: Math.round(geo.height),
             menuBarHeight: Math.round(geo.menuBarHeight),
-            leftSafeWidth: typeof geo.leftSafeWidth === 'number' ? Math.round(geo.leftSafeWidth) : 152,
-            rightSafeWidth: typeof geo.rightSafeWidth === 'number' ? Math.round(geo.rightSafeWidth) : 88,
+            leftSafeWidth: typeof geo.leftSafeWidth === 'number' ? Math.round(geo.leftSafeWidth) : 132,
+            rightSafeWidth: typeof geo.rightSafeWidth === 'number' ? Math.round(geo.rightSafeWidth) : 56,
             anchorX: geo.anchorX ? Math.round(geo.anchorX) : undefined
           }
-        : { hasNotch: false, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 152, rightSafeWidth: 88 },
+        : { hasNotch: false, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 132, rightSafeWidth: 56 },
       nookPrefs: { ...this.nookPrefs },
       copyTranslateEnabled: this.copyTranslateEnabled,
       pomodoroPrefs: { ...this.pomodoroPrefs },
