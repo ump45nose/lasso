@@ -1152,6 +1152,8 @@ static napi_threadsafe_function g_island_click_tsfn = nullptr;
 static double g_blocker_screen_w = 0.0;
 static bool g_blocker_calibrating = false;
 static bool g_blocker_calibrated_for_screen = false;
+static double g_blocker_slot_anchor_x = 0.0;
+static bool g_has_blocker_slot_anchor = false;
 static int g_blocker_seq = 0;
 static int g_blocker_calib_gen = 0;
 
@@ -1204,6 +1206,7 @@ static void stopIslandBlocker() {
     g_blocker_calib_gen++;
     g_blocker_calibrating = false;
     g_blocker_calibrated_for_screen = false;
+    g_has_blocker_slot_anchor = false;
     g_blocker_screen_w = 0.0;
     removeBlockerItemOnMain();
     clearBlockerDefaults();
@@ -1224,9 +1227,10 @@ static void createBlockerItemAtPos(double prefPos, double width) {
   g_island_blocker_item.autosaveName = autosave;
   if (g_island_blocker_item.button) {
     g_island_blocker_item.button.title = @"";
-    if (!g_blocker_target) g_blocker_target = [LassoIslandBlockerTarget new];
-    g_island_blocker_item.button.target = g_blocker_target;
-    g_island_blocker_item.button.action = @selector(onBlockerClick:);
+    g_island_blocker_item.button.enabled = NO;
+    g_island_blocker_item.button.appearsDisabled = NO;
+    g_island_blocker_item.button.target = nil;
+    g_island_blocker_item.button.action = nil;
     if ([g_island_blocker_item.button.cell isKindOfClass:[NSButtonCell class]]) {
       ((NSButtonCell*)g_island_blocker_item.button.cell).highlightsBy = NSNoCellMask;
     }
@@ -1260,37 +1264,37 @@ static void finalizeBlockerWidth(int gen, double screenOriginX, double screenTop
                                  bool sawLeftOfRightEdge, NSRect bf) {
   if (gen != g_blocker_calib_gen) return;
   double rightEdge = NSMaxX(bf);
+  double screenCenterX = (capsuleLeft + capsuleRight) * 0.5;
+  double capsuleW = capsuleRight - capsuleLeft;
 
   // If every status item already sits to the right of the capsule even when the probe is pushed
   // all the way left, no menu bar icon overlaps the capsule — remove the blocker to avoid empty padding.
   if (!sawLeftOfRightEdge && rightEdge >= capsuleRight + 4.0) {
     removeBlockerItemOnMain();
+    g_has_blocker_slot_anchor = false;
     g_blocker_calibrated_for_screen = true;
     g_blocker_calibrating = false;
     return;
   }
 
-  // Expand the existing NSStatusItem in-place from its anchored right edge to cover down to capsuleLeft.
-  // A 2pt inset accounts for macOS's built-in horizontal padding around adjacent status items.
-  double targetLeft = capsuleLeft + 2.0;
-  double pad = std::max(0.0, (double)bf.size.width - probeWidth);
-  double capsuleW = capsuleRight - capsuleLeft;
-  double desiredSpan = std::clamp(rightEdge - targetLeft, probeWidth, capsuleW + 48.0);
-  double targetLen = std::max(probeWidth, std::round(desiredSpan - pad));
+  // Size the blocker slightly narrower than capsuleW (12pt inset) to offset macOS's inter-item spacing
+  // so the actual gap between left and right neighbor icons tightly matches the visible capsule width,
+  // and the invisible NSStatusItem stays completely tucked behind the capsule.
+  double targetLen = std::max(probeWidth, std::round(capsuleW - 12.0));
   if (g_island_blocker_item) {
     g_island_blocker_item.length = targetLen;
   }
 
-  // One closed-loop readback to eliminate any residual macOS padding/rounding mismatch on the left edge.
   pollBlockerFrame(gen, screenOriginX, screenTopY, 0, ^(NSRect settledBf, bool settledValid) {
     if (gen != g_blocker_calib_gen) return;
-    if (settledValid && g_island_blocker_item) {
-      double leftErr = settledBf.origin.x - targetLeft;
-      if (std::abs(leftErr) >= 2.0) {
-        double nextLen = std::clamp(std::round(g_island_blocker_item.length + leftErr), probeWidth, capsuleW + 48.0);
-        if (std::abs(nextLen - g_island_blocker_item.length) >= 1.0) {
-          g_island_blocker_item.length = nextLen;
-        }
+    if (settledValid) {
+      // macOS adds slightly more spacing on the left of a wide NSStatusItem than on the right (~4pt shift).
+      double slotCenter = NSMidX(settledBf) - 4.0;
+      if (std::abs(slotCenter - screenCenterX) <= 28.0) {
+        g_blocker_slot_anchor_x = slotCenter - screenOriginX;
+        g_has_blocker_slot_anchor = true;
+      } else {
+        g_has_blocker_slot_anchor = false;
       }
     }
     g_blocker_calibrated_for_screen = true;
@@ -1387,6 +1391,7 @@ static void disableBlockerSlot() {
     g_blocker_calib_gen++;
     g_blocker_calibrating = false;
     g_blocker_calibrated_for_screen = false;
+    g_has_blocker_slot_anchor = false;
     g_blocker_screen_w = 0.0;
     removeBlockerItemOnMain();
     clearBlockerDefaults();
@@ -1533,10 +1538,11 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
           }
         } else if ((!g_blocker_calibrated_for_screen && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
           g_blocker_screen_w = screenWidth;
+          g_has_blocker_slot_anchor = false;
           startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenWidth, screenCenterX, capsuleW);
         }
 
-        anchorX = screenWidth / 2.0;
+        anchorX = (wantBlocker && g_has_blocker_slot_anchor) ? g_blocker_slot_anchor_x : (screenWidth / 2.0);
       }
     }
   }

@@ -930,7 +930,7 @@ export class NotchIsland {
     const primary = screen.getPrimaryDisplay();
     if (!this.window.isDestroyed()) {
       const resolved = geo ?? this.ax.notchGeometry?.(this.isCapsuleActive());
-      const centerOffset = resolved?.hasNotch && typeof resolved.anchorX === 'number' && resolved.anchorX > 0
+      const centerOffset = typeof resolved?.anchorX === 'number' && resolved.anchorX > 0
         ? resolved.anchorX
         : primary.bounds.width / 2;
       const targetCenter = primary.bounds.x + centerOffset;
