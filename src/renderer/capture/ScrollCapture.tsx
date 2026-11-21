@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
-import { ArrowDown, ArrowRight, Check, Pause, Play, ScanLine, Square, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowDown, ArrowRight, Check, Pause, Play, ScanLine, Square, Trash2, Undo2, X } from '../icons';
 import type { ScreenshotState, ScrollCaptureAction } from '../../shared/capture';
 import { rise, Segmented } from '../motion';
 import './scroll-capture.css';

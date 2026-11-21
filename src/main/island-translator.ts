@@ -1,7 +1,7 @@
 import { app, clipboard, ipcMain, screen } from 'electron';
 import type { BrowserWindow, IpcMainEvent, IpcMainInvokeEvent } from 'electron';
 import { join } from 'node:path';
-import type { Settings, SettingsSection, TranslatorEngineOption, TranslatorWindowState } from '../shared/contracts';
+import { appearanceOf, type Settings, type SettingsSection, type TranslatorEngineOption, type TranslatorWindowState } from '../shared/contracts';
 import { DEFAULT_OPENAI_CONNECTION_ID, DEFAULT_TRANSLATION_MODEL, type TranslationLang, type TranslationProvider, type TranslationSettings } from '../shared/media';
 import { normalizeTranslationMarkdown } from '../shared/translation-markdown';
 import type { MediaService } from './media-service';
@@ -725,7 +725,7 @@ export class TranslatorPanel {
   }
 
   updateSettings(settings: Settings) {
-    this.state.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.state.fonts = appearanceOf(settings);
     this.state.targetLang = settings.translation.targetLang;
     this.refreshConnection();
     this.publish();

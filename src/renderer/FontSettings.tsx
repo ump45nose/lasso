@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Trash2, Upload } from 'lucide-react';
+import { Trash2, Upload } from './icons';
 import { AnimatePresence, motion } from 'motion/react';
 import { defaultFonts, type FontRole, type Settings } from '../shared/contracts';
 import { builtinFonts, fontStack, loadImported } from './fonts';

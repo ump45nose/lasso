@@ -35,7 +35,7 @@ import {
   TextSelect,
   Type,
   X
-} from 'lucide-react';
+} from '../icons';
 import type { PinAPI, PinAction, PinState, PinWorkspaceAPI } from '../../shared/capture';
 import { presetTargetLabels } from '../../shared/contracts';
 import type { PinGroup, PinWorkspaceState } from '../../shared/history-sync';

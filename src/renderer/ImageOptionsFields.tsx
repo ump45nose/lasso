@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Lock, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Lock, Plus, RefreshCw, Search, Trash2, X } from './icons';
 import { AnimatePresence, motion } from 'motion/react';
 import type { ShellState } from '../shared/contracts';
 import { imagePixels, mediaAspects, type ApiConnection, type ImageOptions, type MediaAspect, type MediaResolution } from '../shared/media';

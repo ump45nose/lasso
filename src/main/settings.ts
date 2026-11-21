@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { existsSync, readFileSync } from 'node:fs';
 import { migrateScreenshotSettings, screenshotDefaults } from '../shared/screenshot-settings';
 import {
+  ACTION_ICON_IDS,
   defaultFonts,
   type ActionBarConfig,
   type GeneralSettings,
@@ -39,7 +40,9 @@ export function defaultActionBarConfig(hideLegacyTranslatePreset = false): Actio
   return {
     order: ['translate', 'preset:explain', 'preset:summarize', 'preset:ask', 'note', 'preset:today'],
     hidden: hideLegacyTranslatePreset ? ['preset:translate'] : [],
-    inlineCount: 5
+    inlineCount: 5,
+    display: 'both',
+    icons: {}
   };
 }
 
@@ -92,7 +95,12 @@ export function normalizeActionBarConfig(value: unknown, hideLegacyTranslate = f
   const inlineCount = typeof raw.inlineCount === 'number' && Number.isInteger(raw.inlineCount)
     ? Math.max(1, Math.min(12, raw.inlineCount))
     : base.inlineCount;
-  return { order, hidden, inlineCount };
+  const display = raw.display === 'icon' || raw.display === 'text' ? raw.display : 'both';
+  const icons: ActionBarConfig['icons'] = {};
+  if (raw.icons && typeof raw.icons === 'object') {
+    for (const [id, icon] of Object.entries(raw.icons)) if (validItem(id) && (ACTION_ICON_IDS as readonly unknown[]).includes(icon)) icons[id] = icon;
+  }
+  return { order, hidden, inlineCount, display, icons };
 }
 
 export function normalizeSuiteSettings(value: Partial<Settings>, defaults: Settings): Pick<
@@ -139,6 +147,7 @@ export function defaultSettings(): Settings {
   return syncActionShortcuts({
     launchAtLogin: false,
     themeMode: 'paper',
+    iconStyle: 'sketch',
     toolbarTools: [],
     mouseActions: { doubleClick: 'copy', rightClick: 'cancel', middleClick: 'pin' },
     autoCheckUpdates: true,
@@ -191,6 +200,7 @@ export function migrateSettings(value: Record<string, unknown>, defaults: Settin
     vision: normalizeVisionConfig(settings.vision ?? defaults.vision),
     translation: normalizeTranslationSettings(settings.translation ?? defaults.translation),
     ...normalizeSuiteSettings(settings, defaults),
+    iconStyle: settings.iconStyle === 'lucide' ? 'lucide' : 'sketch',
     actionBar: normalizeActionBarConfig(settings.actionBar, isPreV4),
     defaultApiChat: {
       connectionId: typeof rawDefaultApi.connectionId === 'string' ? rawDefaultApi.connectionId : '',
@@ -242,6 +252,7 @@ export function validateGeneralSettings(value: GeneralSettings): void {
     !value ||
     typeof value.launchAtLogin !== 'boolean' ||
     !['paper', 'system'].includes(value.themeMode) ||
+    !['sketch', 'lucide'].includes(value.iconStyle) ||
     typeof value.autoCheckUpdates !== 'boolean' ||
     !Array.isArray(value.toolbarTools) ||
     value.toolbarTools.length > 50 ||

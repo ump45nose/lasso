@@ -48,7 +48,7 @@ import {
   Undo2,
   X,
   ZoomIn
-} from 'lucide-react';
+} from '../icons';
 import type { BarcodeItem, CaptureFrame, CaptureRect, ExportAction, OCRLine, OCRMode, ScreenshotState } from '../../shared/capture';
 import { presetTargetLabels } from '../../shared/contracts';
 import type { TranslationBlock } from '../../shared/intelligence';

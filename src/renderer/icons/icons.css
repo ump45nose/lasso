@@ -1,0 +1,22 @@
+/* Sketch icons: ink line + one clay accent. Lucide icons keep their own `svg.lucide` rule in app.css. */
+svg.sk { flex-shrink: 0; stroke-width: 1.5; overflow: visible; --sk-accent: var(--clay); }
+svg.sk .ska { stroke: var(--sk-accent); }
+svg.sk .skf { fill: var(--sk-accent); stroke: none; transform-box: fill-box; transform-origin: center; }
+svg.sk .skm { stroke: var(--sk-accent); stroke-width: 4.2; opacity: .9; }
+
+/* On solid clay the accent turns ink so it never melts into the fill behind it. Add new solid-clay states here. */
+.l-btn.primary svg.sk, .l-send-btn svg.sk, .ab-fast-btn.primary svg.sk, .ed-primary svg.sk, .ed-mi-save svg.sk,
+.ab-bar button.on svg.sk, .ab-menu button.on svg.sk,
+.l-record-control .l-btn:hover svg.sk, .l-rec-ib:hover:not(:disabled) svg.sk, .ed-tool[aria-pressed="true"]:hover:not(:disabled) svg.sk, .ed-mi:hover svg.sk, .ed-mi.active svg.sk,
+.pin-bar button:hover svg.sk, .pin-thumbnail-actions button:hover svg.sk, .scroll-controls .l-btn:hover:not(:disabled) svg.sk,
+.isl-review-pill:hover svg.sk, .isl-ib:hover svg.sk, .isl-ink-btn:hover svg.sk { --sk-accent: var(--ink); }
+
+/* Motion vocabulary. `.sk-draw` on an ancestor traces strokes in on mount (stagger with --sk-delay);
+ * `.sk-wiggle` on a button gives its icon a small hand-drawn shake on hover. */
+.sk-draw svg.sk [pathLength] { stroke-dasharray: 1; animation: sk-draw 520ms var(--ease-out) both; animation-delay: var(--sk-delay, 0ms); }
+.sk-draw svg.sk .skf { animation: sk-pop 320ms cubic-bezier(.32, 1.32, .5, 1) both; animation-delay: calc(var(--sk-delay, 0ms) + 260ms); }
+.sk-wiggle:hover:not(:disabled) > svg.sk, .sk-wiggle:focus-visible > svg.sk,
+button:hover:not(:disabled) > svg.sk:only-child { animation: sk-wiggle 420ms var(--ease-out); }
+@keyframes sk-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes sk-pop { from { opacity: 0; transform: scale(.3); } to { opacity: 1; transform: none; } }
+@keyframes sk-wiggle { 0% { rotate: 0deg; } 30% { rotate: -9deg; } 62% { rotate: 5deg; } 100% { rotate: 0deg; } }

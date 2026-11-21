@@ -22,9 +22,9 @@ import {
   Volume2,
   VolumeX,
   X
-} from 'lucide-react';
+} from '../icons';
 import type { IslandAPI, IslandAlertItem, IslandState, IslandTaskItem } from '../../shared/contracts';
-import { useFonts } from '../fonts';
+import { useAppearance } from '../fonts';
 import { collapse, ease, Glide, spring } from '../motion';
 import './island.css';
 
@@ -197,7 +197,7 @@ export function NotchIsland() {
   const [activeListTab, setActiveListTab] = useState<string>('focus');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [clockText, setClockText] = useState<string>(() => formatNowClock(new Date()));
-  useFonts(state?.fonts);
+  useAppearance(state?.fonts);
 
   useEffect(() => {
     document.documentElement.classList.add('isl-html');
@@ -595,7 +595,7 @@ export function NotchIsland() {
                 )}
 
                 {dropKind === 'board' && (
-                  <div className="isl-board">
+                  <div className="isl-board sk-draw">
                     <header className="isl-board-head">
                       <h3>今日聚焦</h3>
                       <span className="isl-board-date mono">{formatTodayLabel()}</span>

@@ -1084,8 +1084,8 @@ function installIPC() {
     assertLocal(event);
     return result(() => {
       validateGeneralSettings(options);
-      const { launchAtLogin, themeMode, toolbarTools, mouseActions, autoCheckUpdates } = options;
-      persistSettings({ ...state.settings, launchAtLogin, themeMode, toolbarTools, mouseActions, autoCheckUpdates });
+      const { launchAtLogin, themeMode, iconStyle, toolbarTools, mouseActions, autoCheckUpdates } = options;
+      persistSettings({ ...state.settings, launchAtLogin, themeMode, iconStyle, toolbarTools, mouseActions, autoCheckUpdates });
       publish();
     });
   });

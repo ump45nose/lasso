@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Check, FolderOpen, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Check, FolderOpen, X } from './icons';
 import type { Settings } from '../shared/contracts';
 import { captureModeLabels } from '../shared/capture';
 import { validateVisionConfig, type VisionServiceConfig } from '../shared/intelligence';
@@ -228,6 +228,7 @@ export function ScreenshotSettings({
     const res = await window.desktop.saveGeneral({
       launchAtLogin: fullSettings.launchAtLogin,
       themeMode: fullSettings.themeMode,
+      iconStyle: fullSettings.iconStyle,
       toolbarTools: fullSettings.toolbarTools,
       mouseActions: fullSettings.mouseActions,
       autoCheckUpdates: fullSettings.autoCheckUpdates,

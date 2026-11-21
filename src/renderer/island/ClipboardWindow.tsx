@@ -13,9 +13,9 @@ import {
   Star,
   Trash2,
   X
-} from 'lucide-react';
+} from '../icons';
 import type { ClipboardEntry, ClipboardWindowState, IslandAPI } from '../../shared/contracts';
-import { useFonts } from '../fonts';
+import { useAppearance } from '../fonts';
 import { Segmented } from '../motion';
 import './suite-windows.css';
 
@@ -65,7 +65,7 @@ export function ClipboardWindow() {
   const listRef = useRef<HTMLDivElement | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useFonts(state?.fonts);
+  useAppearance(state?.fonts);
 
   const flashNotice = useCallback((msg: string) => {
     setActError(null);
@@ -167,7 +167,7 @@ export function ClipboardWindow() {
   const previewLines = selected && selected.kind !== 'image' ? (selected.text || selected.preview || '').split('\n') : [];
 
   return (
-    <div className="sw-stage">
+    <div className="sw-stage sk-draw">
       <section className="sw-win sw-clip" role="dialog" aria-label="剪贴板历史">
         <header className="sw-wbar sw-clip-bar">
           <label className="sw-search-box">

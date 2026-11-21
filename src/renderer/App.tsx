@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { CircleAlert } from 'lucide-react';
+import { CircleAlert } from './icons';
 import { AnimatePresence, motion } from 'motion/react';
 import type { DesktopAPI, PaletteEvent, ShellState } from '../shared/contracts';
-import { useFonts } from './fonts';
+import { useAppearance } from './fonts';
 import { TitleBar } from './TitleBar';
 import { Launcher } from './Launcher';
 import { DeliveryRow, NoticeRow } from './Footer';
@@ -20,7 +20,7 @@ declare global {
 export default function App() {
   const [state, setState] = useState<ShellState | null>(null);
   const [palette, setPalette] = useState<PaletteEvent>({ scope: null, backdrop: null });
-  useFonts(state?.settings);
+  useAppearance(state?.settings);
 
   useEffect(() => {
     const stops = [window.desktop.onState(setState), window.desktop.onPalette(setPalette)];

@@ -19,12 +19,12 @@ import {
   RotateCcw,
   Square,
   X
-} from 'lucide-react';
+} from '../icons';
 import type { EditorView } from '@codemirror/view';
 import type { IslandAPI, TranslatorEngineOption, TranslatorWindowState } from '../../shared/contracts';
 import type { TranslationLang } from '../../shared/media';
 import { formatMarkdownBreaks } from '../../shared/translation-markdown';
-import { useFonts } from '../fonts';
+import { useAppearance } from '../fonts';
 import { NoteEditor } from './NoteEditor';
 import './suite-windows.css';
 
@@ -71,7 +71,7 @@ export function TranslatorWindow() {
   const winRef = useRef<HTMLElement | null>(null);
   const lastSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
-  useFonts(state?.fonts);
+  useAppearance(state?.fonts);
 
   const clearDebounce = useCallback(() => {
     if (debounceRef.current) {
@@ -277,7 +277,7 @@ export function TranslatorWindow() {
 
   return (
     <div
-      className="sw-stage"
+      className="sw-stage sk-draw"
       onClick={() => {
         if (langMenuOpen) setLangMenuOpen(false);
         if (engineMenuOpen) setEngineMenuOpen(false);

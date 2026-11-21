@@ -5,6 +5,7 @@ import '@fontsource-variable/newsreader/opsz.css';
 import '@fontsource/jetbrains-mono/400.css';
 import './styles/tokens.css';
 import './styles/app.css';
+import './styles/settings.css';
 
 // A helper surface never imports unrelated settings, chat, media or annotation modules.
 const loaders = {

@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { AnimatePresence, LayoutGroup, motion, type Transition } from 'motion/react';
-import { Check, ChevronDown } from 'lucide-react';
+import { Check, ChevronDown } from './icons';
 
 /** Shared motion presets. CSS still owns hover, press and color; these cover presence, layout and sliding highlights. */
 export const ease = [0.22, 0.68, 0, 1] as const;

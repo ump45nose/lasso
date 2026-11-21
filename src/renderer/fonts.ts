@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
-import type { FontRole, Settings } from '../shared/contracts';
+import type { Appearance, FontRole, Settings } from '../shared/contracts';
+import { setIconStyle } from './icons';
 
 export const fontRoles: FontRole[] = ['display', 'text', 'ui', 'mono'];
 /** Bundled faces always available behind the configured family. */
@@ -21,10 +22,12 @@ export function loadImported(fonts: Settings['importedFonts']) {
     return pending;
   }));
 }
-export function useFonts(value: Pick<Settings, 'fonts' | 'importedFonts'> | undefined) {
-  const key = value && JSON.stringify(value);
+/** Applies the shared look (font roles + icon style) to this window. */
+export function useAppearance(value: Appearance | undefined) {
+  const key = value && JSON.stringify([value.fonts, value.importedFonts, value.iconStyle]);
   useEffect(() => {
     if (!value) return;
+    setIconStyle(value.iconStyle);
     void loadImported(value.importedFonts);
     for (const role of fontRoles) if (value.fonts[role]) document.documentElement.style.setProperty('--font-' + role, fontStack(role, value.fonts[role]));
   }, [key]);

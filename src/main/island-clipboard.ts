@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { ClipboardEntry, ClipboardWindowState, IslandAPI, Settings } from '../shared/contracts';
+import { appearanceOf, type ClipboardEntry, type ClipboardWindowState, type IslandAPI, type Settings } from '../shared/contracts';
 import { applicationIcon } from './app-icons';
 import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
@@ -321,7 +321,7 @@ export class ClipboardHistoryPanel {
   }
 
   updateSettings(settings: Settings) {
-    this.state.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.state.fonts = appearanceOf(settings);
     const max = this.maxItems();
     if (this.state.entries.length > max) {
       const removed = this.state.entries.splice(max);

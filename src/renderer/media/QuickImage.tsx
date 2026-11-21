@@ -15,11 +15,11 @@ import {
   Sparkles,
   Trash2,
   X
-} from 'lucide-react';
+} from '../icons';
 import type { MediaAPI, MediaJob, MediaOutputAction, MediaState } from '../../shared/media';
 import { imageOptionsSummary } from '../../shared/media';
 import { BrandMark } from '../BrandMark';
-import { useFonts } from '../fonts';
+import { useAppearance } from '../fonts';
 import './quick-image.css';
 
 declare global {
@@ -52,7 +52,7 @@ export function QuickImage() {
   const pending = useRef<{ id: string; input: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  useFonts(state || undefined);
+  useAppearance(state || undefined);
 
   const accept = useCallback((next: MediaState) => {
     setState(next);

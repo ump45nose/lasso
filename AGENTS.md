@@ -20,7 +20,7 @@ Lasso 是一个 macOS 菜单栏工具，用 Electron 45、React 19 和 TypeScrip
 动手前先读 **`docs/design/ui-rules.md`**。要点：
 
 1. 颜色只用 `tokens.css` 的令牌（透明度写成令牌底色加 alpha）；交互用陶土色回应：浅色表面用 `--clay-wash*` / `--clay-ink`，墨色表面用实心 `--clay`。
-2. 字体只写 `var(--font-*)`；图标只用 lucide-react；渠道图标只用官方素材，放在 `src/renderer/assets/targets/`。
+2. 字体只写 `var(--font-*)`；图标一律从 `src/renderer/icons` 引入（默认手绘，可切 lucide），新图标要同时补手绘版本；渠道图标只用官方素材，放在 `src/renderer/assets/targets/`。
 3. 不用原生菜单、`confirm()`、`alert()`，菜单和确认都在窗口内绘制。
 4. 先复用 `Segmented` / `Glide` / `.l-btn` / `.l-switch` 等现有组件，动效用 `src/renderer/motion.tsx` 的预设。
 5. 改完运行 `npm run ui:shots`，**打开相关截图逐张查看**后再报告；新增的界面或状态要补进 `scripts/ui-shots/run.mjs`。

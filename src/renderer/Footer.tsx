@@ -1,5 +1,5 @@
 import { Fragment, useEffect } from 'react';
-import { Check, CircleAlert, Copy, Timer, X } from 'lucide-react';
+import { Check, CircleAlert, Copy, Timer, X } from './icons';
 import type { DeliveryStatus, DeliveryStep } from '../shared/contracts';
 import type { CaptureEfficiencyState } from '../shared/capture-efficiency';
 

@@ -62,6 +62,10 @@ export const defaultFonts: Record<FontRole, string> = {
 export type FinderTerminalApp = 'Terminal' | 'Ghostty' | 'Warp' | 'iTerm';
 export type FinderEditorApp = 'Cursor' | 'VSCode' | 'Zed';
 
+export const ACTION_ICON_IDS = ['ask', 'book', 'sum', 'translate', 'note', 'todo', 'brush', 'image', 'image-edit', 'quill', 'code', 'terminal', 'search', 'mail', 'bulb', 'spark'] as const;
+export type ActionIconId = typeof ACTION_ICON_IDS[number];
+export type ActionBarDisplay = 'both' | 'icon' | 'text';
+
 export interface ActionBarConfig {
   /** Ordered item IDs ('translate', 'note', or `preset:<id>`). */
   order: string[];
@@ -69,7 +73,23 @@ export interface ActionBarConfig {
   hidden: string[];
   /** Number of enabled items shown directly in the capsule before folding into ···. */
   inlineCount: number;
+  display: ActionBarDisplay;
+  /** Icon chosen per item ID; items without an entry use `defaultActionIcon`. */
+  icons: Partial<Record<string, ActionIconId>>;
 }
+
+const builtinActionIcons: Record<string, ActionIconId> = {
+  translate: 'translate', note: 'note',
+  'preset:ask': 'ask', 'preset:explain': 'book', 'preset:summarize': 'sum', 'preset:today': 'todo', 'preset:translate': 'translate'
+};
+const builtinImageIcons: Record<string, ActionIconId> = { 'image-preset-draw': 'brush', 'image-preset-illustration': 'image', 'image-preset-edit': 'image-edit' };
+export const actionIconFor = (config: Pick<ActionBarConfig, 'icons'>, itemId: string): ActionIconId =>
+  config.icons[itemId] ?? builtinActionIcons[itemId] ?? 'spark';
+/** Same choice for a preset shown outside the bar (launcher, palette); image presets default to their drawing tool. */
+export const presetIconFor = (config: Pick<ActionBarConfig, 'icons'>, preset: Pick<Preset, 'id' | 'kind'>): ActionIconId =>
+  config.icons[`preset:${preset.id}`] ?? builtinActionIcons[`preset:${preset.id}`] ?? builtinImageIcons[preset.id] ?? (preset.kind === 'image' ? 'image' : 'spark');
+
+export type IconStyle = 'sketch' | 'lucide';
 
 export interface PomodoroSettings {
   focusMinutes: number;
@@ -92,11 +112,15 @@ export interface SuiteSettings {
   pomodoro: PomodoroSettings;
 }
 
-export type GeneralSettings = Pick<Settings, 'launchAtLogin' | 'themeMode' | 'toolbarTools' | 'mouseActions' | 'autoCheckUpdates'>;
+export type GeneralSettings = Pick<Settings, 'launchAtLogin' | 'themeMode' | 'iconStyle' | 'toolbarTools' | 'mouseActions' | 'autoCheckUpdates'>;
+/** Look shared by every surface: font roles and the icon style. */
+export type Appearance = Pick<Settings, 'fonts' | 'importedFonts' | 'iconStyle'>;
+export const appearanceOf = (settings: Settings): Appearance => ({ fonts: settings.fonts, importedFonts: settings.importedFonts, iconStyle: settings.iconStyle });
 
 export interface Settings {
   launchAtLogin: boolean;
   themeMode: 'paper' | 'system';
+  iconStyle: IconStyle;
   /** Empty displays every tool. */
   toolbarTools: string[];
   mouseActions: { doubleClick: 'copy' | 'save' | 'pin' | 'none'; rightClick: 'reselect' | 'cancel'; middleClick: 'pin' | 'quick-save' | 'none' };
@@ -325,6 +349,7 @@ export interface ActionBarItem {
   id: string;
   kind: 'translate' | 'note' | 'preset';
   name: string;
+  icon: ActionIconId;
   target?: Target;
   mode?: 'edit' | 'send';
 }
@@ -333,8 +358,9 @@ export interface ActionBarItem {
 export interface ActionBarState {
   items: ActionBarItem[];
   more: ActionBarItem[];
+  display: ActionBarDisplay;
   busy: boolean;
-  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+  fonts: Appearance;
   fastCard?: FastApiCardState | null;
 }
 
@@ -417,7 +443,7 @@ export interface IslandState {
   nookTasks: IslandTaskItem[];
   nookCompletedCount: number;
   nookTotalCount: number;
-  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+  fonts: Appearance;
 }
 
 export type SnapSlot =
@@ -476,7 +502,7 @@ export interface TranslatorWindowState {
   engines: TranslatorEngineOption[];
   firstTokenMs: number | null;
   canReplace: boolean;
-  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+  fonts: Appearance;
 }
 
 export interface ClipboardEntry {
@@ -501,7 +527,7 @@ export interface ClipboardEntry {
 export interface ClipboardWindowState {
   entries: ClipboardEntry[];
   pinnedOnTop: boolean;
-  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+  fonts: Appearance;
 }
 
 export interface EdgeNoteItem {
@@ -519,7 +545,7 @@ export type EdgeNotesState = {
   notesDir: string;
   shortcut: string;
   notes: EdgeNoteItem[];
-  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+  fonts: Appearance;
 };
 
 export type FinderMoveTarget = {
@@ -538,7 +564,7 @@ export type FinderPanelState = {
   moveTargets: FinderMoveTarget[];
   defaultTerminal: FinderTerminalApp;
   defaultEditor: FinderEditorApp;
-  fonts: Pick<Settings, 'fonts' | 'importedFonts'>;
+  fonts: Appearance;
 };
 export type FinderActionReq =
   | { kind: 'new-file'; name: string; content?: string }

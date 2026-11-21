@@ -19,6 +19,7 @@ import type {
   SettingsSection,
   SnapSlot
 } from '../shared/contracts';
+import { appearanceOf } from '../shared/contracts';
 import { fromMainFrame } from './ipc';
 import { defaultPomodoroSettings, normalizePomodoroSettings } from './settings';
 import { FinderPanel } from './island-finder';
@@ -576,7 +577,7 @@ export class NotchIsland {
   private nookTasks: IslandTaskItem[] = [];
   private nookCompletedCount = 0;
   private nookTotalCount = 0;
-  private fonts: IslandState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
+  private fonts: IslandState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [], iconStyle: 'sketch' };
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
   private nookWatchers = new Map<string, FSWatcher>();
@@ -1003,7 +1004,7 @@ export class NotchIsland {
   }
 
   updateSettings(settings: Settings) {
-    this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.fonts = appearanceOf(settings);
     this.copyTranslateEnabled = settings.translation.copyTranslateEnabled;
     if (!this.copyTranslateEnabled) this.pendingDoubleCopyAt = 0;
 

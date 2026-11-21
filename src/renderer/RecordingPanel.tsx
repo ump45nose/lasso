@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Camera, Circle, Keyboard, MousePointer2, Pause, Play, Save, Square, Video, X } from 'lucide-react';
+import { Camera, Circle, Keyboard, MousePointer2, Pause, Play, Save, Square, Video, X } from './icons';
 import { motion } from 'motion/react';
 import type { RecordingAction, RecordingFormat, RecordingMode, RecordingSessionState } from '../shared/recording';
 import type { Settings } from '../shared/contracts';
-import { useFonts } from './fonts';
+import { useAppearance } from './fonts';
 import { rise, Segmented } from './motion';
 import './styles/screenshot-settings.css';
+import './styles/recording.css';
 
 const modes = [
   ['rect', '区域录制'],
@@ -43,7 +44,7 @@ export function RecordingPanel() {
   const formatSelected = useRef(false);
   const [confirmDiscard, setConfirmDiscard] = useState<'close' | 'cancel' | 'recovery' | null>(null);
 
-  useFonts(settings);
+  useAppearance(settings);
 
   useEffect(() => {
     let active = true;

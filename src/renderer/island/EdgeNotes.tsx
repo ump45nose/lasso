@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, FileText, Lock, LockOpen, Pin, Plus, Search, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronUp, FileText, Lock, LockOpen, Pin, Plus, Search, Trash2, X } from '../icons';
 import type { EdgeNotesState, IslandAPI } from '../../shared/contracts';
-import { useFonts } from '../fonts';
+import { useAppearance } from '../fonts';
 import { NoteEditor } from './NoteEditor';
 import type { EditorView } from '@codemirror/view';
 import { shortcutLabel } from '../targets';
@@ -38,7 +38,7 @@ export function EdgeNotes() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<EditorView | null>(null);
 
-  useFonts(state?.fonts);
+  useAppearance(state?.fonts);
 
   const flushSave = useCallback(async function savePending() {
     if (timerRef.current) {

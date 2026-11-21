@@ -1,24 +1,26 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, GripVertical, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
-import { presetTargetLabels as targetLabels, type Preset } from '../shared/contracts';
+import { ActionIcon, ChevronLeft, GripVertical, Plus, Trash2 } from './icons';
+import { presetIconFor, presetTargetLabels as targetLabels, type ActionBarConfig, type Preset } from '../shared/contracts';
 import { defaultImageOptions, imageOptionsSummary } from '../shared/media';
 import { promptSources } from '../shared/prompt-templates';
 import { ExecutionFields } from './ExecutionFields';
 import { ApiTextFields, ImageOptionsFields } from './ImageOptionsFields';
 import { Segmented } from './motion';
 import { Switch } from './Switch';
-import { Badge, targets } from './targets';
+import { targets } from './targets';
 
 const preview = (template: string) => template.replace(/\s+/g, ' ').split('{{selection}}');
 
 export function PresetSettings({
   presets,
+  actionBar,
   creatingKind,
   onClearCreate,
   onOpenConnections,
   notify
 }: {
   presets: Preset[];
+  actionBar: ActionBarConfig;
   creatingKind: 'chat' | 'image' | null;
   onClearCreate(): void;
   onOpenConnections(): void;
@@ -146,7 +148,7 @@ export function PresetSettings({
         <span className="l-grip" aria-hidden="true" onClick={e => e.stopPropagation()}>
           <GripVertical size={14} />
         </span>
-        {isImg ? <ImageIcon size={15} className="faint" /> : <Badge target={preset.target} />}
+        <span className="l-preset-icon"><ActionIcon id={presetIconFor(actionBar, preset)} size={16} /></span>
         <div className="l-set-row-main">
           <div className="l-set-row-name">
             <span>{preset.name || '未命名'}</span>

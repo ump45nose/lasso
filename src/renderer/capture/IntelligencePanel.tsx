@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { motion } from 'motion/react';
-import { Copy, Download, ExternalLink, Pin, RotateCw, X } from 'lucide-react';
+import { Copy, Download, ExternalLink, Pin, RotateCw, X } from '../icons';
 import type { BarcodeItem, CaptureFrame, OCRLine } from '../../shared/capture';
 import { webURL, type IntelligenceKind, type IntelligenceResult, type TranslationBlock } from '../../shared/intelligence';
 import { Segmented, rise } from '../motion';

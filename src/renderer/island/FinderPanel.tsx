@@ -22,9 +22,9 @@ import {
   TextSelect,
   Trash2,
   X
-} from 'lucide-react';
+} from '../icons';
 import type { FinderActionReq, FinderEditorApp, FinderPanelState, FinderTerminalApp, IslandAPI } from '../../shared/contracts';
-import { useFonts } from '../fonts';
+import { useAppearance } from '../fonts';
 import { spring } from '../motion';
 import './island.css';
 
@@ -66,7 +66,7 @@ export function FinderPanel() {
   const [moveFilter, setMoveFilter] = useState('');
   const [pathStyle, setPathStyle] = useState<'posix' | 'quoted' | 'filename'>('posix');
   const [openMenu, setOpenMenu] = useState<'path' | 'editor' | 'terminal' | null>(null);
-  useFonts(state?.fonts);
+  useAppearance(state?.fonts);
 
   useEffect(() => {
     document.documentElement.classList.add('isl-html');

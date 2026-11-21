@@ -1,5 +1,5 @@
-import { ChevronRight, ClipboardPaste, FolderOpen, Scan, SquareDashed, Zap } from 'lucide-react';
-import { presetTargetLabels as targetLabels, type ShellState, type Target } from '../shared/contracts';
+import { ActionIcon, ChevronRight, ClipboardPaste, FolderOpen, Scan, SquareDashed, Zap } from './icons';
+import { presetIconFor, presetTargetLabels as targetLabels, type ShellState, type Target } from '../shared/contracts';
 import { Badge, targets } from './targets';
 
 /** Empty B2 launcher: start ChatGPT / Gemini / API conversation or quick-capture. */
@@ -22,7 +22,7 @@ export function Launcher({ state, openPermission }: { state: ShellState; openPer
 
   return (
     <>
-      <div className="l-launch">
+      <div className="l-launch sk-draw">
         <div className="l-launch-intro">
           <h1 className="l-hero">
             随手<mark className="l-hero-mark">问一句</mark>，
@@ -78,6 +78,7 @@ export function Launcher({ state, openPermission }: { state: ShellState; openPer
                   style={{ '--i': i + targets.length } as React.CSSProperties}
                   onClick={() => void window.desktop.runPreset(preset.id)}
                 >
+                  <span className="l-preset-icon"><ActionIcon id={presetIconFor(settings.actionBar, preset)} size={16} /></span>
                   <span className="l-card-row-title grow">{preset.name}</span>
                   <span className="l-card-row-sub">
                     {targetLabels[preset.target]} · {preset.kind === 'image' ? '生图' : preset.mode === 'edit' ? '先编辑' : '直接发送'}

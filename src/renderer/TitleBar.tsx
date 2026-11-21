@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Maximize2, Minimize2, Pin, Plus, Search, X } from 'lucide-react';
+import { Maximize2, Minimize2, Pin, Plus, Search, X } from './icons';
 import { targetLabels, type ShellState } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
 import { Badge, taskDot, taskStatus } from './targets';

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Copy, Eye, EyeOff, Image, Lock, Pencil, Pin, Plus, RefreshCw, Search, Trash2, Unlock, X } from 'lucide-react';
+import { Copy, Eye, EyeOff, Image, Lock, Pencil, Pin, Plus, RefreshCw, Search, Trash2, Unlock, X } from './icons';
 import type { CaptureHistoryPolicy, CaptureHistoryState, PinArrangeMode, PinGroup, PinWorkspaceSettings, PinWorkspaceState } from '../shared/history-sync';
 import { validatePinWorkspaceSettings } from '../shared/history-sync';
 import { Segmented } from './motion';

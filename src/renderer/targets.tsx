@@ -1,4 +1,4 @@
-import { Image, Zap } from 'lucide-react';
+import { Image, Zap } from './icons';
 import { targetLabels, taskActivityLabels } from '../shared/contracts';
 import type { PresetTarget, Target, TaskSummary, WebTarget } from '../shared/contracts';
 import chatgptIcon from './assets/targets/chatgpt.png';

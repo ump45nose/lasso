@@ -34,7 +34,7 @@ for (const file of files) {
     if (tsx) {
       for (const [hex] of line.matchAll(/['"]#[0-9A-Fa-f]{3,8}['"]/g)) report(file, at, `colour ${hex} in TSX: use a CSS class and tokens`);
       if (/(?<![.\w])(?:window\.)?(?:confirm|alert|prompt)\(/.test(line)) report(file, at, 'native dialog: use an inline confirm or a toast');
-      if (/<svg\b/.test(line) && !file.endsWith('BrandMark.tsx')) report(file, at, 'inline <svg>: use lucide-react icons or BrandMark');
+      if (/<svg\b/.test(line) && !file.endsWith('BrandMark.tsx') && !file.includes('/src/renderer/icons/')) report(file, at, 'inline <svg>: use src/renderer/icons or BrandMark');
     }
     if (main && /\.popup\(/.test(line)) report(file, at, 'native popup menu: draw the menu in the window (see ActionBar ··· menu)');
   });

@@ -160,7 +160,7 @@ export interface MediaPresetItem {
   connectionId?: string;
   options: ImageOptions;
 }
-export type MediaFontSettings = Pick<Settings, 'fonts' | 'importedFonts'>;
+export type MediaFontSettings = Pick<Settings, 'fonts' | 'importedFonts' | 'iconStyle'>;
 export interface MediaState extends MediaFontSettings {
   jobs: MediaJob[];
   reference: MediaReference | null;

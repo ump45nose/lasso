@@ -318,6 +318,9 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 .isl-tools6 { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px; padding: 4px; flex-shrink: 0; }
 .isl-tool6 { border: 0; background: transparent; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 8px 0 7px; border-radius: 9px; font-size: 11px; color: rgba(250, 249, 245, 0.72); transition: background var(--t-fast), color var(--t-fast); }
 .isl-tool6:hover { background: var(--clay); color: #FFFFFF; }
+.isl-tool6 svg.sk { transition: transform var(--t-base) var(--ease-out); }
+.isl-tool6:hover svg.sk { --sk-accent: var(--ink); animation: sk-wiggle 420ms var(--ease-out); }
+.isl-tool6:active svg.sk { transform: scale(.92); }
 
 /* ═════════ B6 Persistent-Edit EdgeNotes ═════════ */
 .en-stage, .fp-stage { position: fixed; inset: 0; display: flex; align-items: stretch; justify-content: stretch; padding: 14px; box-sizing: border-box; }

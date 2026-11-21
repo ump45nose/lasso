@@ -139,13 +139,13 @@ export class MediaWindow {
   }
 
   private snapshot(state = this.service.snapshot()): MediaState {
-    const { fonts, importedFonts } = this.fontSettings();
+    const { fonts, importedFonts, iconStyle } = this.fontSettings();
     return {
       ...state,
       draft: structuredClone(this.draft),
       presets: this.availablePresets(),
       pinnedOnTop: this.pinnedOnTop,
-      ...structuredClone({ fonts, importedFonts })
+      ...structuredClone({ fonts, importedFonts, iconStyle })
     };
   }
 

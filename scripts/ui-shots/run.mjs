@@ -405,6 +405,24 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       await page(w, `document.querySelector('[aria-haspopup="menu"]').click()`);
       await wait(200);
 
+      const plainState = await page(w, 'window.actionBar.getState()');
+      for (const [variant, patch] of [
+        ['icons', { display: 'icon' }],
+        ['text', { display: 'text' }],
+        ['lucide', { fonts: { ...plainState.fonts, iconStyle: 'lucide' } }]
+      ]) {
+        w.webContents.send('bar:changed', { ...plainState, ...patch });
+        await wait(300);
+        const first = await page(w, `(() => { const r = document.querySelectorAll('.ab-buttons button')[0]?.getBoundingClientRect(); return r ? [r.x + r.width / 2, r.y + r.height / 2] : null; })()`);
+        if (first) await move(w, first[0], first[1]);
+        await wait(variant === 'icons' ? 700 : 450);
+        names.push(await save(w, 'v4-b1-action-bar-' + variant));
+        await move(w, 2, 2);
+        await page(w, `document.querySelector('.ab-bar')?.dispatchEvent(new PointerEvent('pointerleave', { bubbles: true }))`);
+      }
+      w.webContents.send('bar:changed', plainState);
+      await wait(200);
+
       const barState = await page(w, 'window.actionBar.getState()');
       w.setBounds({ x: 160, y: 160, width: 492, height: 340 });
       w.webContents.send('bar:changed', {
@@ -1204,6 +1222,16 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
           names.push(await save(sw, 'v4-b9-3b-preset-editor'));
         }
 
+        if (shotName === 'v4-b9-2-selection') {
+          await page(sw, `document.querySelector('.l-icon-slot')?.click()`);
+          await wait(400);
+          await page(sw, `document.querySelector('.l-icon-grid')?.scrollIntoView({ block: 'center' })`);
+          await wait(150);
+          names.push(await save(sw, 'v4-b9-2b-selection-icon-picker'));
+          await page(sw, `document.querySelector('.l-icon-slot')?.click()`);
+          await wait(300);
+        }
+
         if (shotName === 'v4-b9-7-suite') {
           if (!(await page(sw, `document.body.textContent.includes('番茄钟') && document.body.textContent.includes('结束提示音')`))) {
             throw Error('B9 suite pane missing pomodoro group');
@@ -1222,6 +1250,8 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
           })()`);
           await wait(250);
           await page(sw, `document.querySelector('.l-set-minutes input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+          // Enter commits via blur; an inactive window never fires blur, so deliver the focus loss directly.
+          await page(sw, `document.querySelector('.l-set-minutes input')?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))`);
           await wait(300);
           const customFocus = await page(sw, `window.desktop.getState().then(s => s.settings.pomodoro.focusMinutes)`);
           if (customFocus !== 50) throw Error('B9 suite custom focus minutes did not persist: ' + customFocus);

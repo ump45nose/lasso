@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  ActionIcon,
   AppWindow,
   AppWindowMac,
   ClipboardList,
@@ -20,9 +21,9 @@ import {
   Sparkles,
   Timer,
   X
-} from 'lucide-react';
+} from './icons';
 import { captureModeLabels, captureModes, type CaptureMode } from '../shared/capture';
-import { presetTargetLabels as targetLabels } from '../shared/contracts';
+import { presetIconFor, presetTargetLabels as targetLabels } from '../shared/contracts';
 import type { Action, PaletteScope, Preset, ShellState, Target, TaskSummary } from '../shared/contracts';
 import { Badge, shortcutLabel, taskDot, taskStatus, targets } from './targets';
 import { motion } from 'motion/react';
@@ -241,7 +242,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
   }
 
   return (
-    <motion.div className="l-pal-layer" initial="hidden" animate="shown" exit="hidden">
+    <motion.div className="l-pal-layer sk-draw" initial="hidden" animate="shown" exit="hidden">
       {backdrop && <img className="l-backdrop" src={backdrop} alt="" />}
       <motion.div className="l-scrim" variants={scrimMotion} onClick={() => void close()} />
       <motion.div className="l-palette" role="dialog" aria-label="指令面板" variants={panelMotion}>
@@ -310,7 +311,7 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
                       </>
                     )}
                     {row.kind === 'new' && <Badge target={row.target} />}
-                    {row.kind === 'preset' && <Badge target={targetOf(row.preset)} kind={row.preset.kind} />}
+                    {row.kind === 'preset' && <span className="l-pal-icon preset"><ActionIcon id={presetIconFor(state.settings.actionBar, row.preset)} size={16} /></span>}
                     {row.kind === 'cmd' && <span className="l-pal-icon">{row.icon}</span>}
                     <span className="l-pal-label">{row.label}</span>
                     {row.kind === 'preset' && <PresetMeta preset={row.preset} target={targetOf(row.preset)} selected={selected} disabled={row.disabled} />}

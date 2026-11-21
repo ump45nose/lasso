@@ -16,7 +16,7 @@ import {
   Settings2,
   Square,
   X
-} from 'lucide-react';
+} from './icons';
 import type { ApiChatMessage, ApiChatState, ShellState } from '../shared/contracts';
 
 function CodeBlock({ children, inline }: { children?: React.ReactNode; inline?: boolean }) {

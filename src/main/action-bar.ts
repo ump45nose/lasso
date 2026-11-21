@@ -7,6 +7,8 @@ import { fitToWorkArea } from './position';
 import { composePrompt } from './presets';
 import {
   BAR_MENU,
+  actionIconFor,
+  appearanceOf,
   barMenuHeight,
   type ActionBarConfig,
   type ActionBarItem,
@@ -38,12 +40,12 @@ export interface ActionBarFastCallbacks {
 
 export function buildOrderedActionBarItems(presets: readonly Preset[], config: ActionBarConfig): { items: ActionBarItem[]; more: ActionBarItem[] } {
   const catalog = new Map<string, ActionBarItem>();
-  catalog.set('translate', { id: 'translate', kind: 'translate', name: '翻译' });
+  catalog.set('translate', { id: 'translate', kind: 'translate', name: '翻译', icon: actionIconFor(config, 'translate') });
   for (const p of presets) {
     if (!p.enabled || p.kind === 'image') continue;
-    catalog.set(`preset:${p.id}`, { id: p.id, kind: 'preset', name: p.name, target: p.target, mode: p.mode });
+    catalog.set(`preset:${p.id}`, { id: p.id, kind: 'preset', name: p.name, icon: actionIconFor(config, `preset:${p.id}`), target: p.target, mode: p.mode });
   }
-  catalog.set('note', { id: 'note', kind: 'note', name: '存入便签' });
+  catalog.set('note', { id: 'note', kind: 'note', name: '存入便签', icon: actionIconFor(config, 'note') });
 
   const cut = Math.max(1, config.inlineCount);
   const hidden = new Set(config.hidden);
@@ -84,8 +86,8 @@ export class ActionBar {
   private motion: WindowMotion;
   private selection: SelectionContext | null = null;
   private presets: Preset[] = [];
-  private actionBarConfig: ActionBarConfig = { order: [], hidden: [], inlineCount: 5 };
-  private fonts: ActionBarState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [] };
+  private actionBarConfig: ActionBarConfig = { order: [], hidden: [], inlineCount: 5, display: 'both', icons: {} };
+  private fonts: ActionBarState['fonts'] = { fonts: { display: '', text: '', ui: '', mono: '' }, importedFonts: [], iconStyle: 'sketch' };
   private busy = false;
   private width = 340;
   private bar = { x: 240, top: 320 };
@@ -285,7 +287,7 @@ export class ActionBar {
 
   private snapshot(): ActionBarState {
     const { items, more } = buildOrderedActionBarItems(this.presets, this.actionBarConfig);
-    return { items, more, busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
+    return { items, more, display: this.actionBarConfig.display, busy: this.busy, fonts: this.fonts, fastCard: this.fastCard };
   }
 
   private hasActions() {
@@ -300,7 +302,7 @@ export class ActionBar {
   update(presets: Preset[], busy: boolean, settings: Settings) {
     this.presets = presets;
     this.busy = busy;
-    this.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.fonts = appearanceOf(settings);
     this.actionBarConfig = settings.actionBar;
     this.publish();
     if (!this.hasActions()) this.hide();

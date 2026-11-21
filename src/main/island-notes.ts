@@ -3,7 +3,7 @@ import type { BrowserWindow, Display, IpcMainEvent, IpcMainInvokeEvent, NativeIm
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { EdgeNotesState, IslandState, Settings } from '../shared/contracts';
+import { appearanceOf, type EdgeNotesState, type IslandState, type Settings } from '../shared/contracts';
 import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
 
@@ -200,7 +200,7 @@ export class EdgeNotes {
   }
 
   updateSettings(settings: Settings) {
-    this.state.fonts = { fonts: settings.fonts, importedFonts: settings.importedFonts };
+    this.state.fonts = appearanceOf(settings);
     this.state.shortcut = settings.actionShortcuts?.['toggle-notes'] ?? '';
     this.publish();
   }

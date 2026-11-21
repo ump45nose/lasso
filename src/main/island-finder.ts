@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { cpSync, existsSync, lstatSync, readdirSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
-import type { FinderActionReq, FinderMoveTarget, FinderPanelState, IslandState, Settings } from '../shared/contracts';
+import { appearanceOf, type FinderActionReq, type FinderMoveTarget, type FinderPanelState, type IslandState, type Settings } from '../shared/contracts';
 import { encodeWebp } from './capture/output';
 import { visionOCR } from './capture/ocr';
 import { createIslandWindow } from './island-window';
@@ -202,7 +202,7 @@ export class FinderPanel {
       ...this.state,
       defaultTerminal: settings.finderTerminal ?? 'Ghostty',
       defaultEditor: settings.finderEditor ?? 'Cursor',
-      fonts: { fonts: settings.fonts, importedFonts: settings.importedFonts }
+      fonts: appearanceOf(settings)
     };
     this.publish();
   }

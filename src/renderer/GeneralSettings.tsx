@@ -1,6 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
-import { Check, Download, Ellipsis, GripVertical, Languages, NotebookPen, Plus, RefreshCw, Upload, X, Zap } from 'lucide-react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { ActionIcon, actionIconLabels, Check, Download, Ellipsis, GripVertical, Plus, RefreshCw, Upload, X } from './icons';
 import {
+  ACTION_ICON_IDS,
+  actionIconFor,
   presetTargetLabels as targetLabels,
   type ActionBarConfig,
   type AppPrompt,
@@ -47,6 +49,7 @@ export function GeneralAppearancePane({ state, notify }: { state: ShellState; no
     const res = await window.desktop.saveGeneral({
       launchAtLogin: settings.launchAtLogin,
       themeMode: settings.themeMode,
+      iconStyle: settings.iconStyle,
       toolbarTools: settings.toolbarTools,
       mouseActions: settings.mouseActions,
       autoCheckUpdates: settings.autoCheckUpdates,
@@ -99,6 +102,21 @@ export function GeneralAppearancePane({ state, notify }: { state: ShellState; no
               options={[
                 ['paper', '暖白纸面'],
                 ['system', '跟随系统']
+              ]}
+            />
+          </div>
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">图标风格</div>
+              <div className="l-set-row-sub">手绘线稿带一点陶土色，或换回规整的线性图标</div>
+            </div>
+            <Segmented
+              label="图标风格"
+              value={settings.iconStyle}
+              onChange={iconStyle => void saveGeneral({ iconStyle })}
+              options={[
+                ['sketch', '手绘'],
+                ['lucide', '线性']
               ]}
             />
           </div>
@@ -208,6 +226,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
   const { settings, capture, presets } = state;
   const dragId = useRef<string | null>(null);
   const [dropId, setDropId] = useState<string | null>(null);
+  const [picking, setPicking] = useState<string | null>(null);
 
   async function saveCapture(patch: Partial<Pick<typeof settings, 'selectionEnabled' | 'clipboardFallback'>>) {
     const res = await window.desktop.saveCapture({
@@ -313,6 +332,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
       }
     }
     await persistActionBar({
+      ...settings.actionBar,
       order: orderedEntries.map(e => e.id),
       hidden: [...nextHidden],
       inlineCount: inlineLimit
@@ -330,6 +350,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
       ids.splice(insertAt, 0, moved);
       const newInline = Math.max(1, Math.min(8, insertAt + 1));
       void persistActionBar({
+        ...settings.actionBar,
         order: ids,
         hidden: settings.actionBar.hidden,
         inlineCount: newInline
@@ -347,6 +368,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
     if (!wasInline && targetIsInline) nextInline = Math.min(8, inlineLimit + 1);
     else if (wasInline && !targetIsInline) nextInline = Math.max(1, inlineLimit - 1);
     void persistActionBar({
+      ...settings.actionBar,
       order: ids,
       hidden: settings.actionBar.hidden,
       inlineCount: nextInline
@@ -388,9 +410,11 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
     ]);
   }
 
-  const renderBarRow = (entry: BarEntry) => (
+  const renderBarRow = (entry: BarEntry) => {
+    const icon = actionIconFor(settings.actionBar, entry.id);
+    return (
+    <Fragment key={entry.id}>
     <div
-      key={entry.id}
       className="l-set-row"
       data-drop={dropId === entry.id}
       draggable
@@ -415,22 +439,50 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
       <span className="l-grip" aria-hidden="true">
         <GripVertical size={14} />
       </span>
-      {entry.kind === 'translate' ? (
-        <Languages size={15} className="faint" />
-      ) : entry.kind === 'note' ? (
-        <NotebookPen size={15} className="faint" />
-      ) : entry.target === 'api' ? (
-        <Zap size={15} className="faint" />
-      ) : (
-        <Badge target={entry.target || 'chatgpt'} />
-      )}
+      <button
+        type="button"
+        className="l-icon-slot sk-wiggle"
+        aria-label={`更换「${entry.name}」的图标`}
+        aria-expanded={picking === entry.id}
+        onClick={() => setPicking(picking === entry.id ? null : entry.id)}
+      >
+        <ActionIcon id={icon} size={17} />
+      </button>
       <div className="l-set-row-main">
         <div className="l-set-row-name">{entry.name}</div>
       </div>
+      {entry.kind === 'preset' && entry.target !== 'api' && <Badge target={entry.target || 'chatgpt'} />}
       <span className={'l-set-row-sub' + (entry.subMono ? ' mono' : '')}>{entry.sub}</span>
       <Switch label={'动作条显示 ' + entry.name} value={entry.enabled} change={() => void toggleEntry(entry)} />
     </div>
-  );
+    <AnimatePresence initial={false}>
+      {picking === entry.id && (
+        <motion.div key="picker" className="l-set-collapse" {...collapse}>
+          <div className="l-icon-grid" role="listbox" aria-label={`「${entry.name}」的图标`}>
+            {ACTION_ICON_IDS.map(id => (
+              <button
+                key={id}
+                type="button"
+                role="option"
+                aria-selected={id === icon}
+                title={actionIconLabels[id]}
+                className="sk-wiggle"
+                onClick={() => {
+                  setPicking(null);
+                  void persistActionBar({ ...settings.actionBar, icons: { ...settings.actionBar.icons, [entry.id]: id } });
+                }}
+              >
+                <ActionIcon id={id} size={17} />
+                <span>{actionIconLabels[id]}</span>
+              </button>
+            ))}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+    </Fragment>
+    );
+  };
 
   const authorized = capture.status === 'active' || (capture.status === 'paused' && !settings.selectionEnabled);
 
@@ -481,9 +533,25 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
       <div className="l-set-group">
         <div className="l-set-lbl">
           <span>动作条布局与排序</span>
-          <span className="r">拖动排序；分隔线以上直接显示在胶囊里</span>
+          <span className="r">拖动排序；点图标更换；分隔线以上直接显示在胶囊里</span>
         </div>
         <div className="l-set-card">
+          <div className="l-set-row">
+            <div className="l-set-row-main">
+              <div className="l-set-row-name">按钮显示</div>
+              <div className="l-set-row-sub">仅图标时，悬停显示名称</div>
+            </div>
+            <Segmented
+              label="动作条按钮显示"
+              value={settings.actionBar.display}
+              onChange={display => void persistActionBar({ ...settings.actionBar, display })}
+              options={[
+                ['both', '图标和文字'],
+                ['icon', '仅图标'],
+                ['text', '仅文字']
+              ]}
+            />
+          </div>
           {inlineEntries.map(renderBarRow)}
           <div
             className="l-set-cutline"
@@ -509,6 +577,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
               disabled={inlineLimit <= 1}
               onClick={() =>
                 void persistActionBar({
+                  ...settings.actionBar,
                   order: orderedEntries.map(e => e.id),
                   hidden: settings.actionBar.hidden,
                   inlineCount: inlineLimit - 1
@@ -523,6 +592,7 @@ export function SelectionActionBarPane({ state, notify }: { state: ShellState; n
               disabled={inlineLimit >= 8}
               onClick={() =>
                 void persistActionBar({
+                  ...settings.actionBar,
                   order: orderedEntries.map(e => e.id),
                   hidden: settings.actionBar.hidden,
                   inlineCount: inlineLimit + 1

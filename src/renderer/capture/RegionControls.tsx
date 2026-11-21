@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDownToLine, Check, ChevronDown, ChevronUp, Lock, LockOpen, Plus, RotateCcw, Video } from 'lucide-react';
+import { ArrowDownToLine, Check, ChevronDown, ChevronUp, Lock, LockOpen, Plus, RotateCcw, Video } from '../icons';
 import type { CaptureRect, EditableRegion } from '../../shared/capture';
 import type { RegionPreset } from '../../shared/capture-regions';
 import { drawRegion, moveRegion, resizeRegion, validPixelRegion } from '../../shared/region-geometry';

@@ -1,17 +1,17 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence, motion, useAnimationControls } from 'motion/react';
 import {
+  ActionIcon,
   ArrowUpRight,
   Copy,
   CornerDownLeft,
   Ellipsis,
-  Languages,
   NotebookPen,
   Pin,
   RotateCcw,
   SlidersHorizontal,
   X
-} from 'lucide-react';
+} from './icons';
 import {
   BAR_MENU,
   presetTargetLabels as targetLabels,
@@ -22,7 +22,7 @@ import {
   type FastApiCardState
 } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
-import { useFonts } from './fonts';
+import { useAppearance } from './fonts';
 import { Glide, spring } from './motion';
 import { Badge } from './targets';
 
@@ -173,13 +173,23 @@ export function ActionBar() {
   const [menu, setMenu] = useState(false);
   const [row, setRow] = useState<string | null>(null);
   const [sending, setSending] = useState<{ target: string; width: number } | null>(null);
-  useFonts(state?.fonts);
+  useAppearance(state?.fonts);
   const capsule = useRef<HTMLDivElement>(null);
   const tipTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const lastSpot = useRef<Spot | null>(null);
   const tipBox = useRef<HTMLDivElement>(null);
   const [tipWidth, setTipWidth] = useState(0);
   const controls = useAnimationControls();
+
+  // The window is reused between selections; restart the icon draw-in each time it is shown.
+  useLayoutEffect(() => {
+    capsule.current?.getAnimations({ subtree: true }).forEach(animation => {
+      if (animation instanceof CSSAnimation) {
+        animation.cancel();
+        animation.play();
+      }
+    });
+  }, [entry]);
 
   useEffect(() => {
     document.documentElement.classList.add('ab-html');
@@ -274,6 +284,7 @@ export function ActionBar() {
   const items = state?.items || [];
   const more = state?.more || [];
   const fastCard = state?.fastCard || null;
+  const display = state?.display || 'both';
   const tipItem = tip ? items.find(i => i.id === tip.id) : undefined;
   const slide = Boolean(lastSpot.current);
   const tipX = tip ? Math.min(Math.max(tip.x + tip.width / 2, tipWidth / 2 - 12), (capsule.current?.offsetWidth || 0) + 12 - tipWidth / 2) : 0;
@@ -291,7 +302,7 @@ export function ActionBar() {
     >
       <motion.div
         ref={capsule}
-        className="ab-bar"
+        className="ab-bar sk-draw"
         animate={controls}
         style={sending ? { minWidth: sending.width } : undefined}
         role={sending ? 'status' : 'toolbar'}
@@ -323,28 +334,32 @@ export function ActionBar() {
                   {item.kind === 'note' && idx > 0 && <span className="ab-sep" />}
                   <button
                     type="button"
-                    className={item.kind === 'preset' && fastCard?.presetId === item.id && spot?.id !== item.id ? 'act' : undefined}
+                    className={[
+                      'sk-wiggle',
+                      display === 'icon' ? 'icon-only' : '',
+                      spot?.id === item.id ? 'on' : item.kind === 'preset' && fastCard?.presetId === item.id ? 'act' : ''
+                    ].filter(Boolean).join(' ')}
+                    style={{ '--sk-delay': `${90 + idx * 45}ms` } as CSSProperties}
                     disabled={Boolean(state?.busy || pressed)}
                     aria-label={item.name}
                     onPointerEnter={event => enter(item.id, event)}
                     onClick={event => triggerItem(item, event.currentTarget)}
                   >
-                    {item.kind === 'translate' && <Languages size={15} />}
-                    {item.kind === 'note' && <NotebookPen size={15} />}
-                    {item.name}
+                    {display !== 'text' && <ActionIcon id={item.icon} size={display === 'icon' ? 18 : 17} />}
+                    {display !== 'icon' && item.name}
                   </button>
                 </Fragment>
               ))}
               <button
                 type="button"
-                className={menu && spot?.id !== 'more' ? 'act icon-only' : 'icon-only'}
+                className={'sk-wiggle icon-only' + (spot?.id === 'more' ? ' on' : menu ? ' act' : '')}
                 aria-label="更多动作与设置"
                 aria-haspopup="menu"
                 aria-expanded={menu}
                 onPointerEnter={event => enter('more', event)}
                 onClick={() => toggleMenu(!menu)}
               >
-                <Ellipsis size={16} />
+                <Ellipsis size={17} />
               </button>
             </motion.span>
           )}
@@ -376,6 +391,7 @@ export function ActionBar() {
               <button
                 key={`${item.kind}:${item.id}`}
                 type="button"
+                className={row === item.id ? 'on' : undefined}
                 role="menuitem"
                 style={{ height: BAR_MENU.row }}
                 disabled={Boolean(state?.busy || pressed)}
@@ -383,13 +399,7 @@ export function ActionBar() {
                 onClick={() => triggerItem(item)}
               >
                 {row === item.id && <Glide id="ab-menu-row" className={'ab-menu-on' + (pressed === item.id ? ' pressed' : '')} />}
-                {item.kind === 'translate' ? (
-                  <Languages size={15} className="ab-menu-icon" />
-                ) : item.kind === 'note' ? (
-                  <NotebookPen size={15} className="ab-menu-icon" />
-                ) : (
-                  <Badge target={item.target || 'api'} dark />
-                )}
+                <ActionIcon id={item.icon} size={16} className="ab-menu-icon" />
                 <span className="ab-menu-name">{item.name}</span>
                 <span className="ab-menu-dim mono">{item.target ? targetLabels[item.target] : ''}</span>
               </button>
@@ -397,7 +407,7 @@ export function ActionBar() {
             {more.length > 0 && <span className="ab-menu-sep" style={{ height: BAR_MENU.sep }} />}
             <button type="button" role="menuitem" style={{ height: BAR_MENU.row }} onPointerEnter={() => setRow('settings')} onClick={() => window.actionBar.settings()}>
               {row === 'settings' && <Glide id="ab-menu-row" className="ab-menu-on" />}
-              <SlidersHorizontal size={15} className="ab-menu-icon" />
+              <SlidersHorizontal size={16} className="ab-menu-icon" />
               <span className="ab-menu-name">配置动作条…</span>
               <span className="ab-menu-dim mono">⌘,</span>
             </button>
@@ -414,6 +424,7 @@ export function ActionBar() {
             exit={{ opacity: 0, transition: { duration: 0.1 } }}
             transition={spring}
           >
+            {display === 'icon' && tipItem && <span className="ab-tip-name">{tipItem.name}</span>}
             {tipItem?.kind === 'translate' ? (
               <>
                 打开翻译窗<span className="ab-tip-dim">· 可改词或替换选区</span>

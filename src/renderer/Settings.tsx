@@ -10,11 +10,11 @@ import {
   SlidersHorizontal,
   Sparkles,
   TextCursorInput,
-  type LucideIcon
-} from 'lucide-react';
+  type IconComponent
+} from './icons';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import type { SettingsSection, ShellState } from '../shared/contracts';
-import { useFonts } from './fonts';
+import { useAppearance } from './fonts';
 import {
   DesktopSuitePane,
   GeneralAppearancePane,
@@ -27,7 +27,7 @@ import { Glide, rise } from './motion';
 import { PresetSettings } from './PresetSettings';
 import { ScreenshotSettings } from './ScreenshotSettings';
 
-const modules: readonly { id: SettingsSection; label: string; icon: LucideIcon }[] = [
+const modules: readonly { id: SettingsSection; label: string; icon: IconComponent }[] = [
   { id: 'general', label: '通用与外观', icon: SlidersHorizontal },
   { id: 'selection', label: '划词与动作条', icon: TextCursorInput },
   { id: 'presets', label: 'AI 预设与生图', icon: Sparkles },
@@ -47,7 +47,7 @@ export function Settings() {
   const externalSectionRef = useRef<SettingsSection | undefined>(undefined);
   const bodyRef = useRef<HTMLDivElement>(null);
 
-  useFonts(state?.settings);
+  useAppearance(state?.settings);
 
   useEffect(() => {
     document.documentElement.dataset.theme = state?.settings.themeMode || 'paper';
@@ -145,12 +145,13 @@ export function Settings() {
         </header>
 
         <AnimatePresence mode="wait" initial={false}>
-          <motion.div key={section} ref={bodyRef} className="l-set-pane-body" {...rise}>
+          <motion.div key={section} ref={bodyRef} className="l-set-pane-body sk-draw" {...rise}>
             {section === 'general' && <GeneralAppearancePane state={state} notify={notify} />}
             {section === 'selection' && <SelectionActionBarPane state={state} notify={notify} />}
             {section === 'presets' && (
               <PresetSettings
                 presets={state.presets}
+                actionBar={state.settings.actionBar}
                 creatingKind={creatingPreset}
                 onClearCreate={() => setCreatingPreset(null)}
                 onOpenConnections={() => switchSection('connections')}
