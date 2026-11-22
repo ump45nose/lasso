@@ -793,10 +793,7 @@ export class NotchIsland {
     this.ax.startBridge?.(({ name, payload }) => this.handleBridgeNotification(name, payload));
     this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'get-reminder-prefs' }));
     this.ax.startFinderTrigger?.(() => void this.finder.summon());
-    this.ax.startIslandStatusClick?.(() => {
-      if (this.mode === 'board') this.closeBoard();
-      else this.openBoard();
-    });
+    this.ax.startIslandAnchorWatch?.(() => this.placeIslandWindow());
     this.ax.startFullscreenWatch?.(fullscreen => this.setFullscreenHidden(fullscreen));
     this.ax.startCopyWatch?.(event => {
       if (!event.doubleCopy || !this.callbacks.settings().translation.copyTranslateEnabled || this.callbacks.settings().translation.copyTranslateTrigger !== 'double-cmd-c') return;
@@ -812,13 +809,6 @@ export class NotchIsland {
       if (this.shouldShowWindow()) this.window.showInactive();
       this.placeWindows();
       this.publish();
-      if (!process.env.LASSO_DATA_ROOT) {
-        for (const delay of [280, 750, 1400]) {
-          setTimeout(() => {
-            if (!this.window.isDestroyed()) this.publish();
-          }, delay);
-        }
-      }
     });
     void this.window.loadFile(join(__dirname, 'renderer/index.html'), { query: { surface: 'island' } });
   }
@@ -926,24 +916,27 @@ export class NotchIsland {
     return this.nookTasks.some(t => !t.completed && t.inFocus) || Boolean(this.nookReviewBadge?.hot);
   }
 
-  private placeWindows(geo?: ReturnType<NonNullable<NativeAx['notchGeometry']>>) {
+  private placeIslandWindow(geo?: ReturnType<NonNullable<NativeAx['notchGeometry']>>) {
+    if (this.destroyed || this.window.isDestroyed()) return;
     const primary = screen.getPrimaryDisplay();
-    if (!this.window.isDestroyed()) {
-      const resolved = geo ?? this.ax.notchGeometry?.(this.isCapsuleActive());
-      const centerOffset = typeof resolved?.anchorX === 'number' && resolved.anchorX > 0
-        ? resolved.anchorX
-        : primary.bounds.width / 2;
-      const targetCenter = primary.bounds.x + centerOffset;
-      const winW = Math.min(WIN_W, primary.bounds.width);
-      const winH = Math.min(WIN_H, Math.max(520, primary.bounds.height - 40));
-      const x = Math.round(Math.max(primary.bounds.x, Math.min(targetCenter - winW / 2, primary.bounds.x + primary.bounds.width - winW)));
-      const y = primary.bounds.y;
-      const cur = this.window.getBounds();
-      if (Math.abs(x - this.lastAnchorX) >= 1 || Math.abs(cur.x - x) >= 1 || cur.y !== y || cur.width !== winW || cur.height !== winH) {
-        this.lastAnchorX = x;
-        this.window.setBounds({ x, y, width: winW, height: winH });
-      }
+    const resolved = geo ?? this.ax.notchGeometry?.(this.isCapsuleActive());
+    const centerOffset = typeof resolved?.anchorX === 'number' && resolved.anchorX > 0
+      ? resolved.anchorX
+      : primary.bounds.width / 2;
+    const targetCenter = primary.bounds.x + centerOffset;
+    const winW = Math.min(WIN_W, primary.bounds.width);
+    const winH = Math.min(WIN_H, Math.max(520, primary.bounds.height - 40));
+    const x = Math.round(Math.max(primary.bounds.x, Math.min(targetCenter - winW / 2, primary.bounds.x + primary.bounds.width - winW)));
+    const y = primary.bounds.y;
+    const cur = this.window.getBounds();
+    if (Math.abs(x - this.lastAnchorX) >= 1 || Math.abs(cur.x - x) >= 1 || cur.y !== y || cur.width !== winW || cur.height !== winH) {
+      this.lastAnchorX = x;
+      this.window.setBounds({ x, y, width: winW, height: winH });
     }
+  }
+
+  private placeWindows(geo?: ReturnType<NonNullable<NativeAx['notchGeometry']>>) {
+    this.placeIslandWindow(geo);
     this.notes.place();
   }
 
@@ -1513,6 +1506,7 @@ export class NotchIsland {
     for (const watcher of this.nookWatchers.values()) watcher.close();
     this.nookWatchers.clear();
     this.ax.notchGeometry?.(false);
+    this.ax.stopIslandAnchorWatch?.();
     this.ax.stopFullscreenWatch?.();
     this.ax.stopFinderTrigger?.();
     this.ax.stopCopyWatch?.();
