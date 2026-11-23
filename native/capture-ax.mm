@@ -1151,13 +1151,9 @@ static NSString* g_blocker_current_key = nil;
 static id g_blocker_move_obs = nil;
 static id g_blocker_resize_obs = nil;
 static napi_threadsafe_function g_island_anchor_tsfn = nullptr;
-static double g_blocker_screen_w = 0.0;
+static NSRect g_blocker_screen_frame = {};
 static double g_last_good_pref_pos = 0.0;
 static double g_last_good_screen_w = 0.0;
-static double g_last_calib_done_time = 0.0;
-static bool g_blocker_calibrating = false;
-static bool g_blocker_calibrated_for_screen = false;
-static bool g_blocker_recalib_pending = false;
 static double g_blocker_slot_anchor_x = 0.0;
 static bool g_has_blocker_slot_anchor = false;
 static int g_blocker_seq = 0;
@@ -1189,24 +1185,10 @@ static void detachBlockerWindowObservers() {
   }
 }
 
-static void configureBlockerNonInteractive() {
-  if (!g_island_blocker_item) return;
-  NSStatusBarButton* btn = g_island_blocker_item.button;
-  if (!btn) return;
-  btn.title = @"";
-  btn.image = nil;
-  btn.enabled = NO;
-  btn.appearsDisabled = NO;
-  btn.target = nil;
-  btn.action = nil;
-  btn.hidden = YES;
-  if ([btn.cell isKindOfClass:[NSButtonCell class]]) {
-    ((NSButtonCell*)btn.cell).highlightsBy = NSNoCellMask;
-  }
-  if (btn.window) {
-    btn.window.ignoresMouseEvents = YES;
-    btn.window.alphaValue = 0.0;
-  }
+static void hideBlockerWindow() {
+  NSWindow* win = g_island_blocker_item.button.window;
+  if (win && !win.ignoresMouseEvents) win.ignoresMouseEvents = YES;
+  if (win && win.alphaValue != 0.0) win.alphaValue = 0.0;
 }
 
 static void clearBlockerDefaults() {
@@ -1232,16 +1214,17 @@ static void removeBlockerItemOnMain() {
   }
 }
 
+static void resetBlockerSlotOnMain() {
+  g_blocker_calib_gen++;
+  g_has_blocker_slot_anchor = false;
+  g_blocker_screen_frame = NSZeroRect;
+  removeBlockerItemOnMain();
+  clearBlockerDefaults();
+}
+
 static void stopIslandBlocker() {
   onMain(^{
-    g_blocker_calib_gen++;
-    g_blocker_calibrating = false;
-    g_blocker_calibrated_for_screen = false;
-    g_blocker_recalib_pending = false;
-    g_has_blocker_slot_anchor = false;
-    g_blocker_screen_w = 0.0;
-    removeBlockerItemOnMain();
-    clearBlockerDefaults();
+    resetBlockerSlotOnMain();
     if (g_island_anchor_tsfn) {
       napi_release_threadsafe_function(g_island_anchor_tsfn, napi_tsfn_abort);
       g_island_anchor_tsfn = nullptr;
@@ -1257,7 +1240,18 @@ static void createBlockerItemAtPos(double prefPos, double width) {
   [[NSUserDefaults standardUserDefaults] setDouble:prefPos forKey:prefKey];
   g_island_blocker_item = [[NSStatusBar systemStatusBar] statusItemWithLength:width];
   g_island_blocker_item.autosaveName = autosave;
-  configureBlockerNonInteractive();
+  NSStatusBarButton* btn = g_island_blocker_item.button;
+  btn.title = @"";
+  btn.image = nil;
+  btn.enabled = NO;
+  btn.appearsDisabled = NO;
+  btn.target = nil;
+  btn.action = nil;
+  btn.hidden = YES;
+  if ([btn.cell isKindOfClass:[NSButtonCell class]]) {
+    ((NSButtonCell*)btn.cell).highlightsBy = NSNoCellMask;
+  }
+  hideBlockerWindow();
 }
 
 static bool validBlockerWindowFrame(double screenOriginX, double screenTopY, double screenWidth, NSRect* outRect) {
@@ -1277,7 +1271,7 @@ static void pollBlockerFrame(int gen, double screenOriginX, double screenTopY, d
                              double expectedWidth, double maxExpectedRight, int attempt, void (^done)(NSRect bf, bool valid)) {
   dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 45 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
     if (gen != g_blocker_calib_gen) return;
-    configureBlockerNonInteractive();
+    hideBlockerWindow();
     NSRect bf = NSZeroRect;
     bool ok = validBlockerWindowFrame(screenOriginX, screenTopY, screenWidth, &bf);
     if (ok && expectedWidth > 0.0 && std::abs(bf.size.width - expectedWidth) > 6.0) {
@@ -1297,56 +1291,22 @@ static void pollBlockerFrame(int gen, double screenOriginX, double screenTopY, d
   });
 }
 
-static void startBlockerCalibration(double screenOriginX, double screenTopY, double screenWidth,
-                                    double screenCenterX, double capsuleW, double leftMenuRightX);
-
-static void scheduleBlockerRecalibration(int gen, double screenOriginX, double screenTopY,
-                                         double screenWidth, double screenCenterX, double capsuleW) {
-  if (g_blocker_recalib_pending || g_blocker_calibrating) return;
-  if (CFAbsoluteTimeGetCurrent() - g_last_calib_done_time < 4.0) return;
-  g_blocker_recalib_pending = true;
-  dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 800 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
-    if (gen != g_blocker_calib_gen) return;
-    g_blocker_recalib_pending = false;
-    if (g_blocker_calibrating || !g_island_blocker_item) return;
-    NSRect bf = NSZeroRect;
-    bool valid = validBlockerWindowFrame(screenOriginX, screenTopY, screenWidth, &bf) && bf.size.width >= capsuleW - 8.0;
-    bool farDrift = valid && (std::abs(NSMidX(bf) - screenCenterX) > 72.0);
-    bool crowdsLeft = valid && (bf.origin.x < g_cached_left_menu_right + 8.0) && (NSMidX(bf) < screenCenterX - 24.0);
-    if (!valid || farDrift || crowdsLeft) {
-      g_last_good_pref_pos = 0.0;
-      startBlockerCalibration(screenOriginX, screenTopY, screenWidth, screenCenterX, capsuleW, g_cached_left_menu_right);
-    }
-  });
-}
-
 static void attachBlockerWindowObservers(int gen, double screenOriginX, double screenTopY,
-                                         double screenWidth, double screenCenterX, double capsuleW) {
+                                         double screenWidth, double capsuleW) {
   detachBlockerWindowObservers();
   if (!g_island_blocker_item || !g_island_blocker_item.button || !g_island_blocker_item.button.window) return;
   NSWindow* win = g_island_blocker_item.button.window;
-  configureBlockerNonInteractive();
+  // Menu bar relayouts also result from our own slot changes. Only read the
+  // settled window here so its notifications cannot trigger another search.
   auto onWindowGeometry = ^(NSNotification*) {
-    if (gen != g_blocker_calib_gen || g_blocker_calibrating || !g_island_blocker_item) return;
-    configureBlockerNonInteractive();
+    if (gen != g_blocker_calib_gen) return;
     NSRect bf = NSZeroRect;
-    if (validBlockerWindowFrame(screenOriginX, screenTopY, screenWidth, &bf) &&
-        bf.size.width >= capsuleW - 8.0) {
-      double nextAnchor = NSMidX(bf) - screenOriginX;
-      bool changed = !g_has_blocker_slot_anchor || std::abs(nextAnchor - g_blocker_slot_anchor_x) >= 0.5;
+    if (!validBlockerWindowFrame(screenOriginX, screenTopY, screenWidth, &bf) ||
+        bf.size.width < capsuleW - 8.0) return;
+    double nextAnchor = NSMidX(bf) - screenOriginX;
+    if (std::abs(nextAnchor - g_blocker_slot_anchor_x) >= 0.5) {
       g_blocker_slot_anchor_x = nextAnchor;
-      g_has_blocker_slot_anchor = true;
-      if (changed) notifyIslandAnchorChanged();
-      double drift = std::abs(NSMidX(bf) - screenCenterX);
-      bool crowdsLeft = (bf.origin.x < g_cached_left_menu_right + 8.0) && (NSMidX(bf) < screenCenterX - 24.0);
-      if (drift > 72.0 || crowdsLeft) {
-        scheduleBlockerRecalibration(gen, screenOriginX, screenTopY, screenWidth, screenCenterX, capsuleW);
-      }
-    } else {
-      bool had = g_has_blocker_slot_anchor;
-      g_has_blocker_slot_anchor = false;
-      if (had) notifyIslandAnchorChanged();
-      scheduleBlockerRecalibration(gen, screenOriginX, screenTopY, screenWidth, screenCenterX, capsuleW);
+      notifyIslandAnchorChanged();
     }
   };
   NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
@@ -1355,21 +1315,18 @@ static void attachBlockerWindowObservers(int gen, double screenOriginX, double s
 }
 
 static void commitSettledBlocker(int gen, double prefPos, double screenOriginX, double screenTopY,
-                                 double screenWidth, double screenCenterX, double capsuleW, NSRect settledBf, bool settledValid) {
+                                 double screenWidth, double capsuleW, NSRect settledBf, bool settledValid) {
   if (gen != g_blocker_calib_gen) return;
-  configureBlockerNonInteractive();
   if (settledValid && settledBf.size.width >= capsuleW - 8.0) {
     g_blocker_slot_anchor_x = NSMidX(settledBf) - screenOriginX;
     g_has_blocker_slot_anchor = true;
     g_last_good_pref_pos = prefPos;
     g_last_good_screen_w = screenWidth;
+    attachBlockerWindowObservers(gen, screenOriginX, screenTopY, screenWidth, capsuleW);
   } else {
+    removeBlockerItemOnMain();
     g_has_blocker_slot_anchor = false;
   }
-  g_last_calib_done_time = CFAbsoluteTimeGetCurrent();
-  g_blocker_calibrated_for_screen = true;
-  g_blocker_calibrating = false;
-  attachBlockerWindowObservers(gen, screenOriginX, screenTopY, screenWidth, screenCenterX, capsuleW);
   notifyIslandAnchorChanged();
 }
 
@@ -1378,19 +1335,13 @@ static void finalizeBlockerWidth(int gen, double prefPos, double screenOriginX, 
                                  bool sawLeftOfRightEdge, NSRect bf) {
   if (gen != g_blocker_calib_gen) return;
   double rightEdge = NSMaxX(bf);
-  double screenCenterX = (capsuleLeft + capsuleRight) * 0.5;
   double capsuleW = capsuleRight - capsuleLeft;
 
   // If every status item already sits to the right of the capsule even when the probe is pushed
   // all the way left, no menu bar icon overlaps the capsule — remove the blocker to avoid empty padding.
   if (!sawLeftOfRightEdge && rightEdge >= capsuleRight + 2.0) {
-    removeBlockerItemOnMain();
-    g_has_blocker_slot_anchor = false;
     g_last_good_pref_pos = 0.0;
-    g_last_calib_done_time = CFAbsoluteTimeGetCurrent();
-    g_blocker_calibrated_for_screen = true;
-    g_blocker_calibrating = false;
-    notifyIslandAnchorChanged();
+    commitSettledBlocker(gen, prefPos, screenOriginX, screenTopY, screenWidth, capsuleW, NSZeroRect, false);
     return;
   }
 
@@ -1398,9 +1349,8 @@ static void finalizeBlockerWidth(int gen, double prefPos, double screenOriginX, 
   // matches capsuleW 1:1 with zero exposed gap and zero neighbor overlap.
   double pad = std::clamp((double)bf.size.width - probeWidth, 0.0, 32.0);
   double targetLen = std::max(8.0, std::round(capsuleW - pad));
-  if (g_island_blocker_item) {
+  if (g_island_blocker_item && g_island_blocker_item.length != targetLen) {
     g_island_blocker_item.length = targetLen;
-    configureBlockerNonInteractive();
   }
 
   pollBlockerFrame(gen, screenOriginX, screenTopY, screenWidth, capsuleW, rightEdge + 16.0, 0, ^(NSRect settledBf, bool settledValid) {
@@ -1409,14 +1359,13 @@ static void finalizeBlockerWidth(int gen, double prefPos, double screenOriginX, 
       double adjusted = std::clamp(std::round(g_island_blocker_item.length + (capsuleW - settledBf.size.width)), 8.0, capsuleW);
       if (std::abs(adjusted - g_island_blocker_item.length) >= 1.0) {
         g_island_blocker_item.length = adjusted;
-        configureBlockerNonInteractive();
         pollBlockerFrame(gen, screenOriginX, screenTopY, screenWidth, capsuleW, rightEdge + 16.0, 4, ^(NSRect finalBf, bool finalValid) {
-          commitSettledBlocker(gen, prefPos, screenOriginX, screenTopY, screenWidth, screenCenterX, capsuleW, finalBf, finalValid);
+          commitSettledBlocker(gen, prefPos, screenOriginX, screenTopY, screenWidth, capsuleW, finalBf, finalValid);
         });
         return;
       }
     }
-    commitSettledBlocker(gen, prefPos, screenOriginX, screenTopY, screenWidth, screenCenterX, capsuleW, settledBf, settledValid);
+    commitSettledBlocker(gen, prefPos, screenOriginX, screenTopY, screenWidth, capsuleW, settledBf, settledValid);
   });
 }
 
@@ -1445,13 +1394,11 @@ static void runBlockerCalibStep(int gen, int step, double lo, double hi, double 
           if (finalValid) {
             finalizeBlockerWidth(gen, bestPos, screenOriginX, screenTopY, screenWidth, capsuleLeft, capsuleRight, probeWidth, true, finalBf);
           } else {
-            g_blocker_calibrating = false;
-            notifyIslandAnchorChanged();
+            commitSettledBlocker(gen, bestPos, screenOriginX, screenTopY, screenWidth, capsuleW, NSZeroRect, false);
           }
         });
       } else {
-        g_blocker_calibrating = false;
-        notifyIslandAnchorChanged();
+        commitSettledBlocker(gen, mid, screenOriginX, screenTopY, screenWidth, capsuleW, NSZeroRect, false);
       }
       return;
     }
@@ -1481,8 +1428,7 @@ static void runBlockerCalibStep(int gen, int step, double lo, double hi, double 
           if (finalValid) {
             finalizeBlockerWidth(gen, nextBestPos, screenOriginX, screenTopY, screenWidth, capsuleLeft, capsuleRight, probeWidth, nextSawLeft, finalBf);
           } else {
-            g_blocker_calibrating = false;
-            notifyIslandAnchorChanged();
+            commitSettledBlocker(gen, nextBestPos, screenOriginX, screenTopY, screenWidth, capsuleW, NSZeroRect, false);
           }
         });
       } else {
@@ -1503,9 +1449,6 @@ static void startBlockerCalibration(double screenOriginX, double screenTopY, dou
                                     double screenCenterX, double capsuleW, double leftMenuRightX) {
   onMain(^{
     int gen = ++g_blocker_calib_gen;
-    g_blocker_calibrating = true;
-    g_blocker_calibrated_for_screen = false;
-    g_blocker_recalib_pending = false;
     clearBlockerDefaults();
     const double probeWidth = 16.0;
     double capsuleLeft = screenCenterX - capsuleW * 0.5;
@@ -1541,19 +1484,6 @@ static void startBlockerCalibration(double screenOriginX, double screenTopY, dou
   });
 }
 
-static void disableBlockerSlot() {
-  onMain(^{
-    g_blocker_calib_gen++;
-    g_blocker_calibrating = false;
-    g_blocker_calibrated_for_screen = false;
-    g_blocker_recalib_pending = false;
-    g_has_blocker_slot_anchor = false;
-    g_blocker_screen_w = 0.0;
-    removeBlockerItemOnMain();
-    clearBlockerDefaults();
-  });
-}
-
 static napi_value startIslandAnchorWatch(napi_env e, napi_callback_info info) {
   size_t n = 1;
   napi_value args[1];
@@ -1569,7 +1499,7 @@ static napi_value startIslandAnchorWatch(napi_env e, napi_callback_info info) {
   }
   napi_value name;
   napi_create_string_utf8(e, "lasso-island-anchor-watch", NAPI_AUTO_LENGTH, &name);
-  if (napi_create_threadsafe_function(e, args[0], nullptr, name, 0, 1, nullptr, nullptr, nullptr,
+  if (napi_create_threadsafe_function(e, args[0], nullptr, name, 1, 1, nullptr, nullptr, nullptr,
                                       callIslandAnchorJS, &g_island_anchor_tsfn) == napi_ok) {
     napi_unref_threadsafe_function(e, g_island_anchor_tsfn);
   }
@@ -1579,10 +1509,7 @@ static napi_value startIslandAnchorWatch(napi_env e, napi_callback_info info) {
 }
 
 static napi_value stopIslandAnchorWatch(napi_env e, napi_callback_info) {
-  if (g_island_anchor_tsfn) {
-    napi_release_threadsafe_function(g_island_anchor_tsfn, napi_tsfn_abort);
-    g_island_anchor_tsfn = nullptr;
-  }
+  stopIslandBlocker();
   napi_value undefined;
   napi_get_undefined(e, &undefined);
   return undefined;
@@ -1679,11 +1606,11 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
         }
       }
 
+      if ((physicalNotch || !wantBlocker) && !NSIsEmptyRect(g_blocker_screen_frame)) {
+        onMain(^{ resetBlockerSlotOnMain(); });
+      }
       if (physicalNotch) {
         // Approach 1 (Hardware Notch Display with active cutout): lock to physical notch center, expand left wing only (0px on right).
-        if (g_island_blocker_item || g_blocker_calibrating || g_blocker_calibrated_for_screen) {
-          disableBlockerSlot();
-        }
         hasNotch = true;
         double leftFree = (notchLeftX - 6.0) - (leftMenuRightX + 12.0);
         leftSafeWidth = std::clamp(leftFree, 140.0, 216.0);
@@ -1698,22 +1625,10 @@ static napi_value notchGeometry(napi_env e, napi_callback_info info) {
         rightSafeWidth = 56.0;
         const double capsuleW = leftSafeWidth + rightSafeWidth;
 
-        if (!wantBlocker) {
-          if (g_island_blocker_item || g_blocker_calibrating || g_blocker_calibrated_for_screen) {
-            disableBlockerSlot();
-          }
-        } else if ((!g_blocker_calibrated_for_screen && !g_blocker_calibrating) || std::abs(screenWidth - g_blocker_screen_w) >= 1.0) {
-          g_blocker_screen_w = screenWidth;
+        if (wantBlocker && !NSEqualRects(frame, g_blocker_screen_frame)) {
+          g_blocker_screen_frame = frame;
           g_has_blocker_slot_anchor = false;
           startBlockerCalibration(frame.origin.x, NSMaxY(frame), screenWidth, screenCenterX, capsuleW, leftMenuRightX);
-        } else if (!g_blocker_calibrating && g_island_blocker_item) {
-          configureBlockerNonInteractive();
-          NSRect liveBf = NSZeroRect;
-          if (validBlockerWindowFrame(frame.origin.x, NSMaxY(frame), screenWidth, &liveBf) &&
-              liveBf.size.width >= capsuleW - 8.0) {
-            g_blocker_slot_anchor_x = NSMidX(liveBf) - frame.origin.x;
-            g_has_blocker_slot_anchor = true;
-          }
         }
 
         anchorX = (wantBlocker && g_has_blocker_slot_anchor) ? g_blocker_slot_anchor_x : (screenWidth / 2.0);
