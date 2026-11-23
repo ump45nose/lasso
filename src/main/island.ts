@@ -613,7 +613,13 @@ export class NotchIsland {
       }
     };
     const toast = (text: string, badge?: string) => this.toast(text, badge);
-    this.notes = new EdgeNotes(this.fonts, { check, toast, onPinImage: callbacks.onPinImage, settings: callbacks.settings });
+    this.notes = new EdgeNotes(this.fonts, {
+      check,
+      toast,
+      onPinImage: callbacks.onPinImage,
+      writeClipboardImage: image => this.clipboardHistory.writeImage(image),
+      settings: callbacks.settings
+    });
     this.finder = new FinderPanel(this.fonts, {
       check,
       toast,
@@ -627,6 +633,7 @@ export class NotchIsland {
       pinImage: callbacks.onPinImage,
       pinText: callbacks.onPinText,
       noteText: (text, sourceApp) => this.notes.appendScratchpad(text, sourceApp),
+      noteImage: (imagePath, alt, sourceApp) => this.notes.appendScratchpadImage(imagePath, alt, sourceApp),
       translateText: text => this.translator.open(text),
       askAi: text => callbacks.onAskAi(text),
       onCopy: event => this.handleCopy(event),

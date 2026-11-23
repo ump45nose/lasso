@@ -9,7 +9,8 @@ svg.sk .skm { stroke: var(--sk-accent); stroke-width: 4.2; opacity: .9; }
 .ab-bar button.on svg.sk, .ab-menu button.on svg.sk,
 .l-record-control .l-btn:hover svg.sk, .l-rec-ib:hover:not(:disabled) svg.sk, .ed-tool[aria-pressed="true"]:hover:not(:disabled) svg.sk, .ed-mi:hover svg.sk, .ed-mi.active svg.sk,
 .pin-bar button:hover svg.sk, .pin-thumbnail-actions button:hover svg.sk, .scroll-controls .l-btn:hover:not(:disabled) svg.sk,
-.isl-review-pill:hover svg.sk, .isl-ib:hover svg.sk, .isl-ink-btn:hover svg.sk { --sk-accent: var(--ink); }
+.isl-review-pill:hover svg.sk, .isl-ib:hover svg.sk, .isl-ink-btn:hover svg.sk,
+.en-img-bar button:hover svg.sk, .en-lightbox-btn:hover svg.sk, .en-lightbox-close:hover svg.sk { --sk-accent: var(--ink); }
 
 /* Motion vocabulary. `.sk-draw` on an ancestor traces strokes in on mount (stagger with --sk-delay);
  * `.sk-wiggle` on a button gives its icon a small hand-drawn shake on hover. */

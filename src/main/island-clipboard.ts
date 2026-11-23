@@ -24,6 +24,7 @@ export interface ClipboardHistoryPanelDeps {
   pinImage: (image: NativeImage, title?: string) => Promise<void>;
   pinText: (text: string, title?: string) => Promise<void>;
   noteText: (text: string, sourceApp?: string) => void | Promise<void>;
+  noteImage?: (imagePath: string, alt: string, sourceApp?: string) => void | Promise<void>;
   translateText: (text: string) => void;
   askAi: (payload: { kind: 'text'; text: string } | { kind: 'image'; imagePath: string }) => void;
   settings: () => Settings;
@@ -182,6 +183,19 @@ export class ClipboardHistoryPanel {
     if (!options?.transient) this.recordText(text);
   }
 
+  async writeImage(image: NativeImage, options?: { transient?: boolean; title?: string }) {
+    if (image.isEmpty()) throw Error('图片内容为空');
+    const png = image.toPNG();
+    ++this.writing;
+    try {
+      await clipboard.write([new ClipboardItem({ 'image/png': new Blob([new Uint8Array(png)], { type: 'image/png' }) })]);
+    } finally {
+      this.ignoreCurrentCopy();
+      --this.writing;
+    }
+    if (!options?.transient) this.recordImage(png, options?.title);
+  }
+
   async poll(): Promise<ClipboardEntry | null> {
     if (this.polling || this.writing) return null;
     const meta = this.ax.pasteboardMeta?.();
@@ -294,10 +308,14 @@ export class ClipboardHistoryPanel {
         if (entry.kind === 'image' && entry.imagePath) await this.deps.pinImage(nativeImage.createFromPath(entry.imagePath), entry.preview);
         else await this.deps.pinText(entry.text, entry.sourceAppName);
       } else if (req.action === 'note') {
-        const content = entry.kind === 'image' && entry.imagePath
-          ? `![${entry.preview}](data:image/png;base64,${readFileSync(entry.imagePath).toString('base64')})`
-          : entry.text;
-        await this.deps.noteText(content, entry.sourceAppName);
+        if (entry.kind === 'image' && entry.imagePath && existsSync(entry.imagePath) && this.deps.noteImage) {
+          await this.deps.noteImage(entry.imagePath, entry.preview, entry.sourceAppName);
+        } else {
+          const content = entry.kind === 'image' && entry.imagePath
+            ? `![${entry.preview}](data:image/png;base64,${readFileSync(entry.imagePath).toString('base64')})`
+            : entry.text;
+          await this.deps.noteText(content, entry.sourceAppName);
+        }
       } else if (req.action === 'translate') {
         if (!entry.text.trim()) throw Error('当前条目没有可翻译的文本');
         if (!this.state.pinnedOnTop) this.close();

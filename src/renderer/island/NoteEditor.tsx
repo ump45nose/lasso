@@ -1,12 +1,387 @@
-import { useEffect, useRef } from 'react';
-import { Annotation, EditorSelection, EditorState, Transaction } from '@codemirror/state';
+import { useEffect, useRef, useState } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { Annotation, EditorSelection, EditorState, Facet, StateField, Transaction } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { deleteMarkupBackward, insertNewlineContinueMarkupCommand, markdown } from '@codemirror/lang-markdown';
 import { syntaxTree } from '@codemirror/language';
 import { Decoration, EditorView, keymap, placeholder, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
 import { GFM } from '@lezer/markdown';
+import { CodeXml, Copy, Image as ImageIcon, Pin, Trash2, ZoomIn } from '../icons';
 
 const externalChange = Annotation.define<boolean>();
+const IMAGE_MD_RE = /!\[([^\]\n]*)\]\((?:<([^>\n]+)>|([^\s)\n]+))(?:\s+"[^"\n]*")?\)/g;
+const ASSET_SRC_RE = /^(?:\.\/)?assets\/([^/\\]+\.(?:png|jpe?g|gif|webp))$/i;
+const DATA_IMAGE_RE = /^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+$/i;
+const IMAGE_FILE_EXT_RE = /\.(?:png|jpe?g|gif|webp|bmp|tiff?)$/i;
+
+export type NoteImageAction = 'preview' | 'copy' | 'pin';
+
+export interface NoteImageRef {
+  alt: string;
+  canonicalSrc: string;
+  displaySrc: string;
+  label: string;
+}
+
+export function resolveNoteImageRef(rawSrc: string, alt = ''): NoteImageRef | null {
+  const trimmed = rawSrc.trim();
+  const assetMatch = ASSET_SRC_RE.exec(trimmed);
+  if (assetMatch) {
+    const fileName = assetMatch[1];
+    return {
+      alt,
+      canonicalSrc: `assets/${fileName}`,
+      displaySrc: `lasso-note://assets/${encodeURIComponent(fileName)}`,
+      label: fileName
+    };
+  }
+  if (DATA_IMAGE_RE.test(trimmed)) {
+    return {
+      alt,
+      canonicalSrc: trimmed,
+      displaySrc: trimmed,
+      label: '内嵌图片'
+    };
+  }
+  return null;
+}
+
+export function countNoteImages(markdownText: string): number {
+  let count = 0;
+  let inFence = false;
+  for (const line of markdownText.split('\n')) {
+    if (/^\s*(?:```|~~~)/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    IMAGE_MD_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = IMAGE_MD_RE.exec(line)) !== null) {
+      if (resolveNoteImageRef(match[2] ?? match[3] ?? '', match[1] ?? '')) count++;
+    }
+  }
+  return count;
+}
+
+export function isImageFile(file: File): boolean {
+  return file.type.startsWith('image/') || IMAGE_FILE_EXT_RE.test(file.name);
+}
+
+export function insertNoteImages(view: EditorView, from: number, to: number, relativePaths: string[]) {
+  if (!relativePaths.length) return;
+  const doc = view.state.doc;
+  const safeFrom = Math.max(0, Math.min(from, doc.length));
+  const safeTo = Math.max(safeFrom, Math.min(to, doc.length));
+  const before = safeFrom > 0 ? doc.sliceString(safeFrom - 1, safeFrom) : '';
+  const after = safeTo < doc.length ? doc.sliceString(safeTo, safeTo + 1) : '';
+  const prefix = safeFrom > 0 && before !== '\n' ? '\n' : '';
+  const body = relativePaths.map(path => `![](${path})`).join('\n');
+  const suffix = after === '\n' ? '\n' : '\n';
+  const insert = `${prefix}${body}${suffix}`;
+  view.dispatch({
+    changes: { from: safeFrom, to: safeTo, insert },
+    selection: EditorSelection.cursor(safeFrom + insert.length),
+    scrollIntoView: true
+  });
+}
+
+type ImageWidgetActionHandler = (action: NoteImageAction, image: NoteImageRef) => void;
+
+const imageActionFacet = Facet.define<ImageWidgetActionHandler | null, ImageWidgetActionHandler | null>({
+  combine: values => values.find(Boolean) ?? null
+});
+
+const widgetRoots = new WeakMap<HTMLElement, Root>();
+
+function findImageMatchInDoc(state: EditorState, hintPos: number, canonicalSrc: string): { lineFrom: number; lineTo: number; matchFrom: number; matchTo: number; standalone: boolean } | null {
+  const safePos = Math.max(0, Math.min(hintPos, state.doc.length));
+  const line = state.doc.lineAt(safePos);
+  const scanLine = (targetLine: { from: number; to: number; text: string }) => {
+    IMAGE_MD_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = IMAGE_MD_RE.exec(targetLine.text)) !== null) {
+      const ref = resolveNoteImageRef(match[2] ?? match[3] ?? '', match[1] ?? '');
+      if (ref && ref.canonicalSrc === canonicalSrc) {
+        return {
+          lineFrom: targetLine.from,
+          lineTo: targetLine.to,
+          matchFrom: targetLine.from + match.index,
+          matchTo: targetLine.from + match.index + match[0].length,
+          standalone: targetLine.text.trim() === match[0]
+        };
+      }
+    }
+    return null;
+  };
+  return scanLine(line) ?? (line.number > 1 ? scanLine(state.doc.line(line.number - 1)) : null);
+}
+
+function NoteImageCard({
+  image,
+  editingSource,
+  onLoad,
+  onAction,
+  onEditSource,
+  onDelete
+}: {
+  image: NoteImageRef;
+  editingSource: boolean;
+  onLoad: () => void;
+  onAction: (action: NoteImageAction) => void;
+  onEditSource: () => void;
+  onDelete: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  return (
+    <figure className={'en-img-card' + (editingSource ? ' source-open' : '')} contentEditable={false}>
+      {failed ? (
+        <div className="en-img-missing">
+          <ImageIcon size={16} />
+          <span className="trunc">找不到图片：{image.label}</span>
+        </div>
+      ) : (
+        <button
+          type="button"
+          className="en-img-frame"
+          aria-label={`放大查看 ${image.alt || image.label}`}
+          onMouseDown={event => event.preventDefault()}
+          onClick={event => {
+            event.preventDefault();
+            event.stopPropagation();
+            onAction('preview');
+          }}
+        >
+          <img
+            src={image.displaySrc}
+            alt={image.alt || image.label}
+            draggable={false}
+            onLoad={onLoad}
+            onError={() => {
+              setFailed(true);
+              onLoad();
+            }}
+          />
+        </button>
+      )}
+      <div className="en-img-bar" role="toolbar" aria-label="图片操作" onMouseDown={event => event.preventDefault()}>
+        {!failed && (
+          <>
+            <button
+              type="button"
+              aria-label="放大查看"
+              title="放大查看"
+              onClick={event => {
+                event.stopPropagation();
+                onAction('preview');
+              }}
+            >
+              <ZoomIn size={13} />
+            </button>
+            <button
+              type="button"
+              aria-label="复制图片"
+              title="复制图片"
+              onClick={event => {
+                event.stopPropagation();
+                onAction('copy');
+              }}
+            >
+              <Copy size={13} />
+            </button>
+            <button
+              type="button"
+              aria-label="钉为桌面贴图"
+              title="钉为桌面贴图"
+              onClick={event => {
+                event.stopPropagation();
+                onAction('pin');
+              }}
+            >
+              <Pin size={13} />
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          aria-label="编辑图片标记"
+          title="编辑图片标记"
+          onClick={event => {
+            event.stopPropagation();
+            onEditSource();
+          }}
+        >
+          <CodeXml size={13} />
+        </button>
+        <button
+          type="button"
+          className="danger"
+          aria-label="删除图片"
+          title="删除图片（⌘Z 可撤销）"
+          onClick={event => {
+            event.stopPropagation();
+            onDelete();
+          }}
+        >
+          <Trash2 size={13} />
+        </button>
+      </div>
+      {image.alt && <figcaption className="en-img-caption trunc">{image.alt}</figcaption>}
+    </figure>
+  );
+}
+
+class NoteImageWidget extends WidgetType {
+  constructor(
+    readonly image: NoteImageRef,
+    readonly editingSource: boolean
+  ) {
+    super();
+  }
+
+  eq(other: NoteImageWidget) {
+    return (
+      this.image.displaySrc === other.image.displaySrc &&
+      this.image.canonicalSrc === other.image.canonicalSrc &&
+      this.image.alt === other.image.alt &&
+      this.editingSource === other.editingSource
+    );
+  }
+
+  toDOM(view: EditorView) {
+    const host = document.createElement('div');
+    host.className = 'en-img-widget';
+    const root = createRoot(host);
+    widgetRoots.set(host, root);
+
+    const locate = () => {
+      try {
+        return findImageMatchInDoc(view.state, view.posAtDOM(host), this.image.canonicalSrc);
+      } catch {
+        return null;
+      }
+    };
+
+    const handleAction = (action: NoteImageAction) => {
+      view.state.facet(imageActionFacet)?.(action, this.image);
+    };
+
+    const handleEditSource = () => {
+      const found = locate();
+      if (!found) return;
+      view.dispatch({
+        selection: EditorSelection.cursor(found.matchTo),
+        scrollIntoView: true
+      });
+      view.focus();
+    };
+
+    const handleDelete = () => {
+      const found = locate();
+      if (!found) return;
+      let from = found.matchFrom;
+      let to = found.matchTo;
+      if (found.standalone) {
+        from = found.lineFrom;
+        to = found.lineTo;
+        if (to < view.state.doc.length && view.state.doc.sliceString(to, to + 1) === '\n') {
+          to += 1;
+        } else if (from > 0 && view.state.doc.sliceString(from - 1, from) === '\n') {
+          from -= 1;
+        }
+      }
+      view.dispatch({
+        changes: { from, to, insert: '' },
+        selection: EditorSelection.cursor(Math.min(from, view.state.doc.length - (to - from)))
+      });
+      view.focus();
+    };
+
+    root.render(
+      <NoteImageCard
+        image={this.image}
+        editingSource={this.editingSource}
+        onLoad={() => view.requestMeasure()}
+        onAction={handleAction}
+        onEditSource={handleEditSource}
+        onDelete={handleDelete}
+      />
+    );
+    return host;
+  }
+
+  destroy(dom: HTMLElement) {
+    const root = widgetRoots.get(dom);
+    if (root) {
+      widgetRoots.delete(dom);
+      queueMicrotask(() => root.unmount());
+    }
+  }
+
+  ignoreEvent() {
+    return true;
+  }
+}
+
+function buildImageDecorations(state: EditorState): DecorationSet {
+  const decorations: ReturnType<Decoration['range']>[] = [];
+  const selection = state.selection.main;
+  let inFence = false;
+  for (let lineNo = 1; lineNo <= state.doc.lines; lineNo++) {
+    const line = state.doc.line(lineNo);
+    if (/^\s*(?:```|~~~)/.test(line.text)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence || !line.text.includes('![')) continue;
+
+    IMAGE_MD_RE.lastIndex = 0;
+    const matches: { raw: string; ref: NoteImageRef }[] = [];
+    let match: RegExpExecArray | null;
+    while ((match = IMAGE_MD_RE.exec(line.text)) !== null) {
+      const ref = resolveNoteImageRef(match[2] ?? match[3] ?? '', match[1] ?? '');
+      if (ref) matches.push({ raw: match[0], ref });
+    }
+    if (!matches.length) continue;
+
+    const standalone = matches.length === 1 && line.text.trim() === matches[0].raw;
+    const cursorInLine = selection.to >= line.from && selection.from <= line.to;
+
+    if (standalone && !cursorInLine) {
+      decorations.push(
+        Decoration.replace({
+          widget: new NoteImageWidget(matches[0].ref, false),
+          block: true
+        }).range(line.from, line.to)
+      );
+    } else {
+      for (const item of matches) {
+        decorations.push(
+          Decoration.widget({
+            widget: new NoteImageWidget(item.ref, true),
+            block: true,
+            side: 1
+          }).range(line.to)
+        );
+      }
+    }
+  }
+  return Decoration.set(decorations, true);
+}
+
+const imagePreviewField = StateField.define<DecorationSet>({
+  create(state) {
+    return buildImageDecorations(state);
+  },
+  update(decorations, transaction) {
+    if (transaction.docChanged || transaction.selection) {
+      return buildImageDecorations(transaction.state);
+    }
+    return decorations;
+  },
+  provide: field => EditorView.decorations.from(field)
+});
 
 class ListBullet extends WidgetType {
   toDOM() {
@@ -117,6 +492,20 @@ const smartListInput = EditorState.transactionFilter.of(transaction => {
   return [transaction, { changes: { from: insertAt, insert: ' ' }, selection: EditorSelection.cursor(pos + 1), sequential: true }];
 });
 
+function extractClipboardImages(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  const files = Array.from(data.files ?? []).filter(isImageFile);
+  if (files.length > 0) return files;
+  const fromItems: File[] = [];
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind === 'file' && item.type.startsWith('image/')) {
+      const file = item.getAsFile();
+      if (file) fromItems.push(file);
+    }
+  }
+  return fromItems;
+}
+
 export function NoteEditor({
   value,
   onChange,
@@ -126,7 +515,10 @@ export function NoteEditor({
   ariaLabel = '便签内容',
   placeholderText = '随手记录灵感、命令片段或待办… 自动保存为本地 Markdown',
   onSubmit,
-  onPasteHtml
+  onPasteHtml,
+  enableImagePreview = false,
+  onPasteImage,
+  onImageAction
 }: {
   value: string;
   onChange(value: string): void;
@@ -137,10 +529,13 @@ export function NoteEditor({
   placeholderText?: string;
   onSubmit?(value: string): void;
   onPasteHtml?(plain: string, html: string): Promise<string>;
+  enableImagePreview?: boolean;
+  onPasteImage?(file: { bytes: Uint8Array; name?: string; mimeType?: string } | null): Promise<{ relativePath: string } | null>;
+  onImageAction?(action: NoteImageAction, image: NoteImageRef): void;
 }) {
   const host = useRef<HTMLDivElement>(null);
-  const callbacks = useRef({ onChange, onBlur, onSubmit, onPasteHtml });
-  callbacks.current = { onChange, onBlur, onSubmit, onPasteHtml };
+  const callbacks = useRef({ onChange, onBlur, onSubmit, onPasteHtml, onPasteImage, onImageAction });
+  callbacks.current = { onChange, onBlur, onSubmit, onPasteHtml, onPasteImage, onImageAction };
   useEffect(() => {
     if (!host.current) return;
     const submitKey = onSubmit
@@ -156,16 +551,55 @@ export function NoteEditor({
           { key: 'Shift-Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) }
         ]
       : [{ key: 'Enter', run: insertNewlineContinueMarkupCommand({ nonTightLists: false }) }];
+    const imageExtensions = enableImagePreview
+      ? [
+          imageActionFacet.of((action, image) => callbacks.current.onImageAction?.(action, image)),
+          imagePreviewField
+        ]
+      : [];
     const view = new EditorView({
       parent: host.current,
       state: EditorState.create({ doc: value, extensions: [
         history(), markdown({ extensions: [GFM], addKeymap: false }), keymap.of([...submitKey, { key: 'Backspace', run: deleteMarkupBackward }, ...defaultKeymap, ...historyKeymap]),
         EditorView.lineWrapping, EditorView.contentAttributes.of({ 'aria-label': ariaLabel, spellcheck: 'false' }),
-        placeholder(placeholderText), smartListInput, liveMarkdown,
+        placeholder(placeholderText), smartListInput, liveMarkdown, ...imageExtensions,
         EditorView.updateListener.of(update => { if (update.docChanged && !update.transactions.some(transaction => transaction.annotation(externalChange))) callbacks.current.onChange(update.state.doc.toString()); }),
         EditorView.domEventHandlers({
           blur: () => { callbacks.current.onBlur?.(); },
           paste: (event, editorView) => {
+            const saveImage = callbacks.current.onPasteImage;
+            if (saveImage) {
+              const imageFiles = extractClipboardImages(event.clipboardData);
+              if (imageFiles.length > 0) {
+                event.preventDefault();
+                const { from, to } = editorView.state.selection.main;
+                void (async () => {
+                  const savedPaths: string[] = [];
+                  for (const file of imageFiles) {
+                    const bytes = new Uint8Array(await file.arrayBuffer());
+                    const saved = await saveImage({ bytes, name: file.name, mimeType: file.type });
+                    if (saved?.relativePath) savedPaths.push(saved.relativePath);
+                  }
+                  if (savedPaths.length && editorRef.current === editorView) {
+                    insertNoteImages(editorView, from, to, savedPaths);
+                  }
+                })();
+                return true;
+              }
+              const plainProbe = event.clipboardData?.getData('text/plain') ?? '';
+              const htmlProbe = event.clipboardData?.getData('text/html') ?? '';
+              if (!plainProbe && !htmlProbe) {
+                event.preventDefault();
+                const { from, to } = editorView.state.selection.main;
+                void saveImage(null).then(saved => {
+                  if (saved?.relativePath && editorRef.current === editorView) {
+                    insertNoteImages(editorView, from, to, [saved.relativePath]);
+                  }
+                });
+                return true;
+              }
+            }
+
             const convert = callbacks.current.onPasteHtml;
             if (!convert) return false;
             const html = event.clipboardData?.getData('text/html') ?? '';
@@ -194,7 +628,7 @@ export function NoteEditor({
     });
     editorRef.current = view;
     return () => { editorRef.current = null; view.destroy(); };
-  }, [editorRef, ariaLabel, placeholderText, Boolean(onSubmit)]);
+  }, [editorRef, ariaLabel, placeholderText, Boolean(onSubmit), enableImagePreview]);
   useEffect(() => {
     const view = editorRef.current;
     if (view && value !== view.state.doc.toString()) {

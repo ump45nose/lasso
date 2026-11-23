@@ -46,6 +46,10 @@ const api: IslandAPI = {
   deleteNote: name => ipcRenderer.invoke('notes:delete', name),
   setNotesPinned: pinned => ipcRenderer.invoke('notes:set-pinned', pinned),
   pinNoteToDesktop: id => ipcRenderer.invoke('notes:pin', id),
+  saveNoteImage: payload => ipcRenderer.invoke('notes:save-image', payload),
+  pasteNoteClipboardImage: () => ipcRenderer.invoke('notes:paste-clipboard-image'),
+  copyNoteImage: src => ipcRenderer.invoke('notes:copy-image', src),
+  openNoteImage: (src, action) => ipcRenderer.invoke('notes:open-image', src, action),
   onNotesState: callback => on<EdgeNotesState>('notes:changed', callback),
 
   getFinderState: () => ipcRenderer.invoke('finder:state'),

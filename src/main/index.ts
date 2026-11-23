@@ -44,6 +44,7 @@ import { normalizeTranslationSettings, type ApiConnectionInput, type Translation
 import { WebDavSyncService } from './sync-webdav';
 import type { WebDavConfigInput, WebDavSyncDirection } from '../shared/history-sync';
 import { fontExtensions, importFont, registerFontScheme, removeFont, serveFonts, validateFonts } from './fonts';
+import { registerNoteAssetScheme, resolveNotesFolder, serveNoteAssets } from './island-notes';
 import { fitToWorkArea, placeNear } from './position';
 import { SelectionCapture } from './selection';
 import { WindowMotion } from './motion';
@@ -94,6 +95,7 @@ if (isolatedRoot) {
   app.setAppLogsPath(join(isolatedRoot, 'logs'));
 }
 registerFontScheme();
+registerNoteAssetScheme();
 const hasLock = app.requestSingleInstanceLock();
 const launchInBackground = process.argv.includes('--background');
 
@@ -1447,6 +1449,7 @@ async function boot() {
   presetsPath = join(app.getPath('userData'), 'presets.json');
   fontsDir = join(app.getPath('userData'), 'fonts');
   serveFonts(fontsDir);
+  serveNoteAssets(resolveNotesFolder());
   images = new Images(join(app.getPath('userData'), 'input-images'));
 
   state = {

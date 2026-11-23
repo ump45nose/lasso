@@ -92,7 +92,7 @@ const loopback=host=>['localhost','127.0.0.1','::1','[::1]'].includes(String(hos
 const localURL=value=>{try{return loopback(new URL(value).hostname);}catch{return false;}};
 const nodeAudit={blocked:[],allowedLocal:[],guards:[]},nodeGuards=[];
 function nodeGate(kind,target,local){if(local){nodeAudit.allowedLocal.push({kind,target});return;}nodeAudit.blocked.push({kind,target});const err=Error('UI shots blocked external runtime access: '+kind);err.code='UI_SHOTS_EXTERNAL_BLOCKED';throw err;}
-function urlTarget(value){const url=new URL(typeof value==='object'&&value?.url?value.url:value);return {target:url.origin,local:['file:','data:','lasso-font:'].includes(url.protocol)||loopback(url.hostname)};}
+function urlTarget(value){const url=new URL(typeof value==='object'&&value?.url?value.url:value);return {target:url.origin,local:['file:','data:','lasso-font:','lasso-note:'].includes(url.protocol)||loopback(url.hostname)};}
 function socketTarget(args){let value=args[0];if(Array.isArray(value))return socketTarget(value);if(value&&typeof value==='object'){if(value.path)return {target:'unix-socket',local:true};const host=value.hostname||value.host||'localhost';return {target:String(host),local:loopback(host)};}if(typeof value==='string'&&!/^\\d+$/.test(value))return {target:'unix-socket',local:true};const host=typeof args[1]==='string'?args[1]:'localhost';return {target:host,local:loopback(host)};}
 function requestTarget(args){const value=args[0];if(typeof value==='string'||value instanceof URL)return urlTarget(value);if(value?.url)return urlTarget(value.url);if(value?.socketPath)return {target:'unix-socket',local:true};const host=value?.hostname||value?.host||'localhost';return {target:String(host),local:loopback(host)};}
 function guard(owner,key,kind,resolve){const original=owner[key];const wrapped=function(...args){const route=resolve(args);nodeGate(kind,route.target,route.local);return Reflect.apply(original,this,args);};owner[key]=wrapped;nodeGuards.push(()=>owner[key]===wrapped);nodeAudit.guards.push(kind);}
@@ -798,6 +798,58 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         throw Error('B6 EdgeNotes editor disappeared when focused=false');
       }
       names.push(await save(notesWin, 'v4-b6-notes-blurred'));
+
+      // B6 EdgeNotes image paste/render + hover toolbar + lightbox
+      const pngBytes = Array.from(global.uiShots.artImage.toPNG());
+      const savedImg = await page(
+        notesWin,
+        `window.island.saveNoteImage({ bytes: new Uint8Array(${JSON.stringify(pngBytes)}), name: 'landscape.png', mimeType: 'image/png' })`
+      );
+      if (!savedImg?.relativePath?.startsWith('assets/')) {
+        throw Error('B6 EdgeNotes saveNoteImage did not return assets/ path: ' + JSON.stringify(savedImg));
+      }
+      const imageNoteContent = `# 界面配色参考\n\n- 暖白纸面搭配陶土色强调\n![暖白纸面与陶土日落](${savedImg.relativePath})\n\n继续记录后续修改意见…`;
+      await page(notesWin, `window.island.saveNote('Scratchpad.md', ${JSON.stringify(imageNoteContent)})`);
+      notesWin.webContents.send('notes:changed', { ...notesPayload, focused: true, content: imageNoteContent });
+      await ready(notesWin, `(() => { const img = document.querySelector('.en-img-frame img'); return Boolean(img && img.complete && img.naturalWidth > 0); })()`);
+      if (!(await page(notesWin, `(() => { const f = document.querySelector('.en-foot'); const fr = f?.getBoundingClientRect(); return Boolean(f?.textContent?.includes('1 图') && [...f.children].every(el => { const r = el.getBoundingClientRect(); return r.height <= 24 && r.right <= fr.right + 1; })); })()`))) {
+        throw Error('B6 EdgeNotes footer should display image count on a single line without clipping');
+      }
+      const cardRect = await page(notesWin, `(() => { const r = document.querySelector('.en-img-card').getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+      await global.uiShots.move(notesWin, cardRect.x, cardRect.y);
+      await wait(200);
+      names.push(await save(notesWin, 'v4-b6-notes-image'));
+      await page(notesWin, `document.querySelector('.en-img-frame').click()`);
+      await ready(notesWin, `(() => { const img = document.querySelector('.en-lightbox-stage img'); return Boolean(img && img.complete && img.naturalWidth > 0); })()`);
+      await wait(150);
+      names.push(await save(notesWin, 'v4-b6-notes-lightbox'));
+      await page(notesWin, `document.querySelector('.en-lightbox-btn[aria-label="复制图片"]').click()`);
+      await ready(notesWin, `document.querySelector('.en-lightbox-btn[aria-label="复制图片"]')?.textContent?.includes('已复制')`);
+      await page(notesWin, `document.querySelector('.en-lightbox-close').click()`);
+      await ready(notesWin, `!document.querySelector('.en-lightbox')`);
+      await page(notesWin, `document.querySelector('.en-img-bar button[aria-label="删除图片"]').click()`);
+      await ready(notesWin, `!document.querySelector('.en-img-card') && !document.querySelector('.en-foot')?.textContent?.includes('图')`);
+
+      // B6 EdgeNotes dropdown picker: menu items must be non-draggable and switch notes cleanly.
+      await page(notesWin, `window.island.createNote('release-v4')`);
+      await ready(notesWin, `document.querySelector('.en-switch')?.textContent?.includes('release-v4.md')`);
+      await page(notesWin, `window.island.saveNote('release-v4.md', '# release-v4\\n\\n第二篇笔记内容')`);
+      await page(notesWin, `document.querySelector('.en-switch').click()`);
+      await ready(notesWin, `Boolean(document.querySelector('.en-menu .en-mi'))`);
+      names.push(await save(notesWin, 'v4-b6-notes-menu'));
+      if (!(await page(notesWin, `(() => {
+        const menu = document.querySelector('.en-menu');
+        const items = [...document.querySelectorAll('.en-menu-list .en-mi')];
+        return Boolean(menu && items.length >= 2 && getComputedStyle(menu).webkitAppRegion === 'no-drag' && items.every(el => getComputedStyle(el).webkitAppRegion === 'no-drag'));
+      })()`))) {
+        throw Error('B6 EdgeNotes dropdown items must have -webkit-app-region: no-drag so clicks are not swallowed by window drag');
+      }
+      await page(notesWin, `[...document.querySelectorAll('.en-menu-list .en-mi')].find(el => el.textContent.includes('Scratchpad.md')).click()`);
+      await ready(notesWin, `!document.querySelector('.en-menu') && document.querySelector('.en-switch')?.textContent?.includes('Scratchpad.md') && document.querySelector('.cm-content')?.textContent?.includes('界面配色参考')`);
+      await page(notesWin, `document.querySelector('.en-switch').click()`);
+      await ready(notesWin, `Boolean(document.querySelector('.en-menu .en-mi'))`);
+      await page(notesWin, `[...document.querySelectorAll('.en-menu-list .en-mi')].find(el => el.textContent.includes('release-v4.md')).click()`);
+      await ready(notesWin, `!document.querySelector('.en-menu') && document.querySelector('.en-switch')?.textContent?.includes('release-v4.md') && document.querySelector('.cm-content')?.textContent?.includes('第二篇笔记内容')`);
       notesWin.hide();
 
       // B7 Finder Action Panel (400px Ink)

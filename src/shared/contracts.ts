@@ -620,12 +620,16 @@ export interface IslandAPI {
   // EdgeNotes surface API
   getNotesState(): Promise<EdgeNotesState>;
   setNotesOpen(open: boolean): void;
-  selectNote(id: string): Promise<void>;
+  selectNote(id: string): Promise<EdgeNotesState | undefined>;
   saveNote(id: string, content: string): Promise<void>;
   createNote(title?: string): Promise<void>;
   deleteNote(name: string): Promise<EdgeNotesState>;
   setNotesPinned(pinned: boolean): Promise<EdgeNotesState>;
   pinNoteToDesktop(id: string): Promise<void>;
+  saveNoteImage(payload: { bytes: Uint8Array; name?: string; mimeType?: string }): Promise<{ relativePath: string }>;
+  pasteNoteClipboardImage(): Promise<{ relativePath: string } | null>;
+  copyNoteImage(src: string): Promise<{ error: string | null }>;
+  openNoteImage(src: string, action: 'open' | 'pin'): Promise<{ error: string | null }>;
   onNotesState(callback: (state: EdgeNotesState) => void): () => void;
   // Finder Super Action Panel surface API
   getFinderState(): Promise<FinderPanelState>;
