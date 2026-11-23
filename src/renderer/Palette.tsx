@@ -26,8 +26,8 @@ import { captureModeLabels, captureModes, type CaptureMode } from '../shared/cap
 import { presetIconFor, presetTargetLabels as targetLabels } from '../shared/contracts';
 import type { Action, PaletteScope, Preset, ShellState, Target, TaskSummary } from '../shared/contracts';
 import { Badge, shortcutLabel, taskDot, taskStatus, targets } from './targets';
-import { motion } from 'motion/react';
-import { spring } from './motion';
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
+import { collapse, Glide, spring } from './motion';
 
 const scrimMotion = { hidden: { opacity: 0, transition: { duration: 0.12 } }, shown: { opacity: 1, transition: { duration: 0.14 } } };
 const panelMotion = { hidden: { opacity: 0, y: -6, scale: 0.98, transition: { duration: 0.12 } }, shown: { opacity: 1, y: 0, scale: 1, transition: spring } };
@@ -278,55 +278,62 @@ export function Palette({ state, scope, backdrop }: { state: ShellState; scope: 
             )}
           </div>
         )}
-        {error && (
-          <div className="l-pal-error" role="alert">
-            {error}
-          </div>
-        )}
-        <div className="l-pal-list" id="palette-list" ref={list} role="listbox" aria-label="指令">
-          {groups.map(group => (
-            <Fragment key={group.title}>
-              <div className="l-pal-group" role="presentation">
-                {group.title}
+        <AnimatePresence initial={false}>
+          {error && (
+            <motion.div key={error} className="l-collapse" {...collapse}>
+              <div className="l-pal-error" role="alert">
+                {error}
               </div>
-              {group.rows.map(row => {
-                const selected = row === current;
-                return (
-                  <button
-                    key={row.key}
-                    type="button"
-                    id={'pal-' + row.key}
-                    role="option"
-                    tabIndex={-1}
-                    className="l-pal-row"
-                    aria-selected={selected}
-                    disabled={row.disabled}
-                    onMouseEnter={() => !row.disabled && setIndex(flat.indexOf(row))}
-                    onClick={() => void run(row)}
-                  >
-                    {row.kind === 'task' && (
-                      <>
-                        <span className={'dot ' + taskDot(row.task)} aria-hidden="true" />
-                        <Badge target={row.task.target} />
-                      </>
-                    )}
-                    {row.kind === 'new' && <Badge target={row.target} />}
-                    {row.kind === 'preset' && <span className="l-pal-icon preset"><ActionIcon id={presetIconFor(state.settings.actionBar, row.preset)} size={16} /></span>}
-                    {row.kind === 'cmd' && <span className="l-pal-icon">{row.icon}</span>}
-                    <span className="l-pal-label">{row.label}</span>
-                    {row.kind === 'preset' && <PresetMeta preset={row.preset} target={targetOf(row.preset)} selected={selected} disabled={row.disabled} />}
-                    {row.kind === 'task' && <small className="push">{taskStatus(row.task)}</small>}
-                    {row.kind === 'cmd' && row.hint && <small className="push mono">{row.hint}</small>}
-                    {selected && <span className={'l-kbd' + (row.kind === 'new' || (row.kind === 'cmd' && !row.hint) ? ' push' : '')}>↵</span>}
-                  </button>
-                );
-              })}
-            </Fragment>
-          ))}
-          {!groups.some(group => group.rows.length) && (
-            <p className="l-pal-empty">{query ? `没有匹配「${query}」的预设或指令。` : '没有可用的项目。'}</p>
+            </motion.div>
           )}
-        </div>
+        </AnimatePresence>
+        <LayoutGroup id="palette-rows">
+          <div className="l-pal-list" id="palette-list" ref={list} role="listbox" aria-label="指令">
+            {groups.map(group => (
+              <Fragment key={group.title}>
+                <div className="l-pal-group" role="presentation">
+                  {group.title}
+                </div>
+                {group.rows.map(row => {
+                  const selected = row === current;
+                  return (
+                    <button
+                      key={row.key}
+                      type="button"
+                      id={'pal-' + row.key}
+                      role="option"
+                      tabIndex={-1}
+                      className="l-pal-row"
+                      aria-selected={selected}
+                      disabled={row.disabled}
+                      onMouseEnter={() => !row.disabled && setIndex(flat.indexOf(row))}
+                      onClick={() => void run(row)}
+                    >
+                      {selected && <Glide id="pal-row-bg" className="l-pal-glide" />}
+                      {row.kind === 'task' && (
+                        <>
+                          <span className={'dot ' + taskDot(row.task)} aria-hidden="true" />
+                          <Badge target={row.task.target} />
+                        </>
+                      )}
+                      {row.kind === 'new' && <Badge target={row.target} />}
+                      {row.kind === 'preset' && <span className="l-pal-icon preset"><ActionIcon id={presetIconFor(state.settings.actionBar, row.preset)} size={16} /></span>}
+                      {row.kind === 'cmd' && <span className="l-pal-icon">{row.icon}</span>}
+                      <span className="l-pal-label">{row.label}</span>
+                      {row.kind === 'preset' && <PresetMeta preset={row.preset} target={targetOf(row.preset)} selected={selected} disabled={row.disabled} />}
+                      {row.kind === 'task' && <small className="push">{taskStatus(row.task)}</small>}
+                      {row.kind === 'cmd' && row.hint && <small className="push mono">{row.hint}</small>}
+                      {selected && <span className={'l-kbd' + (row.kind === 'new' || (row.kind === 'cmd' && !row.hint) ? ' push' : '')}>↵</span>}
+                    </button>
+                  );
+                })}
+              </Fragment>
+            ))}
+            {!groups.some(group => group.rows.length) && (
+              <p className="l-pal-empty">{query ? `没有匹配「${query}」的预设或指令。` : '没有可用的项目。'}</p>
+            )}
+          </div>
+        </LayoutGroup>
         <div className="l-pal-foot">
           <span>
             <span className="l-kbd">↑↓</span> 选择

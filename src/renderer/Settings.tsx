@@ -23,7 +23,7 @@ import {
   TranslationPane
 } from './GeneralSettings';
 import { ConnectionsPane } from './ImageOptionsFields';
-import { Glide, rise } from './motion';
+import { Glide, replaySketchDraw, rise } from './motion';
 import { PresetSettings } from './PresetSettings';
 import { ScreenshotSettings } from './ScreenshotSettings';
 
@@ -74,6 +74,17 @@ export function Settings() {
       stop();
     };
   }, [applyState]);
+
+  useEffect(() => {
+    let wasVisible = document.visibilityState === 'visible';
+    const onVisibility = () => {
+      const visible = document.visibilityState === 'visible';
+      if (visible && !wasVisible) replaySketchDraw(bodyRef.current);
+      wasVisible = visible;
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
 
   const notify = useCallback((status: { ok?: boolean; error?: string }) => {
     if (status.error) setSaveState({ error: status.error });

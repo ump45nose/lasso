@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import {
   ArrowUpRight,
@@ -133,6 +133,7 @@ function PomoSoundToggle({ enabled }: { enabled: boolean }) {
 }
 
 function PomoDurationRow({ label, value, presets, onChange }: { label: string; value: number; presets: number[]; onChange: (minutes: number) => void }) {
+  const groupId = useId();
   const holdRef = useRef<{ delay: ReturnType<typeof setTimeout> | null; repeat: ReturnType<typeof setInterval> | null }>({ delay: null, repeat: null });
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -161,30 +162,33 @@ function PomoDurationRow({ label, value, presets, onChange }: { label: string; v
     onPointerCancel: stopHold
   });
   return (
-    <div className="isl-pomo-row">
-      <span className="isl-pomo-lbl">{label}</span>
-      {presets.map(minutes => (
-        <button
-          key={minutes}
-          type="button"
-          className={'isl-pomo-chip mono' + (value === minutes ? ' on' : '')}
-          aria-pressed={value === minutes}
-          onClick={() => onChange(minutes)}
-        >
-          {minutes}m
-        </button>
-      ))}
-      <span className="isl-pomo-stepper">
-        <button type="button" className="isl-pomo-step" aria-label={`减少${label}分钟`} disabled={value <= 1} {...holdProps(-1)}>
-          <Minus size={11} />
-        </button>
-        <span className="isl-pomo-value mono">{value}</span>
-        <button type="button" className="isl-pomo-step" aria-label={`增加${label}分钟`} disabled={value >= 180} {...holdProps(1)}>
-          <Plus size={11} />
-        </button>
-        <span className="isl-pomo-unit">m</span>
-      </span>
-    </div>
+    <LayoutGroup id={groupId}>
+      <div className="isl-pomo-row">
+        <span className="isl-pomo-lbl">{label}</span>
+        {presets.map(minutes => (
+          <button
+            key={minutes}
+            type="button"
+            className={'isl-pomo-chip mono' + (value === minutes ? ' on' : '')}
+            aria-pressed={value === minutes}
+            onClick={() => onChange(minutes)}
+          >
+            {value === minutes && <Glide id="isl-pomo-chip-bg" className="isl-pomo-chip-glide" />}
+            <span className="isl-pomo-chip-lbl">{minutes}m</span>
+          </button>
+        ))}
+        <span className="isl-pomo-stepper">
+          <button type="button" className="isl-pomo-step" aria-label={`减少${label}分钟`} disabled={value <= 1} {...holdProps(-1)}>
+            <Minus size={11} />
+          </button>
+          <span className="isl-pomo-value mono">{value}</span>
+          <button type="button" className="isl-pomo-step" aria-label={`增加${label}分钟`} disabled={value >= 180} {...holdProps(1)}>
+            <Plus size={11} />
+          </button>
+          <span className="isl-pomo-unit">m</span>
+        </span>
+      </div>
+    </LayoutGroup>
   );
 }
 
@@ -588,9 +592,13 @@ export function NotchIsland() {
 
                 {dropKind === 'nook-alert' && (
                   <div className="isl-mini-card">
-                    {alerts.slice(0, 2).map(item => (
-                      <IslandAlertCard key={item.id} item={item} />
-                    ))}
+                    <AnimatePresence initial={false}>
+                      {alerts.slice(0, 2).map(item => (
+                        <motion.div key={item.id} className="isl-alert-motion" {...collapse}>
+                          <IslandAlertCard item={item} />
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
                   </div>
                 )}
 
@@ -845,30 +853,27 @@ export function NotchIsland() {
 
                     {/* 5. 6 Quick Tools */}
                     <div className="isl-tools6">
-                      <button type="button" className="isl-tool6" onClick={() => void window.island.quickAction('screenshot-area')}>
-                        <Scan size={17} />
-                        <span>区域截图</span>
-                      </button>
-                      <button type="button" className="isl-tool6" onClick={() => void window.island.quickAction('open-translator')}>
-                        <Languages size={17} />
-                        <span>输入翻译</span>
-                      </button>
-                      <button type="button" className="isl-tool6" onClick={() => void window.island.quickAction('open-clipboard')}>
-                        <ClipboardList size={17} />
-                        <span>剪贴板</span>
-                      </button>
-                      <button type="button" className="isl-tool6" onClick={() => void window.island.quickAction('toggle-notes')}>
-                        <NotebookPen size={17} />
-                        <span>便签</span>
-                      </button>
-                      <button type="button" className="isl-tool6" onClick={() => void window.island.quickAction('open-finder-panel')}>
-                        <FolderOpen size={17} />
-                        <span>访达动作</span>
-                      </button>
-                      <button type="button" className="isl-tool6" onClick={() => void window.island.quickAction('open-settings')}>
-                        <Settings size={17} />
-                        <span>设置</span>
-                      </button>
+                      {(
+                        [
+                          ['screenshot-area', Scan, '区域截图'],
+                          ['open-translator', Languages, '输入翻译'],
+                          ['open-clipboard', ClipboardList, '剪贴板'],
+                          ['toggle-notes', NotebookPen, '便签'],
+                          ['open-finder-panel', FolderOpen, '访达动作'],
+                          ['open-settings', Settings, '设置']
+                        ] as const
+                      ).map(([action, Icon, label], idx) => (
+                        <button
+                          key={action}
+                          type="button"
+                          className="isl-tool6 sk-wiggle"
+                          style={{ '--sk-delay': `${40 + idx * 35}ms` } as CSSProperties}
+                          onClick={() => void window.island.quickAction(action)}
+                        >
+                          <Icon size={17} />
+                          <span>{label}</span>
+                        </button>
+                      ))}
                     </div>
                   </div>
                 )}

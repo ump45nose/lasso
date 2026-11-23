@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import {
   FileText,
   Folder,
@@ -16,7 +17,7 @@ import {
 } from '../icons';
 import type { ClipboardEntry, ClipboardWindowState, IslandAPI } from '../../shared/contracts';
 import { useAppearance } from '../fonts';
-import { Segmented } from '../motion';
+import { ease, fade, Glide, pop, Segmented, useSurfaceReveal } from '../motion';
 import './suite-windows.css';
 
 declare global {
@@ -63,9 +64,11 @@ export function ClipboardWindow() {
   const [actError, setActError] = useState<string | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+  const winRef = useRef<HTMLElement | null>(null);
   const noticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useAppearance(state?.fonts);
+  const { controls } = useSurfaceReveal(winRef);
 
   const flashNotice = useCallback((msg: string) => {
     setActError(null);
@@ -167,8 +170,8 @@ export function ClipboardWindow() {
   const previewLines = selected && selected.kind !== 'image' ? (selected.text || selected.preview || '').split('\n') : [];
 
   return (
-    <div className="sw-stage sk-draw">
-      <section className="sw-win sw-clip" role="dialog" aria-label="剪贴板历史">
+    <div className="sw-stage">
+      <motion.section ref={winRef} className="sw-win sw-clip sk-draw" role="dialog" aria-label="剪贴板历史" animate={controls}>
         <header className="sw-wbar sw-clip-bar">
           <label className="sw-search-box">
             <Search size={14} className="sw-muted-ic" />
@@ -207,28 +210,34 @@ export function ClipboardWindow() {
             {state.pinnedOnTop ? <Lock size={14} /> : <LockOpen size={14} />}
           </button>
 
-          {confirmClear ? (
-            <button
-              type="button"
-              className="sw-btn danger-solid sm"
-              aria-label="确认清空剪贴板历史"
-              onClick={() => void runAct({ action: 'clear-all' }, '已清空历史')}
-            >
-              <Trash2 size={13} />
-              <span>再点一次清空 {state.entries.length} 条</span>
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="sw-ib"
-              aria-label="清空历史"
-              title="清空历史"
-              disabled={state.entries.length === 0}
-              onClick={() => setConfirmClear(true)}
-            >
-              <Trash2 size={14} />
-            </button>
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            {confirmClear ? (
+              <motion.button
+                key="confirm-clear"
+                type="button"
+                className="sw-btn danger-solid sm"
+                aria-label="确认清空剪贴板历史"
+                {...pop}
+                onClick={() => void runAct({ action: 'clear-all' }, '已清空历史')}
+              >
+                <Trash2 size={13} />
+                <span>再点一次清空 {state.entries.length} 条</span>
+              </motion.button>
+            ) : (
+              <motion.button
+                key="clear-btn"
+                type="button"
+                className="sw-ib"
+                aria-label="清空历史"
+                title="清空历史"
+                disabled={state.entries.length === 0}
+                {...fade}
+                onClick={() => setConfirmClear(true)}
+              >
+                <Trash2 size={14} />
+              </motion.button>
+            )}
+          </AnimatePresence>
 
           <button type="button" className="sw-ib" aria-label="关闭剪贴板历史" onClick={() => window.island.closeClipboard()}>
             <X size={15} />
@@ -236,161 +245,178 @@ export function ClipboardWindow() {
         </header>
 
         <div className="sw-clip-body" onPointerDown={() => confirmClear && setConfirmClear(false)}>
-          <div ref={listRef} className="sw-clip-list" role="listbox" aria-label="剪贴板条目">
-            {filtered.map((entry, idx) => {
-              const isSelected = entry.id === activeId;
-              const summary = entry.preview || entry.text;
-              const isMono = entry.kind === 'text' && looksMono(summary);
-              return (
-                <div
-                  key={entry.id}
-                  role="option"
-                  tabIndex={0}
-                  aria-selected={isSelected}
-                  data-entry-id={entry.id}
-                  className={'sw-crow' + (isSelected ? ' sel' : '')}
-                  onClick={() => setSelectedId(entry.id)}
-                  onDoubleClick={() => void runAct({ action: 'paste', id: entry.id }, '已粘贴到原窗口')}
-                >
-                  <span className="sw-crow-app" title={entry.sourceAppName || '来源应用'}>
-                    {entry.kind === 'image' && entry.imageThumbnail ? (
-                      <img src={entry.imageThumbnail} alt="" />
-                    ) : entry.sourceAppIcon ? (
-                      <img src={entry.sourceAppIcon} alt="" />
-                    ) : entry.kind === 'files' ? (
-                      <Folder size={13} />
-                    ) : entry.kind === 'image' ? (
-                      <ImageIcon size={13} />
-                    ) : (
-                      <FileText size={13} />
-                    )}
-                  </span>
-
-                  <span className={'sw-crow-t' + (isMono ? ' mono' : '')}>
-                    {entry.kind === 'image' ? (
-                      <>
-                        图片{' '}
-                        {entry.imageWidth && entry.imageHeight && (
-                          <span className="sw-crow-dim mono">
-                            {entry.imageWidth} × {entry.imageHeight}
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      summary
-                    )}
-                  </span>
-
-                  <button
-                    type="button"
-                    className={'sw-crow-star' + (entry.favorite ? ' on' : '')}
-                    aria-label={entry.favorite ? '取消收藏' : '收藏置顶'}
-                    aria-pressed={entry.favorite}
-                    onClick={e => {
-                      e.stopPropagation();
-                      void runAct({ action: 'toggle-fav', id: entry.id });
-                    }}
+          <LayoutGroup id="clip-list">
+            <div ref={listRef} className="sw-clip-list" role="listbox" aria-label="剪贴板条目">
+              {filtered.map((entry, idx) => {
+                const isSelected = entry.id === activeId;
+                const summary = entry.preview || entry.text;
+                const isMono = entry.kind === 'text' && looksMono(summary);
+                return (
+                  <div
+                    key={entry.id}
+                    role="option"
+                    tabIndex={0}
+                    aria-selected={isSelected}
+                    data-entry-id={entry.id}
+                    className={'sw-crow' + (isSelected ? ' sel' : '')}
+                    onClick={() => setSelectedId(entry.id)}
+                    onDoubleClick={() => void runAct({ action: 'paste', id: entry.id }, '已粘贴到原窗口')}
                   >
-                    <Star size={13} />
-                  </button>
+                    {isSelected && <Glide id="clip-row-sel" className="sw-crow-glide" />}
+                    <span className="sw-crow-app" title={entry.sourceAppName || '来源应用'}>
+                      {entry.kind === 'image' && entry.imageThumbnail ? (
+                        <img src={entry.imageThumbnail} alt="" />
+                      ) : entry.sourceAppIcon ? (
+                        <img src={entry.sourceAppIcon} alt="" />
+                      ) : entry.kind === 'files' ? (
+                        <Folder size={13} />
+                      ) : entry.kind === 'image' ? (
+                        <ImageIcon size={13} />
+                      ) : (
+                        <FileText size={13} />
+                      )}
+                    </span>
 
-                  {idx < 9 && <span className="sw-crow-n mono">{idx + 1}</span>}
-                </div>
-              );
-            })}
-            {filtered.length === 0 && (
-              <div className="sw-clip-empty">{query.trim() || filter !== 'all' ? '没有匹配的记录' : '暂无剪贴板历史'}</div>
-            )}
-          </div>
+                    <span className={'sw-crow-t' + (isMono ? ' mono' : '')}>
+                      {entry.kind === 'image' ? (
+                        <>
+                          图片{' '}
+                          {entry.imageWidth && entry.imageHeight && (
+                            <span className="sw-crow-dim mono">
+                              {entry.imageWidth} × {entry.imageHeight}
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        summary
+                      )}
+                    </span>
+
+                    <button
+                      type="button"
+                      className={'sw-crow-star' + (entry.favorite ? ' on' : '')}
+                      aria-label={entry.favorite ? '取消收藏' : '收藏置顶'}
+                      aria-pressed={entry.favorite}
+                      onClick={e => {
+                        e.stopPropagation();
+                        void runAct({ action: 'toggle-fav', id: entry.id });
+                      }}
+                    >
+                      <Star size={13} />
+                    </button>
+
+                    {idx < 9 && <span className="sw-crow-n mono">{idx + 1}</span>}
+                  </div>
+                );
+              })}
+              {filtered.length === 0 && (
+                <div className="sw-clip-empty">{query.trim() || filter !== 'all' ? '没有匹配的记录' : '暂无剪贴板历史'}</div>
+              )}
+            </div>
+          </LayoutGroup>
 
           <div className="sw-clip-prev">
-            {selected ? (
-              selected.kind === 'image' ? (
-                <>
-                  <div className="sw-clip-img-wrap">
-                    {selected.imageThumbnail ? (
-                      <img className="sw-clip-img" src={selected.imageThumbnail} alt={selected.preview} />
-                    ) : (
-                      <span className="sw-clip-empty">无法加载图片预览</span>
-                    )}
-                  </div>
-                  <div className="sw-clip-meta">
-                    <span>
-                      来源<b>{selected.sourceAppName || '未知应用'}</b>
-                    </span>
-                    <span>
-                      尺寸
-                      <b className="mono">
-                        {selected.imageWidth && selected.imageHeight ? `${selected.imageWidth} × ${selected.imageHeight}` : '未知'}
-                      </b>
-                    </span>
-                    <span>
-                      格式<b className="mono">{formatBytes(selected.imageBytes)}</b>
-                    </span>
-                    <span>
-                      复制于<b>{formatRelativeTime(selected.createdAt)}</b>
-                    </span>
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div className="sw-clip-code mono">
-                    {previewLines.slice(0, 300).map((line, i) => (
-                      <div key={i} className="sw-clip-line">
-                        <span className="sw-ln">{i + 1}</span>
-                        <span>{line || ' '}</span>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div
+                key={selected?.id ?? 'empty'}
+                className="sw-clip-prev-inner"
+                initial={{ opacity: 0, y: 3 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: 0.14, ease } }}
+                exit={{ opacity: 0, transition: { duration: 0.08, ease: 'easeIn' } }}
+              >
+                {selected ? (
+                  selected.kind === 'image' ? (
+                    <>
+                      <div className="sw-clip-img-wrap">
+                        {selected.imageThumbnail ? (
+                          <img className="sw-clip-img" src={selected.imageThumbnail} alt={selected.preview} />
+                        ) : (
+                          <span className="sw-clip-empty">无法加载图片预览</span>
+                        )}
                       </div>
-                    ))}
-                  </div>
-                  <div className="sw-clip-meta">
-                    <span>
-                      来源<b>{selected.sourceAppName || '未知应用'}</b>
-                    </span>
-                    <span>
-                      复制于<b>{formatRelativeTime(selected.createdAt)}</b>
-                    </span>
-                    <span>
-                      {selected.kind === 'files' ? '文件数' : '行数'}
-                      <b className="mono">{selected.lineCount}</b>
-                    </span>
-                    <span>
-                      字符<b className="mono">{selected.charCount}</b>
-                    </span>
-                  </div>
-                </>
-              )
-            ) : (
-              <div className="sw-clip-empty">选择左侧条目查看完整内容</div>
-            )}
+                      <div className="sw-clip-meta">
+                        <span>
+                          来源<b>{selected.sourceAppName || '未知应用'}</b>
+                        </span>
+                        <span>
+                          尺寸
+                          <b className="mono">
+                            {selected.imageWidth && selected.imageHeight ? `${selected.imageWidth} × ${selected.imageHeight}` : '未知'}
+                          </b>
+                        </span>
+                        <span>
+                          格式<b className="mono">{formatBytes(selected.imageBytes)}</b>
+                        </span>
+                        <span>
+                          复制于<b>{formatRelativeTime(selected.createdAt)}</b>
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="sw-clip-code mono">
+                        {previewLines.slice(0, 300).map((line, i) => (
+                          <div key={i} className="sw-clip-line">
+                            <span className="sw-ln">{i + 1}</span>
+                            <span>{line || ' '}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="sw-clip-meta">
+                        <span>
+                          来源<b>{selected.sourceAppName || '未知应用'}</b>
+                        </span>
+                        <span>
+                          复制于<b>{formatRelativeTime(selected.createdAt)}</b>
+                        </span>
+                        <span>
+                          {selected.kind === 'files' ? '文件数' : '行数'}
+                          <b className="mono">{selected.lineCount}</b>
+                        </span>
+                        <span>
+                          字符<b className="mono">{selected.charCount}</b>
+                        </span>
+                      </div>
+                    </>
+                  )
+                ) : (
+                  <div className="sw-clip-empty">选择左侧条目查看完整内容</div>
+                )}
+              </motion.div>
+            </AnimatePresence>
           </div>
         </div>
 
         <footer className="sw-wfoot sw-clip-foot">
-          {actError ? (
-            <span className="sw-foot-msg err" role="alert">
-              {actError}
-            </span>
-          ) : notice ? (
-            <span className="sw-foot-msg ok">{notice}</span>
-          ) : (
-            <>
-              <span className="sw-keyhint">
-                <kbd className="sw-kbd">↵</kbd>粘贴
-              </span>
-              <span className="sw-keyhint">
-                <kbd className="sw-kbd">⌘↵</kbd>纯文本粘贴
-              </span>
-              <span className="sw-keyhint">
-                <kbd className="sw-kbd">⌘C</kbd>仅复制
-              </span>
-            </>
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            {actError ? (
+              <motion.span key={'err-' + actError} className="sw-foot-msg err" role="alert" {...fade}>
+                {actError}
+              </motion.span>
+            ) : notice ? (
+              <motion.span key={'ok-' + notice} className="sw-foot-msg ok" {...fade}>
+                {notice}
+              </motion.span>
+            ) : (
+              <motion.span key="hints" className="sw-foot-hints" {...fade}>
+                <span className="sw-keyhint">
+                  <kbd className="sw-kbd">↵</kbd>粘贴
+                </span>
+                <span className="sw-keyhint">
+                  <kbd className="sw-kbd">⌘↵</kbd>纯文本粘贴
+                </span>
+                <span className="sw-keyhint">
+                  <kbd className="sw-kbd">⌘C</kbd>仅复制
+                </span>
+              </motion.span>
+            )}
+          </AnimatePresence>
 
           <span className="grow" />
           <div className="sw-foot-tools">
             <button
               type="button"
-              className="sw-btn ghost sm"
+              className="sw-btn ghost sm sk-wiggle"
               disabled={!selected || selected.kind === 'image'}
               onClick={() => selected && void runAct({ action: 'translate', id: selected.id })}
             >
@@ -399,7 +425,7 @@ export function ClipboardWindow() {
             </button>
             <button
               type="button"
-              className="sw-btn ghost sm"
+              className="sw-btn ghost sm sk-wiggle"
               disabled={!selected}
               onClick={() => selected && void runAct({ action: 'ask-ai', id: selected.id })}
             >
@@ -408,7 +434,7 @@ export function ClipboardWindow() {
             </button>
             <button
               type="button"
-              className="sw-btn ghost sm"
+              className="sw-btn ghost sm sk-wiggle"
               disabled={!selected}
               onClick={() => selected && void runAct({ action: 'note', id: selected.id }, '已存入便签')}
             >
@@ -437,7 +463,7 @@ export function ClipboardWindow() {
             </button>
           </div>
         </footer>
-      </section>
+      </motion.section>
     </div>
   );
 }

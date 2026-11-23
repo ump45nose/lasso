@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Camera, Circle, Keyboard, MousePointer2, Pause, Play, Save, Square, Video, X } from './icons';
-import { motion } from 'motion/react';
+import { AnimatePresence, motion } from 'motion/react';
 import type { RecordingAction, RecordingFormat, RecordingMode, RecordingSessionState } from '../shared/recording';
 import type { Settings } from '../shared/contracts';
 import { useAppearance } from './fonts';
-import { rise, Segmented } from './motion';
+import { collapse, pop, rise, Segmented, useSurfaceReveal } from './motion';
 import './styles/screenshot-settings.css';
 import './styles/recording.css';
 
@@ -43,8 +43,10 @@ export function RecordingPanel() {
   const hasSession = useRef(false);
   const formatSelected = useRef(false);
   const [confirmDiscard, setConfirmDiscard] = useState<'close' | 'cancel' | 'recovery' | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
 
   useAppearance(settings);
+  const { controls } = useSurfaceReveal(panelRef, { y: 4, scale: 0.99 });
 
   useEffect(() => {
     let active = true;
@@ -182,8 +184,16 @@ export function RecordingPanel() {
     await act({ type: 'export', format, action });
   }
 
+  const phaseKey = !session ? 'idle' : session.status === 'recoverable' ? 'recoverable' : live ? 'live' : session.status === 'review' ? 'review' : 'other';
+
   return (
-    <motion.main className={`l-record-panel${live ? ' live' : ''}`} aria-label="屏幕录制" data-recording-status={status} {...rise}>
+    <motion.main
+      ref={panelRef}
+      className={`l-record-panel sk-draw${live ? ' live' : ''}`}
+      aria-label="屏幕录制"
+      data-recording-status={status}
+      animate={controls}
+    >
       <header className="l-record-head">
         <Video size={16} />
         <h1>{status === 'review' ? '整理这段录制' : '屏幕录制'}</h1>
@@ -197,254 +207,266 @@ export function RecordingPanel() {
         </button>
       </header>
 
-      {!session && (
-        <div className="l-record-start">
-          <h2>把操作录下来。</h2>
-          <p>选择范围，录制后可裁剪首尾并导出为 GIF / WEBP / MP4。</p>
-          <Segmented label="录制模式" value={mode} options={modes} onChange={setMode} />
-          <button type="button" className="l-btn primary" disabled={!ready || busy} onClick={() => void act({ type: 'start', mode })}>
-            <Circle size={13} />
-            {busy ? '准备录制…' : '开始录制'}
-          </button>
-          <p className="l-field-help">
-            {settings?.screenshot.recording.fps ?? 30} FPS ·{' '}
-            {settings?.screenshot.recording.countdown ? `${settings.screenshot.recording.countdown} 秒倒计时` : '无倒计时'} · 参数可在设置「截图、贴图与录屏」中调整
-          </p>
-        </div>
-      )}
-
-      {session?.status === 'recoverable' && (
-        <div className="l-record-start">
-          <h2>还有一段未完成的录制。</h2>
-          <p className="mono">
-            {time(session.durationMs)} · {session.frameCount} 帧
-          </p>
-          <div className="l-record-actions">
-            <button type="button" className="l-btn primary" disabled={busy} onClick={() => void act({ type: 'recover' })}>
-              恢复未完成录制
+      <AnimatePresence mode="wait" initial={false}>
+        {phaseKey === 'idle' && (
+          <motion.div key="idle" className="l-record-start" {...rise}>
+            <h2>把操作录下来。</h2>
+            <p>选择范围，录制后可裁剪首尾并导出为 GIF / WEBP / MP4。</p>
+            <Segmented label="录制模式" value={mode} options={modes} onChange={setMode} />
+            <button type="button" className="l-btn primary" disabled={!ready || busy} onClick={() => void act({ type: 'start', mode })}>
+              <Circle size={13} />
+              {busy ? '准备录制…' : '开始录制'}
             </button>
-            <button
-              type="button"
-              className="l-btn"
-              disabled={busy}
-              aria-label={confirmDiscard === 'recovery' ? '确认丢弃未完成录制' : '丢弃未完成录制'}
-              onClick={() => discard('recovery')}
-            >
-              {confirmDiscard === 'recovery' ? '再点一次丢弃' : '丢弃未完成录制'}
-            </button>
-          </div>
-        </div>
-      )}
+            <p className="l-field-help">
+              {settings?.screenshot.recording.fps ?? 30} FPS ·{' '}
+              {settings?.screenshot.recording.countdown ? `${settings.screenshot.recording.countdown} 秒倒计时` : '无倒计时'} · 参数可在设置「截图、贴图与录屏」中调整
+            </p>
+          </motion.div>
+        )}
 
-      {live && (
-        <>
-          <div className="l-record-control">
-            <div className="l-record-readout">
-              <span className="l-rec-dot" />
-              <strong className="mono">{status === 'countdown' ? `倒计时 ${session.countdownLeft}s` : shortTime(session.durationMs)}</strong>
-              <span className="mono faint">{session.frameCount} 帧</span>
-            </div>
+        {phaseKey === 'recoverable' && session && (
+          <motion.div key="recoverable" className="l-record-start" {...rise}>
+            <h2>还有一段未完成的录制。</h2>
+            <p className="mono">
+              {time(session.durationMs)} · {session.frameCount} 帧
+            </p>
             <div className="l-record-actions">
-              {status !== 'countdown' && (
+              <button type="button" className="l-btn primary" disabled={busy} onClick={() => void act({ type: 'recover' })}>
+                恢复未完成录制
+              </button>
+              <button
+                type="button"
+                className="l-btn"
+                disabled={busy}
+                aria-label={confirmDiscard === 'recovery' ? '确认丢弃未完成录制' : '丢弃未完成录制'}
+                onClick={() => discard('recovery')}
+              >
+                {confirmDiscard === 'recovery' ? '再点一次丢弃' : '丢弃未完成录制'}
+              </button>
+            </div>
+          </motion.div>
+        )}
+
+        {phaseKey === 'live' && session && (
+          <motion.div key="live" {...rise}>
+            <div className="l-record-control">
+              <div className="l-record-readout">
+                <span className={'l-rec-dot' + (status === 'paused' ? ' paused' : '')} />
+                <strong className="mono">{status === 'countdown' ? `倒计时 ${session.countdownLeft}s` : shortTime(session.durationMs)}</strong>
+                <span className="mono faint">{session.frameCount} 帧</span>
+              </div>
+              <div className="l-record-actions">
+                {status !== 'countdown' && (
+                  <button
+                    type="button"
+                    className="l-rec-ib"
+                    disabled={busy}
+                    aria-label={status === 'paused' ? '继续录制' : '暂停录制'}
+                    title={status === 'paused' ? '继续录制' : '暂停录制'}
+                    onClick={() => void act({ type: status === 'paused' ? 'resume' : 'pause' })}
+                  >
+                    {status === 'paused' ? <Play size={14} /> : <Pause size={14} />}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="l-rec-ib"
-                  disabled={busy}
-                  aria-label={status === 'paused' ? '继续录制' : '暂停录制'}
-                  title={status === 'paused' ? '继续录制' : '暂停录制'}
-                  onClick={() => void act({ type: status === 'paused' ? 'resume' : 'pause' })}
+                  disabled={busy || !session.frameCount}
+                  aria-label="结束录制"
+                  title="结束录制"
+                  onClick={() => void act({ type: 'stop' })}
                 >
-                  {status === 'paused' ? <Play size={14} /> : <Pause size={14} />}
+                  <Square size={13} />
                 </button>
-              )}
-              <button
-                type="button"
-                className="l-rec-ib"
-                disabled={busy || !session.frameCount}
-                aria-label="结束录制"
-                title="结束录制"
-                onClick={() => void act({ type: 'stop' })}
-              >
-                <Square size={13} />
-              </button>
-              <span className="l-rec-sep" />
-              <button
-                type="button"
-                className={'l-rec-ib' + (session.settings.cameraOverlay ? ' act' : '')}
-                aria-label="摄像头画中画"
-                title="摄像头画中画"
-                aria-pressed={session.settings.cameraOverlay}
-                aria-busy={cameraBusy}
-                disabled={busy}
-                onClick={() => void act({ type: 'camera', enabled: !session.settings.cameraOverlay })}
-              >
-                <Camera size={14} />
-              </button>
+                <span className="l-rec-sep" />
+                <button
+                  type="button"
+                  className={'l-rec-ib' + (session.settings.cameraOverlay ? ' act' : '')}
+                  aria-label="摄像头画中画"
+                  title="摄像头画中画"
+                  aria-pressed={session.settings.cameraOverlay}
+                  aria-busy={cameraBusy}
+                  disabled={busy}
+                  onClick={() => void act({ type: 'camera', enabled: !session.settings.cameraOverlay })}
+                >
+                  <Camera size={14} />
+                </button>
+                <button
+                  type="button"
+                  className="l-btn small"
+                  disabled={busy}
+                  aria-label={confirmDiscard === 'cancel' ? '确认取消录制' : '取消录制'}
+                  onClick={() => discard('cancel')}
+                >
+                  {confirmDiscard === 'cancel' ? '再点丢弃' : '取消'}
+                </button>
+              </div>
+            </div>
+
+            <div className="l-record-cues" aria-label="教学演示提示">
+              <span>
+                <Keyboard size={14} />
+                {session.settings.showKeystrokes ? (
+                  session.recentKeys.length ? (
+                    <AnimatePresence initial={false}>
+                      {session.recentKeys.slice(-2).map((cue, index) => (
+                        <motion.kbd key={`${cue.timestampMs}-${index}`} {...pop}>
+                          {[...cue.modifiers, cue.key].map(key => keyNames[key] ?? key).join(' + ')}
+                        </motion.kbd>
+                      ))}
+                    </AnimatePresence>
+                  ) : (
+                    '等待按键'
+                  )
+                ) : (
+                  '按键提示已关闭'
+                )}
+              </span>
+              <span aria-label="鼠标点击提示" className={session.recentClicks.length && session.settings.showMouseClicks ? 'clicking' : ''}>
+                <MousePointer2 size={14} />
+                {session.settings.showMouseClicks ? (session.recentClicks.length ? '点击脉冲' : '等待点击') : '点击提示已关闭'}
+              </span>
+            </div>
+          </motion.div>
+        )}
+
+        {phaseKey === 'review' && session && (
+          <motion.div key="review" className="l-record-review" {...rise}>
+            <div className="l-record-preview" aria-label="关键帧预览">
+              {frames[frame] ? <img src={frames[frame]} alt="录制关键帧预览" /> : <span>没有可预览的画面</span>}
+              <span className="l-record-preview-caption">关键帧预览 · 不含声音</span>
+            </div>
+            <div className="l-record-playback">
               <button
                 type="button"
                 className="l-btn small"
-                disabled={busy}
-                aria-label={confirmDiscard === 'cancel' ? '确认取消录制' : '取消录制'}
-                onClick={() => discard('cancel')}
+                disabled={!frames.length || busy}
+                aria-label={playing ? '暂停关键帧预览' : '播放关键帧预览'}
+                onClick={() => setPlaying(!playing)}
               >
-                {confirmDiscard === 'cancel' ? '再点丢弃' : '取消'}
+                {playing ? <Pause size={14} /> : <Play size={14} />}
+                {playing ? '暂停' : '播放'}
+              </button>
+              <input
+                aria-label="预览位置"
+                type="range"
+                min={trim[0]}
+                max={trim[1]}
+                step="1"
+                value={position}
+                onChange={event => {
+                  setPlaying(false);
+                  setPosition(Number(event.target.value));
+                }}
+              />
+              <output className="mono">
+                {time(position)} / {time(session.durationMs)}
+              </output>
+            </div>
+            <div className="l-record-timeline" aria-label="关键帧时间轴">
+              {frames.map((src, index) => (
+                <button
+                  type="button"
+                  key={index}
+                  aria-label={`预览关键帧 ${index + 1}`}
+                  disabled={points[index] < trim[0] || points[index] > trim[1]}
+                  aria-pressed={index === frame}
+                  onClick={() => {
+                    setPlaying(false);
+                    setPosition(points[index] ?? trim[0]);
+                  }}
+                >
+                  <img src={src} alt="" />
+                </button>
+              ))}
+            </div>
+            <div className="l-record-trim">
+              <label>
+                起点 <output className="mono">{time(trim[0])}</output>
+                <input
+                  aria-label="裁剪起点"
+                  type="range"
+                  min="0"
+                  max={Math.max(0, session.durationMs - 1)}
+                  step="1"
+                  value={trim[0]}
+                  disabled={busy}
+                  onChange={event => changeTrim(Math.min(Number(event.target.value), trim[1] - 1), trim[1])}
+                />
+              </label>
+              <label>
+                终点 <output className="mono">{time(trim[1])}</output>
+                <input
+                  aria-label="裁剪终点"
+                  type="range"
+                  min="1"
+                  max={session.durationMs}
+                  step="1"
+                  value={trim[1]}
+                  disabled={busy}
+                  onChange={event => changeTrim(trim[0], Math.max(Number(event.target.value), trim[0] + 1))}
+                />
+              </label>
+              <button
+                type="button"
+                className="l-btn small"
+                disabled={busy || !trimChanged}
+                onClick={() => void act({ type: 'trim', startMs: trim[0], endMs: trim[1] })}
+              >
+                应用裁剪
               </button>
             </div>
-          </div>
-
-          <div className="l-record-cues" aria-label="教学演示提示">
-            <span>
-              <Keyboard size={14} />
-              {session.settings.showKeystrokes
-                ? session.recentKeys.length
-                  ? session.recentKeys.slice(-2).map((cue, index) => (
-                      <kbd key={`${cue.timestampMs}-${index}`}>
-                        {[...cue.modifiers, cue.key].map(key => keyNames[key] ?? key).join(' + ')}
-                      </kbd>
-                    ))
-                  : '等待按键'
-                : '按键提示已关闭'}
-            </span>
-            <span aria-label="鼠标点击提示" className={session.recentClicks.length && session.settings.showMouseClicks ? 'clicking' : ''}>
-              <MousePointer2 size={14} />
-              {session.settings.showMouseClicks ? (session.recentClicks.length ? '点击脉冲' : '等待点击') : '点击提示已关闭'}
-            </span>
-          </div>
-        </>
-      )}
-
-      {session?.status === 'review' && (
-        <div className="l-record-review">
-          <div className="l-record-preview" aria-label="关键帧预览">
-            {frames[frame] ? <img src={frames[frame]} alt="录制关键帧预览" /> : <span>没有可预览的画面</span>}
-            <span className="l-record-preview-caption">关键帧预览 · 不含声音</span>
-          </div>
-          <div className="l-record-playback">
-            <button
-              type="button"
-              className="l-btn small"
-              disabled={!frames.length || busy}
-              aria-label={playing ? '暂停关键帧预览' : '播放关键帧预览'}
-              onClick={() => setPlaying(!playing)}
-            >
-              {playing ? <Pause size={14} /> : <Play size={14} />}
-              {playing ? '暂停' : '播放'}
-            </button>
-            <input
-              aria-label="预览位置"
-              type="range"
-              min={trim[0]}
-              max={trim[1]}
-              step="1"
-              value={position}
-              onChange={event => {
-                setPlaying(false);
-                setPosition(Number(event.target.value));
-              }}
-            />
-            <output className="mono">
-              {time(position)} / {time(session.durationMs)}
-            </output>
-          </div>
-          <div className="l-record-timeline" aria-label="关键帧时间轴">
-            {frames.map((src, index) => (
-              <button
-                type="button"
-                key={index}
-                aria-label={`预览关键帧 ${index + 1}`}
-                disabled={points[index] < trim[0] || points[index] > trim[1]}
-                aria-pressed={index === frame}
-                onClick={() => {
-                  setPlaying(false);
-                  setPosition(points[index] ?? trim[0]);
+            <div className="l-record-output">
+              <Segmented
+                label="录制导出格式"
+                value={format}
+                options={[
+                  ['gif', 'GIF'],
+                  ['webp', 'WEBP'],
+                  ['mp4', 'MP4']
+                ]}
+                onChange={value => {
+                  formatSelected.current = true;
+                  setFormat(value);
                 }}
-              >
-                <img src={src} alt="" />
-              </button>
-            ))}
-          </div>
-          <div className="l-record-trim">
-            <label>
-              起点 <output className="mono">{time(trim[0])}</output>
-              <input
-                aria-label="裁剪起点"
-                type="range"
-                min="0"
-                max={Math.max(0, session.durationMs - 1)}
-                step="1"
-                value={trim[0]}
-                disabled={busy}
-                onChange={event => changeTrim(Math.min(Number(event.target.value), trim[1] - 1), trim[1])}
               />
-            </label>
-            <label>
-              终点 <output className="mono">{time(trim[1])}</output>
-              <input
-                aria-label="裁剪终点"
-                type="range"
-                min="1"
-                max={session.durationMs}
-                step="1"
-                value={trim[1]}
-                disabled={busy}
-                onChange={event => changeTrim(trim[0], Math.max(Number(event.target.value), trim[0] + 1))}
-              />
-            </label>
-            <button
-              type="button"
-              className="l-btn small"
-              disabled={busy || !trimChanged}
-              onClick={() => void act({ type: 'trim', startMs: trim[0], endMs: trim[1] })}
-            >
-              应用裁剪
-            </button>
-          </div>
-          <div className="l-record-output">
-            <Segmented
-              label="录制导出格式"
-              value={format}
-              options={[
-                ['gif', 'GIF'],
-                ['webp', 'WEBP'],
-                ['mp4', 'MP4']
-              ]}
-              onChange={value => {
-                formatSelected.current = true;
-                setFormat(value);
-              }}
-            />
-            <span className="mono">已选 {time(trim[1] - trim[0])}</span>
-          </div>
-          <div className="l-record-actions">
-            {(
-              [
-                ['save', '保存录制', '保存'],
-                ['quick-save', '快速保存录制', '快速保存'],
-                ['copy-file', '复制录制文件', '复制文件'],
-                ['pin', '转为动态贴图', '转为动态贴图']
-              ] as const
-            ).map(([action, label, text]) => (
-              <button
-                type="button"
-                key={action}
-                className={`l-btn${action === 'save' ? ' primary' : ''}`}
-                aria-label={label}
-                disabled={busy || !!trimChanged || !session.frameCount || trim[1] <= trim[0]}
-                onClick={() => void exportRecording(action)}
-              >
-                {action === 'save' && <Save size={14} />}
-                {text}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
+              <span className="mono">已选 {time(trim[1] - trim[0])}</span>
+            </div>
+            <div className="l-record-actions">
+              {(
+                [
+                  ['save', '保存录制', '保存'],
+                  ['quick-save', '快速保存录制', '快速保存'],
+                  ['copy-file', '复制录制文件', '复制文件'],
+                  ['pin', '转为动态贴图', '转为动态贴图']
+                ] as const
+              ).map(([action, label, text]) => (
+                <button
+                  type="button"
+                  key={action}
+                  className={`l-btn${action === 'save' ? ' primary' : ''}`}
+                  aria-label={label}
+                  disabled={busy || !!trimChanged || !session.frameCount || trim[1] <= trim[0]}
+                  onClick={() => void exportRecording(action)}
+                >
+                  {action === 'save' && <Save size={14} />}
+                  {text}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-      {(error || session?.message || message) && (
-        <p className={`l-record-notice${error ? ' l-danger' : ''}`} role={error ? 'alert' : 'status'}>
-          {error || message || session?.message}
-        </p>
-      )}
+      <AnimatePresence initial={false}>
+        {(error || session?.message || message) && (
+          <motion.div key={error || message || session?.message} className="l-collapse" {...collapse}>
+            <p className={`l-record-notice${error ? ' l-danger' : ''}`} role={error ? 'alert' : 'status'}>
+              {error || message || session?.message}
+            </p>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.main>
   );
 }

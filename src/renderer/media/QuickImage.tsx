@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import {
   Check,
   ChevronDown,
-  ChevronUp,
   Copy,
   Download,
   ImagePlus,
@@ -20,6 +20,7 @@ import type { MediaAPI, MediaJob, MediaOutputAction, MediaState } from '../../sh
 import { imageOptionsSummary } from '../../shared/media';
 import { BrandMark } from '../BrandMark';
 import { useAppearance } from '../fonts';
+import { collapse, dropdown, ease, fade, pop, useSurfaceReveal } from '../motion';
 import './quick-image.css';
 
 declare global {
@@ -51,8 +52,10 @@ export function QuickImage() {
   const guard = useRef(false);
   const pending = useRef<{ id: string; input: string } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
 
   useAppearance(state || undefined);
+  const { controls } = useSurfaceReveal(rootRef, { y: 4, scale: 0.99 });
 
   const accept = useCallback((next: MediaState) => {
     setState(next);
@@ -163,9 +166,13 @@ export function QuickImage() {
     draft?.options.quality === 'high' ? '高清' : draft?.options.quality === 'medium' ? '标准' : draft?.options.quality === 'low' ? '快速' : '';
   const metaSummary = draft ? [activeModel, imageOptionsSummary(draft.options), qualityLabel].filter(Boolean).join(' · ') : '';
 
+  const stageKey = selected ? `${selected.id}:${selectedImage?.id ?? selected.status}` : 'none';
+
   return (
-    <div
-      className="l-app qi-win"
+    <motion.div
+      ref={rootRef}
+      className="l-app qi-win sk-draw"
+      animate={controls}
       onClick={() => presetMenuOpen && setPresetMenuOpen(false)}
       onPaste={event => {
         const imgItem = [...event.clipboardData.items].find(i => i.type.startsWith('image/'));
@@ -213,41 +220,49 @@ export function QuickImage() {
           <div className="qi-preset-wrap" onClick={e => e.stopPropagation()}>
             <button
               type="button"
-              className="l-btn small"
+              className={'l-btn small' + (presetMenuOpen ? ' ton' : '')}
               aria-haspopup="listbox"
               aria-expanded={presetMenuOpen}
               onClick={() => setPresetMenuOpen(v => !v)}
             >
               <span>{draft?.presetName || '选择生图预设'}</span>
-              {presetMenuOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              <ChevronDown size={13} className={'qi-caret' + (presetMenuOpen ? ' open' : '')} />
             </button>
-            {presetMenuOpen && (
-              <div className="l-menu qi-preset-menu" role="listbox">
-                {presets.length === 0 ? (
-                  <div className="l-menu-empty">可在设置「AI 预设与生图」中添加生图预设</div>
-                ) : (
-                  presets.map(p => {
-                    const isCurrent = p.id === draft?.presetId;
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        role="option"
-                        aria-selected={isCurrent}
-                        className={'l-menu-item' + (isCurrent ? ' active' : '')}
-                        onClick={() => {
-                          setPresetMenuOpen(false);
-                          void window.media.selectPreset(p.id).then(accept);
-                        }}
-                      >
-                        <span className="trunc">{p.name}</span>
-                        {isCurrent && <Check size={13} className="l-menu-right clay" />}
-                      </button>
-                    );
-                  })
-                )}
-              </div>
-            )}
+            <AnimatePresence>
+              {presetMenuOpen && (
+                <motion.div
+                  key="qi-preset-menu"
+                  className="l-menu qi-preset-menu"
+                  role="listbox"
+                  style={{ transformOrigin: 'top left' }}
+                  {...dropdown()}
+                >
+                  {presets.length === 0 ? (
+                    <div className="l-menu-empty">可在设置「AI 预设与生图」中添加生图预设</div>
+                  ) : (
+                    presets.map(p => {
+                      const isCurrent = p.id === draft?.presetId;
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          role="option"
+                          aria-selected={isCurrent}
+                          className={'l-menu-item' + (isCurrent ? ' active' : '')}
+                          onClick={() => {
+                            setPresetMenuOpen(false);
+                            void window.media.selectPreset(p.id).then(accept);
+                          }}
+                        >
+                          <span className="trunc">{p.name}</span>
+                          {isCurrent && <Check size={13} className="l-menu-right clay" />}
+                        </button>
+                      );
+                    })
+                  )}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
           {metaSummary && <span className="l-chip mono trunc">{metaSummary}</span>}
         </div>
@@ -273,20 +288,22 @@ export function QuickImage() {
         />
 
         <div className="qi-refs">
-          {reference && (
-            <div className="qi-ref" title={`参考图 ${reference.width}×${reference.height}`}>
-              <img src={reference.thumbnail} alt="当前参考图" />
-              <button
-                type="button"
-                className="qi-ref-rm"
-                aria-label="移除参考图"
-                disabled={busy || running}
-                onClick={() => void act(async () => accept(await window.media.setReference(null)))}
-              >
-                <X size={10} />
-              </button>
-            </div>
-          )}
+          <AnimatePresence initial={false}>
+            {reference && (
+              <motion.div key={reference.id} className="qi-ref" title={`参考图 ${reference.width}×${reference.height}`} {...pop}>
+                <img src={reference.thumbnail} alt="当前参考图" />
+                <button
+                  type="button"
+                  className="qi-ref-rm"
+                  aria-label="移除参考图"
+                  disabled={busy || running}
+                  onClick={() => void act(async () => accept(await window.media.setReference(null)))}
+                >
+                  <X size={10} />
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <button
             type="button"
@@ -324,22 +341,26 @@ export function QuickImage() {
           </button>
         </div>
 
-        {(error || message) && (
-          <div className={'qi-banner' + (error ? ' err' : ' ok')} role={error ? 'alert' : 'status'}>
-            <span className="grow">{error || message}</span>
-            <button
-              type="button"
-              className="l-icon tiny"
-              aria-label="关闭提示"
-              onClick={() => {
-                setError('');
-                setMessage('');
-              }}
-            >
-              <X size={12} />
-            </button>
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {(error || message) && (
+            <motion.div key={error || message} className="l-collapse" {...collapse}>
+              <div className={'qi-banner' + (error ? ' err' : ' ok')} role={error ? 'alert' : 'status'}>
+                <span className="grow">{error || message}</span>
+                <button
+                  type="button"
+                  className="l-icon tiny"
+                  aria-label="关闭提示"
+                  onClick={() => {
+                    setError('');
+                    setMessage('');
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </section>
 
       {/* Lower Result & Horizontal Version Strip Section (B8F) */}
@@ -371,39 +392,49 @@ export function QuickImage() {
             </div>
 
             <div className="qi-stage">
-              {selectedImage ? (
-                <img className="qi-stage-img" src={selectedImage.thumbnail} alt={selected.prompt} />
-              ) : selected.status === 'running' ? (
-                <div className="qi-stage-empty">
-                  <Loader2 size={20} className="l-spin" />
-                  <span>正在生成图像，隐藏窗口也会继续完成…</span>
-                </div>
-              ) : (
-                <div className="qi-stage-empty">
-                  <span>{selected.error || statusLabels[selected.status]}</span>
-                  {(selected.status === 'failed' || selected.status === 'interrupted') && (
-                    <button
-                      type="button"
-                      className="l-btn small"
-                      disabled={busy || running}
-                      onClick={() =>
-                        void act(async () => {
-                          accept(await window.media.restore(selected.id, false));
-                          setMessage('已恢复输入，点击开始生成重新请求');
-                        })
-                      }
-                    >
-                      恢复这次提示词
-                    </button>
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.div
+                  key={stageKey}
+                  className="qi-stage-inner"
+                  initial={{ opacity: 0, scale: 0.985 }}
+                  animate={{ opacity: 1, scale: 1, transition: { duration: 0.18, ease } }}
+                  exit={{ opacity: 0, transition: { duration: 0.1, ease: 'easeIn' } }}
+                >
+                  {selectedImage ? (
+                    <img className="qi-stage-img" src={selectedImage.thumbnail} alt={selected.prompt} />
+                  ) : selected.status === 'running' ? (
+                    <div className="qi-stage-empty">
+                      <Loader2 size={20} className="l-spin" />
+                      <span>正在生成图像，隐藏窗口也会继续完成…</span>
+                    </div>
+                  ) : (
+                    <div className="qi-stage-empty">
+                      <span>{selected.error || statusLabels[selected.status]}</span>
+                      {(selected.status === 'failed' || selected.status === 'interrupted') && (
+                        <button
+                          type="button"
+                          className="l-btn small"
+                          disabled={busy || running}
+                          onClick={() =>
+                            void act(async () => {
+                              accept(await window.media.restore(selected.id, false));
+                              setMessage('已恢复输入，点击开始生成重新请求');
+                            })
+                          }
+                        >
+                          恢复这次提示词
+                        </button>
+                      )}
+                    </div>
                   )}
-                </div>
-              )}
+                </motion.div>
+              </AnimatePresence>
             </div>
 
             <div className="qi-actions">
               <button
                 type="button"
-                className="l-btn small"
+                className="l-btn small sk-wiggle"
                 disabled={!selectedImage || busy || running}
                 onClick={() =>
                   selectedImage &&
@@ -417,50 +448,56 @@ export function QuickImage() {
                 <Pencil size={13} />
                 <span>基于此图继续改</span>
               </button>
-              <button type="button" className="l-ghost small" disabled={!selectedImage || busy} onClick={() => void act(() => output('copy'))}>
+              <button type="button" className="l-ghost small sk-wiggle" disabled={!selectedImage || busy} onClick={() => void act(() => output('copy'))}>
                 <Copy size={13} />
                 <span>复制</span>
               </button>
-              <button type="button" className="l-ghost small" disabled={!selectedImage || busy} onClick={() => void act(() => output('save'))}>
+              <button type="button" className="l-ghost small sk-wiggle" disabled={!selectedImage || busy} onClick={() => void act(() => output('save'))}>
                 <Download size={13} />
                 <span>另存</span>
               </button>
-              <button type="button" className="l-ghost small" disabled={!selectedImage || busy} onClick={() => void act(() => output('pin'))}>
+              <button type="button" className="l-ghost small sk-wiggle" disabled={!selectedImage || busy} onClick={() => void act(() => output('pin'))}>
                 <Pin size={13} />
                 <span>贴图</span>
               </button>
-              <button type="button" className="l-ghost small" disabled={!selectedImage || busy} onClick={() => void act(() => output('edit'))}>
+              <button type="button" className="l-ghost small sk-wiggle" disabled={!selectedImage || busy} onClick={() => void act(() => output('edit'))}>
                 <PenLine size={13} />
                 <span>标注</span>
               </button>
               <span className="grow" />
-              {deleteId === selected.id ? (
-                <button
-                  type="button"
-                  className="l-btn danger-solid small"
-                  disabled={busy || running}
-                  onClick={() =>
-                    void act(async () => {
-                      accept(await window.media.remove(selected.id));
-                      setDeleteId('');
-                    })
-                  }
-                >
-                  <Trash2 size={13} />
-                  <span>确认删除</span>
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className="l-icon small danger"
-                  aria-label="删除此版本"
-                  title="删除此版本"
-                  disabled={busy || running}
-                  onClick={() => setDeleteId(selected.id)}
-                >
-                  <Trash2 size={14} />
-                </button>
-              )}
+              <AnimatePresence mode="wait" initial={false}>
+                {deleteId === selected.id ? (
+                  <motion.button
+                    key="del-confirm"
+                    type="button"
+                    className="l-btn danger-solid small"
+                    disabled={busy || running}
+                    {...pop}
+                    onClick={() =>
+                      void act(async () => {
+                        accept(await window.media.remove(selected.id));
+                        setDeleteId('');
+                      })
+                    }
+                  >
+                    <Trash2 size={13} />
+                    <span>确认删除</span>
+                  </motion.button>
+                ) : (
+                  <motion.button
+                    key="del-btn"
+                    type="button"
+                    className="l-icon small danger"
+                    aria-label="删除此版本"
+                    title="删除此版本"
+                    disabled={busy || running}
+                    {...fade}
+                    onClick={() => setDeleteId(selected.id)}
+                  >
+                    <Trash2 size={14} />
+                  </motion.button>
+                )}
+              </AnimatePresence>
             </div>
 
             <div className="qi-vers" role="list" aria-label="版本缩略条">
@@ -503,6 +540,6 @@ export function QuickImage() {
           </div>
         )}
       </section>
-    </div>
+    </motion.div>
   );
 }

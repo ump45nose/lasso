@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -18,6 +19,7 @@ import {
   X
 } from './icons';
 import type { ApiChatMessage, ApiChatState, ShellState } from '../shared/contracts';
+import { collapse, dropdown, pop } from './motion';
 
 function CodeBlock({ children, inline }: { children?: React.ReactNode; inline?: boolean }) {
   const [copied, setCopied] = useState(false);
@@ -220,51 +222,59 @@ export function ApiChat({ taskId, shell }: { taskId: string; shell: ShellState }
             <ChevronsUpDown size={13} />
           </button>
 
-          {pickerOpen && (
-            <div className="l-menu l-chat-model-menu" role="menu">
-              {connections.length === 0 ? (
-                <div className="l-menu-empty">尚未配置 API 连接</div>
-              ) : (
-                connections.map(conn => {
-                  const models = conn.models.length > 0 ? conn.models : [chat.model || 'gpt-4.1-mini'];
-                  return (
-                    <div key={conn.id} className="l-menu-group">
-                      <div className="l-menu-head">{conn.name}</div>
-                      {models.slice(0, 12).map(m => {
-                        const selected = conn.id === chat.connectionId && m === chat.model;
-                        return (
-                          <button
-                            key={`${conn.id}:${m}`}
-                            type="button"
-                            className={'l-menu-item' + (selected ? ' active' : '')}
-                            onClick={() => {
-                              setPickerOpen(false);
-                              void window.desktop.apiChatModel(taskId, conn.id, m);
-                            }}
-                          >
-                            <span className="mono trunc">{m}</span>
-                            {selected && <Check size={13} className="l-menu-right clay" />}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  );
-                })
-              )}
-              <div className="l-menu-sep" />
-              <button
-                type="button"
-                className="l-menu-item"
-                onClick={() => {
-                  setPickerOpen(false);
-                  void window.desktop.openSettings('connections');
-                }}
+          <AnimatePresence>
+            {pickerOpen && (
+              <motion.div
+                key="chat-model-menu"
+                className="l-menu l-chat-model-menu"
+                role="menu"
+                style={{ transformOrigin: 'top left' }}
+                {...dropdown()}
               >
-                <Settings2 size={14} />
-                <span>管理模型与 API 连接…</span>
-              </button>
-            </div>
-          )}
+                {connections.length === 0 ? (
+                  <div className="l-menu-empty">尚未配置 API 连接</div>
+                ) : (
+                  connections.map(conn => {
+                    const models = conn.models.length > 0 ? conn.models : [chat.model || 'gpt-4.1-mini'];
+                    return (
+                      <div key={conn.id} className="l-menu-group">
+                        <div className="l-menu-head">{conn.name}</div>
+                        {models.slice(0, 12).map(m => {
+                          const selected = conn.id === chat.connectionId && m === chat.model;
+                          return (
+                            <button
+                              key={`${conn.id}:${m}`}
+                              type="button"
+                              className={'l-menu-item' + (selected ? ' active' : '')}
+                              onClick={() => {
+                                setPickerOpen(false);
+                                void window.desktop.apiChatModel(taskId, conn.id, m);
+                              }}
+                            >
+                              <span className="mono trunc">{m}</span>
+                              {selected && <Check size={13} className="l-menu-right clay" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    );
+                  })
+                )}
+                <div className="l-menu-sep" />
+                <button
+                  type="button"
+                  className="l-menu-item"
+                  onClick={() => {
+                    setPickerOpen(false);
+                    void window.desktop.openSettings('connections');
+                  }}
+                >
+                  <Settings2 size={14} />
+                  <span>管理模型与 API 连接…</span>
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         <span className="grow" />
@@ -318,20 +328,24 @@ export function ApiChat({ taskId, shell }: { taskId: string; shell: ShellState }
         )}
       </div>
 
-      {(localErr || (chat.error && chat.messages.length === 0)) && (
-        <div className="l-chat-banner-err" role="alert">
-          <CircleAlert size={14} />
-          <span className="grow">{localErr || chat.error}</span>
-          {connections.length === 0 && (
-            <button type="button" className="l-text-btn" onClick={() => void window.desktop.openSettings('connections')}>
-              去配置
-            </button>
-          )}
-          <button type="button" className="l-icon small" aria-label="关闭错误提示" onClick={() => setLocalErr(null)}>
-            <X size={13} />
-          </button>
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {(localErr || (chat.error && chat.messages.length === 0)) && (
+          <motion.div key={localErr || chat.error} className="l-collapse" {...collapse}>
+            <div className="l-chat-banner-err" role="alert">
+              <CircleAlert size={14} />
+              <span className="grow">{localErr || chat.error}</span>
+              {connections.length === 0 && (
+                <button type="button" className="l-text-btn" onClick={() => void window.desktop.openSettings('connections')}>
+                  去配置
+                </button>
+              )}
+              <button type="button" className="l-icon small" aria-label="关闭错误提示" onClick={() => setLocalErr(null)}>
+                <X size={13} />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <div className="l-composer">
         <textarea
@@ -362,32 +376,34 @@ export function ApiChat({ taskId, shell }: { taskId: string; shell: ShellState }
             <ImagePlus size={15} />
           </button>
 
-          {chat.image && (
-            <span className="l-thumb-chip">
-              <img src={chat.image.thumbnail} alt="" />
-              <span className="mono">
-                {chat.image.width}×{chat.image.height}
-              </span>
-              <button
-                type="button"
-                className="l-icon tiny"
-                aria-label="标注图片"
-                title="标注图片"
-                onClick={() => void window.desktop.editImage(taskId, chat.image!.id)}
-              >
-                <PenLine size={11} />
-              </button>
-              <button
-                type="button"
-                className="l-icon tiny"
-                aria-label="移除图片"
-                title="移除图片"
-                onClick={() => void window.desktop.removeImage(taskId)}
-              >
-                <X size={11} />
-              </button>
-            </span>
-          )}
+          <AnimatePresence initial={false}>
+            {chat.image && (
+              <motion.span key={chat.image.id} className="l-thumb-chip" {...pop}>
+                <img src={chat.image.thumbnail} alt="" />
+                <span className="mono">
+                  {chat.image.width}×{chat.image.height}
+                </span>
+                <button
+                  type="button"
+                  className="l-icon tiny"
+                  aria-label="标注图片"
+                  title="标注图片"
+                  onClick={() => void window.desktop.editImage(taskId, chat.image!.id)}
+                >
+                  <PenLine size={11} />
+                </button>
+                <button
+                  type="button"
+                  className="l-icon tiny"
+                  aria-label="移除图片"
+                  title="移除图片"
+                  onClick={() => void window.desktop.removeImage(taskId)}
+                >
+                  <X size={11} />
+                </button>
+              </motion.span>
+            )}
+          </AnimatePresence>
 
           <button
             type="button"

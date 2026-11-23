@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, Copy, ExternalLink, FileText, Image as ImageIcon, Lock, LockOpen, Pin, Plus, Search, Trash2, X } from '../icons';
+import { AnimatePresence, motion } from 'motion/react';
+import { Check, ChevronDown, Copy, ExternalLink, FileText, Image as ImageIcon, Lock, LockOpen, Pin, Plus, Search, Trash2, X } from '../icons';
 import type { EdgeNotesState, IslandAPI } from '../../shared/contracts';
 import { useAppearance } from '../fonts';
+import { dropdown, ease, fade, pop, spring, useSurfaceReveal } from '../motion';
 import { countNoteImages, insertNoteImages, isImageFile, NoteEditor, type NoteImageAction, type NoteImageRef } from './NoteEditor';
 import type { EditorView } from '@codemirror/view';
 import { shortcutLabel } from '../targets';
@@ -45,8 +47,10 @@ export function EdgeNotes() {
   const dragDepthRef = useRef(0);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<EditorView | null>(null);
+  const winRef = useRef<HTMLElement | null>(null);
 
   useAppearance(state?.fonts);
+  const { controls } = useSurfaceReveal(winRef, { active: state?.open });
 
   const showNotice = useCallback((message: string) => {
     setImageNotice(message);
@@ -292,12 +296,17 @@ export function EdgeNotes() {
 
   return (
     <div className="en-stage" onClick={() => pickerOpen && setPickerOpen(false)}>
-      <section className={'en-win' + (!state.focused ? ' blurred' : '')} aria-label="浮动便签">
+      <motion.section
+        ref={winRef}
+        className={'en-win sk-draw' + (!state.focused ? ' blurred' : '')}
+        aria-label="浮动便签"
+        animate={controls}
+      >
         <header className="en-wbar">
           <div className="en-picker-wrap" onClick={e => e.stopPropagation()}>
             <button
               type="button"
-              className={'en-switch' + (pickerOpen ? ' open' : '')}
+              className={'en-switch sk-wiggle' + (pickerOpen ? ' open' : '')}
               aria-label="切换或搜索笔记"
               aria-expanded={pickerOpen}
               onClick={() => {
@@ -308,99 +317,108 @@ export function EdgeNotes() {
             >
               <FileText size={15} />
               <span className="trunc">{activeFile}</span>
-              {pickerOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              <ChevronDown size={13} className="en-caret" />
             </button>
 
-            {pickerOpen && (
-              <div className="en-menu" role="menu" aria-label="本地笔记列表">
-                <label className="en-menu-search">
-                  <Search size={14} />
-                  <input
-                    ref={searchInputRef}
-                    type="search"
-                    aria-label="搜索或新建笔记"
-                    placeholder="搜索或新建笔记"
-                    value={query}
-                    onChange={e => setQuery(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key !== 'Enter') return;
-                      if (query.trim() && otherNotes.length === 0 && !showScratchpad) {
-                        e.preventDefault();
-                        void handleCreateNote(query);
-                      } else if (showScratchpad && otherNotes.length === 0) {
-                        e.preventDefault();
-                        void pickNote(SCRATCHPAD);
-                      } else if (!showScratchpad && otherNotes.length > 0) {
-                        e.preventDefault();
-                        void pickNote(otherNotes[0].fileName);
-                      }
-                    }}
-                  />
-                </label>
-
-                <div className="en-menu-list">
-                  {showScratchpad && (
-                    <div
-                      role="menuitem"
-                      tabIndex={0}
-                      className={'en-mi' + (activeFile === SCRATCHPAD ? ' active' : '')}
-                      onClick={() => void pickNote(SCRATCHPAD)}
+            <AnimatePresence>
+              {pickerOpen && (
+                <motion.div
+                  key="en-menu"
+                  className="en-menu"
+                  role="menu"
+                  aria-label="本地笔记列表"
+                  style={{ transformOrigin: 'top left' }}
+                  {...dropdown()}
+                >
+                  <label className="en-menu-search">
+                    <Search size={14} />
+                    <input
+                      ref={searchInputRef}
+                      type="search"
+                      aria-label="搜索或新建笔记"
+                      placeholder="搜索或新建笔记"
+                      value={query}
+                      onChange={e => setQuery(e.target.value)}
                       onKeyDown={e => {
-                        if (e.key === 'Enter' || e.key === ' ') {
+                        if (e.key !== 'Enter') return;
+                        if (query.trim() && otherNotes.length === 0 && !showScratchpad) {
+                          e.preventDefault();
+                          void handleCreateNote(query);
+                        } else if (showScratchpad && otherNotes.length === 0) {
                           e.preventDefault();
                           void pickNote(SCRATCHPAD);
+                        } else if (!showScratchpad && otherNotes.length > 0) {
+                          e.preventDefault();
+                          void pickNote(otherNotes[0].fileName);
                         }
                       }}
-                    >
-                      <Pin size={14} className="en-mi-ic" />
-                      <span className="trunc">{SCRATCHPAD}</span>
-                      <span className="en-mi-sub">随手记</span>
-                      {activeFile === SCRATCHPAD && <Check size={14} className="en-mi-r clay" />}
-                    </div>
-                  )}
+                    />
+                  </label>
 
-                  {otherNotes.map(note => {
-                    const selected = activeFile === note.fileName;
-                    const armed = confirmDelete === note.fileName;
-                    return (
+                  <div className="en-menu-list">
+                    {showScratchpad && (
                       <div
-                        key={note.fileName}
                         role="menuitem"
                         tabIndex={0}
-                        className={'en-mi' + (selected ? ' active' : '')}
-                        onClick={() => void pickNote(note.fileName)}
+                        className={'en-mi' + (activeFile === SCRATCHPAD ? ' active' : '')}
+                        onClick={() => void pickNote(SCRATCHPAD)}
                         onKeyDown={e => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault();
-                            void pickNote(note.fileName);
+                            void pickNote(SCRATCHPAD);
                           }
                         }}
                       >
-                        <FileText size={14} className="en-mi-ic" />
-                        <span className="trunc grow">{note.fileName}</span>
-                        {!armed && note.updatedAt && <span className="en-mi-date mono">{formatShortDate(note.updatedAt)}</span>}
-                        <button
-                          type="button"
-                          className={'en-mi-del' + (armed ? ' armed' : '')}
-                          aria-label={armed ? `确认删除 ${note.fileName}` : `删除 ${note.fileName}`}
-                          onClick={e => void onDelete(e, note.fileName)}
-                        >
-                          <Trash2 size={13} />
-                          {armed && <span>确认删除？</span>}
-                        </button>
+                        <Pin size={14} className="en-mi-ic" />
+                        <span className="trunc">{SCRATCHPAD}</span>
+                        <span className="en-mi-sub">随手记</span>
+                        {activeFile === SCRATCHPAD && <Check size={14} className="en-mi-r clay" />}
                       </div>
-                    );
-                  })}
-                </div>
+                    )}
 
-                <div className="en-msep" />
-                <button type="button" className="en-mi" onClick={() => void handleCreateNote()}>
-                  <Plus size={14} className="en-mi-ic" />
-                  <span>{query.trim() ? `新建「${query.trim()}」` : '新建笔记'}</span>
-                  <kbd className="en-kbd en-mi-r">⌘N</kbd>
-                </button>
-              </div>
-            )}
+                    {otherNotes.map(note => {
+                      const selected = activeFile === note.fileName;
+                      const armed = confirmDelete === note.fileName;
+                      return (
+                        <div
+                          key={note.fileName}
+                          role="menuitem"
+                          tabIndex={0}
+                          className={'en-mi' + (selected ? ' active' : '')}
+                          onClick={() => void pickNote(note.fileName)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              void pickNote(note.fileName);
+                            }
+                          }}
+                        >
+                          <FileText size={14} className="en-mi-ic" />
+                          <span className="trunc grow">{note.fileName}</span>
+                          {!armed && note.updatedAt && <span className="en-mi-date mono">{formatShortDate(note.updatedAt)}</span>}
+                          <button
+                            type="button"
+                            className={'en-mi-del' + (armed ? ' armed' : '')}
+                            aria-label={armed ? `确认删除 ${note.fileName}` : `删除 ${note.fileName}`}
+                            onClick={e => void onDelete(e, note.fileName)}
+                          >
+                            <Trash2 size={13} />
+                            {armed && <span>确认删除？</span>}
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="en-msep" />
+                  <button type="button" className="en-mi" onClick={() => void handleCreateNote()}>
+                    <Plus size={14} className="en-mi-ic" />
+                    <span>{query.trim() ? `新建「${query.trim()}」` : '新建笔记'}</span>
+                    <kbd className="en-kbd en-mi-r">⌘N</kbd>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <span className="grow" />
@@ -474,31 +492,48 @@ export function EdgeNotes() {
           }}
           onDrop={event => void handleDropFiles(event)}
         >
-          <NoteEditor
+          <motion.div
             key={activeFile}
-            value={draft}
-            onChange={onEdit}
-            onBlur={() => void flushSave()}
-            editorRef={editorRef}
-            enableImagePreview
-            onPasteImage={handlePasteImage}
-            onImageAction={handleImageAction}
-          />
+            className="en-editor-pane"
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+          >
+            <NoteEditor
+              value={draft}
+              onChange={onEdit}
+              onBlur={() => void flushSave()}
+              editorRef={editorRef}
+              enableImagePreview
+              onPasteImage={handlePasteImage}
+              onImageAction={handleImageAction}
+            />
+          </motion.div>
 
-          {dragActive && (
-            <div className="en-drop-overlay" aria-live="polite">
-              <div className="en-drop-pill">
-                <ImageIcon size={16} />
-                <span>松开以插入图片</span>
-              </div>
-            </div>
-          )}
+          <AnimatePresence>
+            {dragActive && (
+              <motion.div key="drop" className="en-drop-overlay" aria-live="polite" {...fade}>
+                <motion.div className="en-drop-pill" {...pop}>
+                  <ImageIcon size={16} />
+                  <span>松开以插入图片</span>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          {imageNotice && (
-            <div className="en-notice" role="status">
-              <span className="trunc">{imageNotice}</span>
-            </div>
-          )}
+          <AnimatePresence>
+            {imageNotice && (
+              <motion.div
+                key={imageNotice}
+                className="en-notice"
+                role="status"
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0, transition: spring }}
+                exit={{ opacity: 0, y: 6, transition: { duration: 0.12, ease: 'easeIn' } }}
+              >
+                <span className="trunc">{imageNotice}</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         <footer className="en-foot">
@@ -516,79 +551,98 @@ export function EdgeNotes() {
           {hotkeyLabel && <kbd className="en-kbd">{hotkeyLabel}</kbd>}
         </footer>
 
-        {lightbox && (
-          <div className="en-lightbox" role="dialog" aria-modal="true" aria-label="图片大图预览" onClick={() => setLightbox(null)}>
-            <div className="en-lightbox-bar" onClick={event => event.stopPropagation()}>
-              <span className="en-lightbox-name trunc">{lightbox.alt || lightbox.label}</span>
-              <span className="grow" />
-              <button
-                type="button"
-                className="en-lightbox-btn"
-                aria-label="复制图片"
-                title="复制图片"
-                onClick={() => {
-                  void window.island.copyNoteImage(lightbox.canonicalSrc).then(result => {
-                    if (result.error) {
-                      showNotice(result.error);
-                    } else {
-                      setLightboxCopied(true);
-                      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
-                      copyTimerRef.current = setTimeout(() => setLightboxCopied(false), 1500);
-                    }
-                  });
-                }}
-              >
-                {lightboxCopied ? <Check size={14} /> : <Copy size={14} />}
-                <span>{lightboxCopied ? '已复制' : '复制'}</span>
-              </button>
-              <button
-                type="button"
-                className="en-lightbox-btn"
-                aria-label="钉为桌面贴图"
-                title="钉为桌面贴图"
-                onClick={() => {
-                  void window.island.openNoteImage(lightbox.canonicalSrc, 'pin').then(result => {
-                    if (result.error) showNotice(result.error);
-                  });
-                }}
-              >
-                <Pin size={14} />
-                <span>贴图</span>
-              </button>
-              <button
-                type="button"
-                className="en-lightbox-btn"
-                aria-label="用系统预览打开"
-                title="用系统预览打开"
-                onClick={() => {
-                  void window.island.openNoteImage(lightbox.canonicalSrc, 'open').then(result => {
-                    if (result.error) showNotice(result.error);
-                  });
-                }}
-              >
-                <ExternalLink size={14} />
-                <span>原图</span>
-              </button>
-              <button
-                type="button"
-                className="en-lightbox-close"
-                aria-label="关闭大图预览"
-                title="关闭 (Esc)"
-                onClick={() => setLightbox(null)}
-              >
-                <X size={15} />
-              </button>
-            </div>
-            <div className="en-lightbox-stage">
-              <img
-                src={lightbox.displaySrc}
-                alt={lightbox.alt || lightbox.label}
+        <AnimatePresence>
+          {lightbox && (
+            <motion.div
+              key="lightbox"
+              className="en-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label="图片大图预览"
+              onClick={() => setLightbox(null)}
+              {...fade}
+            >
+              <motion.div
+                className="en-lightbox-bar"
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0, transition: { duration: 0.18, ease } }}
+                exit={{ opacity: 0, y: -6, transition: { duration: 0.1 } }}
                 onClick={event => event.stopPropagation()}
-              />
-            </div>
-          </div>
-        )}
-      </section>
+              >
+                <span className="en-lightbox-name trunc">{lightbox.alt || lightbox.label}</span>
+                <span className="grow" />
+                <button
+                  type="button"
+                  className="en-lightbox-btn sk-wiggle"
+                  aria-label="复制图片"
+                  title="复制图片"
+                  onClick={() => {
+                    void window.island.copyNoteImage(lightbox.canonicalSrc).then(result => {
+                      if (result.error) {
+                        showNotice(result.error);
+                      } else {
+                        setLightboxCopied(true);
+                        if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+                        copyTimerRef.current = setTimeout(() => setLightboxCopied(false), 1500);
+                      }
+                    });
+                  }}
+                >
+                  {lightboxCopied ? <Check size={14} /> : <Copy size={14} />}
+                  <span>{lightboxCopied ? '已复制' : '复制'}</span>
+                </button>
+                <button
+                  type="button"
+                  className="en-lightbox-btn sk-wiggle"
+                  aria-label="钉为桌面贴图"
+                  title="钉为桌面贴图"
+                  onClick={() => {
+                    void window.island.openNoteImage(lightbox.canonicalSrc, 'pin').then(result => {
+                      if (result.error) showNotice(result.error);
+                    });
+                  }}
+                >
+                  <Pin size={14} />
+                  <span>贴图</span>
+                </button>
+                <button
+                  type="button"
+                  className="en-lightbox-btn sk-wiggle"
+                  aria-label="用系统预览打开"
+                  title="用系统预览打开"
+                  onClick={() => {
+                    void window.island.openNoteImage(lightbox.canonicalSrc, 'open').then(result => {
+                      if (result.error) showNotice(result.error);
+                    });
+                  }}
+                >
+                  <ExternalLink size={14} />
+                  <span>原图</span>
+                </button>
+                <button
+                  type="button"
+                  className="en-lightbox-close"
+                  aria-label="关闭大图预览"
+                  title="关闭 (Esc)"
+                  onClick={() => setLightbox(null)}
+                >
+                  <X size={15} />
+                </button>
+              </motion.div>
+              <div className="en-lightbox-stage">
+                <motion.img
+                  src={lightbox.displaySrc}
+                  alt={lightbox.alt || lightbox.label}
+                  initial={{ opacity: 0, scale: 0.94 }}
+                  animate={{ opacity: 1, scale: 1, transition: spring }}
+                  exit={{ opacity: 0, scale: 0.96, transition: { duration: 0.1 } }}
+                  onClick={event => event.stopPropagation()}
+                />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.section>
     </div>
   );
 }

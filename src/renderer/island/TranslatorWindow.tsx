@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -25,6 +26,7 @@ import type { IslandAPI, TranslatorEngineOption, TranslatorWindowState } from '.
 import type { TranslationLang } from '../../shared/media';
 import { formatMarkdownBreaks } from '../../shared/translation-markdown';
 import { useAppearance } from '../fonts';
+import { dropdown, ease, fade, useSurfaceReveal } from '../motion';
 import { NoteEditor } from './NoteEditor';
 import './suite-windows.css';
 
@@ -72,6 +74,7 @@ export function TranslatorWindow() {
   const lastSizeRef = useRef<{ width: number; height: number }>({ width: 0, height: 0 });
 
   useAppearance(state?.fonts);
+  const { controls } = useSurfaceReveal(winRef, { active: state?.open });
 
   const clearDebounce = useCallback(() => {
     if (debounceRef.current) {
@@ -274,16 +277,18 @@ export function TranslatorWindow() {
   }
 
   const activeEngineId = state.provider === 'llm' ? `llm:${state.connectionId}` : state.provider;
+  const outKey = state.status === 'error' ? 'error' : state.translatedText || state.status === 'streaming' ? 'result' : 'empty';
+  const srcKey = sourceFolded && draft.trim() ? 'folded' : !sourceEditing && draft.trim() ? 'preview' : 'edit';
 
   return (
     <div
-      className="sw-stage sk-draw"
+      className="sw-stage"
       onClick={() => {
         if (langMenuOpen) setLangMenuOpen(false);
         if (engineMenuOpen) setEngineMenuOpen(false);
       }}
     >
-      <section ref={winRef} className="sw-win sw-tr" role="dialog" aria-label="翻译浮窗">
+      <motion.section ref={winRef} className="sw-win sw-tr sk-draw" role="dialog" aria-label="翻译浮窗" animate={controls}>
         <header className="sw-wbar">
           <span className="sw-wbar-title">
             <Languages size={15} className="sw-muted-ic" />
@@ -303,29 +308,38 @@ export function TranslatorWindow() {
               }}
             >
               <span>{currentLangChip}</span>
-              {langMenuOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              <ChevronDown size={13} className="sw-caret-ic" />
             </button>
 
-            {langMenuOpen && (
-              <div className="sw-menu" role="listbox" aria-label="选择目标语言">
-                {LANG_OPTIONS.map(([id, fullLabel]) => {
-                  const selected = id === state.targetLang;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      className={'sw-mi' + (selected ? ' active' : '')}
-                      onClick={() => void onSelectLang(id)}
-                    >
-                      <span>{fullLabel}</span>
-                      {selected && <Check size={14} className="sw-mi-r clay" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <AnimatePresence>
+              {langMenuOpen && (
+                <motion.div
+                  key="lang-menu"
+                  className="sw-menu"
+                  role="listbox"
+                  aria-label="选择目标语言"
+                  style={{ transformOrigin: 'top left' }}
+                  {...dropdown()}
+                >
+                  {LANG_OPTIONS.map(([id, fullLabel]) => {
+                    const selected = id === state.targetLang;
+                    return (
+                      <button
+                        key={id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        className={'sw-mi' + (selected ? ' active' : '')}
+                        onClick={() => void onSelectLang(id)}
+                      >
+                        <span>{fullLabel}</span>
+                        {selected && <Check size={14} className="sw-mi-r clay" />}
+                      </button>
+                    );
+                  })}
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           <span className="grow" />
@@ -344,8 +358,13 @@ export function TranslatorWindow() {
           </button>
         </header>
 
-        {sourceFolded && draft.trim() ? (
-          <div className="sw-src-fold">
+        {srcKey === 'folded' ? (
+          <motion.div
+            key="src-folded"
+            className="sw-src-fold"
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+          >
             <span className="sw-src-tag mono">{detectSourceTag(draft)}</span>
             <span className="sw-src-trunc">{draft.replace(/\s+/g, ' ')}</span>
             <button
@@ -359,14 +378,22 @@ export function TranslatorWindow() {
               <span>原文</span>
               <ChevronDown size={13} />
             </button>
-          </div>
+          </motion.div>
         ) : (
-          <div className={'sw-src-box' + (!sourceEditing && draft.trim() ? ' preview' : '')}>
-            {!sourceEditing && draft.trim() ? (
-              <div
+          <motion.div
+            key="src-open"
+            className={'sw-src-box' + (!sourceEditing && draft.trim() ? ' preview' : '')}
+            initial={{ opacity: 0, y: -4 }}
+            animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+          >
+            {srcKey === 'preview' ? (
+              <motion.div
+                key="src-preview"
                 className="sw-src-preview sw-tr-prose sw-src-prose"
                 role="region"
                 aria-label="翻译原文预览"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1, transition: { duration: 0.14, ease } }}
                 onClick={event => {
                   if ((event.target as HTMLElement | null)?.closest('a')) return;
                   if (window.getSelection()?.toString()) return;
@@ -374,36 +401,42 @@ export function TranslatorWindow() {
                 }}
               >
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatMarkdownBreaks(draft)}</ReactMarkdown>
-              </div>
+              </motion.div>
             ) : (
-              <NoteEditor
-                className="sw-src-editor"
-                ariaLabel="翻译原文"
-                placeholderText="输入或粘贴要翻译的文本（支持 Markdown）…"
-                value={draft}
-                editorRef={editorRef}
-                onChange={next => {
-                  setDraft(next);
-                  setActError(null);
-                  clearDebounce();
-                  debounceRef.current = setTimeout(() => void submitTranslate(next, langRef.current), 420);
-                }}
-                onSubmit={text => {
-                  if (text.trim()) setSourceEditing(false);
-                  void submitTranslate(text, langRef.current);
-                }}
-                onPasteHtml={(plain, html) => window.island.htmlToMarkdown(plain, html)}
-              />
+              <motion.div
+                key="src-edit"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1, transition: { duration: 0.14, ease } }}
+              >
+                <NoteEditor
+                  className="sw-src-editor"
+                  ariaLabel="翻译原文"
+                  placeholderText="输入或粘贴要翻译的文本（支持 Markdown）…"
+                  value={draft}
+                  editorRef={editorRef}
+                  onChange={next => {
+                    setDraft(next);
+                    setActError(null);
+                    clearDebounce();
+                    debounceRef.current = setTimeout(() => void submitTranslate(next, langRef.current), 420);
+                  }}
+                  onSubmit={text => {
+                    if (text.trim()) setSourceEditing(false);
+                    void submitTranslate(text, langRef.current);
+                  }}
+                  onPasteHtml={(plain, html) => window.island.htmlToMarkdown(plain, html)}
+                />
+              </motion.div>
             )}
             <div className="sw-src-tools">
-              <button type="button" className="sw-btn ghost sm" onClick={() => void onPasteSource()}>
+              <button type="button" className="sw-btn ghost sm sk-wiggle" onClick={() => void onPasteSource()}>
                 <ClipboardPaste size={13} />
                 <span>粘贴原文</span>
               </button>
               {draft.trim() && (
                 <button
                   type="button"
-                  className="sw-btn ghost sm"
+                  className="sw-btn ghost sm sk-wiggle"
                   onClick={() => setSourceEditing(v => !v)}
                 >
                   {sourceEditing ? <Eye size={13} /> : <Pencil size={12} />}
@@ -430,7 +463,7 @@ export function TranslatorWindow() {
                 <span className="sw-src-tag mono">{detectSourceTag(draft)} · Markdown</span>
               )}
             </div>
-          </div>
+          </motion.div>
         )}
 
         <div className="sw-engine">
@@ -449,46 +482,55 @@ export function TranslatorWindow() {
             >
               <span className={'dot ' + dotClass} />
               <span className="sw-engine-meta mono">{engineMeta}</span>
-              {engineMenuOpen ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              <ChevronDown size={12} className="sw-caret-ic" />
             </button>
 
-            {engineMenuOpen && (
-              <div className="sw-menu sw-engine-menu" role="listbox" aria-label="选择翻译引擎">
-                {(state.engines ?? []).map(option => {
-                  const selected = option.id === activeEngineId;
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      role="option"
-                      aria-selected={selected}
-                      className={'sw-mi' + (selected ? ' active' : '')}
-                      onClick={() => void onSelectEngine(option)}
-                    >
-                      <span>{option.label}</span>
-                      {option.detail && (
-                        <span className={'sw-mi-sub mono' + (option.needsKey ? ' warn' : '')}>
-                          {option.detail}
-                        </span>
-                      )}
-                      {selected && <Check size={14} className="sw-mi-r clay" />}
-                    </button>
-                  );
-                })}
-                <div className="sw-menu-sep" role="separator" />
-                <button
-                  type="button"
-                  className="sw-mi"
-                  onClick={() => {
-                    setEngineMenuOpen(false);
-                    void window.island.openTranslatorSettings('connections');
-                  }}
+            <AnimatePresence>
+              {engineMenuOpen && (
+                <motion.div
+                  key="engine-menu"
+                  className="sw-menu sw-engine-menu"
+                  role="listbox"
+                  aria-label="选择翻译引擎"
+                  style={{ transformOrigin: 'top left' }}
+                  {...dropdown()}
                 >
-                  <KeyRound size={13} className="sw-muted-ic" />
-                  <span>配置 API 连接与密钥…</span>
-                </button>
-              </div>
-            )}
+                  {(state.engines ?? []).map(option => {
+                    const selected = option.id === activeEngineId;
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        role="option"
+                        aria-selected={selected}
+                        className={'sw-mi' + (selected ? ' active' : '')}
+                        onClick={() => void onSelectEngine(option)}
+                      >
+                        <span>{option.label}</span>
+                        {option.detail && (
+                          <span className={'sw-mi-sub mono' + (option.needsKey ? ' warn' : '')}>
+                            {option.detail}
+                          </span>
+                        )}
+                        {selected && <Check size={14} className="sw-mi-r clay" />}
+                      </button>
+                    );
+                  })}
+                  <div className="sw-menu-sep" role="separator" />
+                  <button
+                    type="button"
+                    className="sw-mi"
+                    onClick={() => {
+                      setEngineMenuOpen(false);
+                      void window.island.openTranslatorSettings('connections');
+                    }}
+                  >
+                    <KeyRound size={13} className="sw-muted-ic" />
+                    <span>配置 API 连接与密钥…</span>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
           <span className="grow" />
           {state.status === 'streaming' ? (
@@ -510,33 +552,51 @@ export function TranslatorWindow() {
         </div>
 
         <div className="sw-tr-out" role="region" aria-label="译文" aria-live="polite">
-          {state.status === 'error' ? (
-            <div className="sw-tr-error" role="alert">
+          {outKey === 'error' ? (
+            <motion.div
+              key="error"
+              className="sw-tr-error"
+              role="alert"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: 0.14, ease } }}
+            >
               {state.error || '翻译失败'}
-            </div>
-          ) : state.translatedText || state.status === 'streaming' ? (
-            <div className="sw-tr-prose">
+            </motion.div>
+          ) : outKey === 'result' ? (
+            <motion.div
+              key="result"
+              className="sw-tr-prose"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: 0.14, ease } }}
+            >
               {state.translatedText ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{formatMarkdownBreaks(state.translatedText)}</ReactMarkdown>
               ) : null}
               {state.status === 'streaming' && <span className="sw-caret" />}
-            </div>
+            </motion.div>
           ) : (
-            <div className="sw-tr-placeholder">输入或粘贴原文后自动展示译文…</div>
+            <motion.div
+              key="empty"
+              className="sw-tr-placeholder"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1, transition: { duration: 0.14, ease } }}
+            >
+              输入或粘贴原文后自动展示译文…
+            </motion.div>
           )}
         </div>
 
         <footer className="sw-wfoot">
           <button
             type="button"
-            className="sw-btn ghost sm"
+            className="sw-btn ghost sm sk-wiggle"
             disabled={!hasResult || !state.canReplace}
             onClick={() => void runAct('replace', '已替换选区')}
           >
             <CornerDownLeft size={14} />
             <span>替换原选区</span>
           </button>
-          <button type="button" className="sw-btn ghost sm" disabled={!hasResult} onClick={() => void runAct('note', '已存入便签')}>
+          <button type="button" className="sw-btn ghost sm sk-wiggle" disabled={!hasResult} onClick={() => void runAct('note', '已存入便签')}>
             <NotebookPen size={14} />
             <span>存入便签</span>
           </button>
@@ -550,21 +610,25 @@ export function TranslatorWindow() {
           >
             <Pin size={14} />
           </button>
-          {actError ? (
-            <span className="sw-foot-msg err" role="alert">
-              {actError}
-            </span>
-          ) : (
-            notice && <span className="sw-foot-msg ok">{notice}</span>
-          )}
+          <AnimatePresence mode="wait" initial={false}>
+            {actError ? (
+              <motion.span key={'err-' + actError} className="sw-foot-msg err" role="alert" {...fade}>
+                {actError}
+              </motion.span>
+            ) : notice ? (
+              <motion.span key={'ok-' + notice} className="sw-foot-msg ok" {...fade}>
+                {notice}
+              </motion.span>
+            ) : null}
+          </AnimatePresence>
           <span className="grow" />
-          <button type="button" className="sw-btn pri sm" disabled={!hasResult} onClick={() => void runAct('copy', '已复制译文')}>
+          <button type="button" className="sw-btn pri sm sk-wiggle" disabled={!hasResult} onClick={() => void runAct('copy', '已复制译文')}>
             <Copy size={14} />
             <span>复制译文</span>
             <kbd className="sw-kbd">⌘C</kbd>
           </button>
         </footer>
-      </section>
+      </motion.section>
     </div>
   );
 }

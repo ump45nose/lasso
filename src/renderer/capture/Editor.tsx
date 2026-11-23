@@ -62,7 +62,7 @@ import {
 } from '../../shared/screenshot-settings';
 import { defaultEditorShortcuts, type EditorShortcutMap } from '../../shared/shortcuts';
 import { pixelRect } from '../../shared/capture';
-import { Segmented, spring } from '../motion';
+import { dropdown, Segmented, spring } from '../motion';
 import { Switch } from '../Switch';
 import { Badge } from '../targets';
 import { AnnotationEditor, intersects, type Style, type Tool } from './annotations';
@@ -1178,24 +1178,26 @@ export function Editor({ state, source: given }: { state: ScreenshotState; sourc
           <span>问 AI</span>
           {ocrAiOpen ? <ChevronUp /> : <ChevronDown />}
         </button>
-        {ocrAiOpen && (
-          <div className="ed-ink-menu ed-ocr-ai-menu" role="menu">
-            {chatPresets.length > 0 ? (
-              chatPresets.map(p => (
-                <button key={p.id} type="button" role="menuitem" className="ed-mi" onMouseDown={e => e.preventDefault()} onClick={() => void sendText(p.id)}>
-                  <Badge target={p.target} dark />
-                  <span>{p.name}</span>
-                  <span className="ed-mi-r">{presetTargetLabels[p.target]}</span>
+        <AnimatePresence>
+          {ocrAiOpen && (
+            <motion.div key="ocr-ai-menu" className="ed-ink-menu ed-ocr-ai-menu" role="menu" {...dropdown()}>
+              {chatPresets.length > 0 ? (
+                chatPresets.map(p => (
+                  <button key={p.id} type="button" role="menuitem" className="ed-mi" onMouseDown={e => e.preventDefault()} onClick={() => void sendText(p.id)}>
+                    <Badge target={p.target} dark />
+                    <span>{p.name}</span>
+                    <span className="ed-mi-r">{presetTargetLabels[p.target]}</span>
+                  </button>
+                ))
+              ) : (
+                <button type="button" role="menuitem" className="ed-mi" onMouseDown={e => e.preventDefault()} onClick={() => void sendText()}>
+                  <Sparkles />
+                  <span>发送到 AI 对话窗</span>
                 </button>
-              ))
-            ) : (
-              <button type="button" role="menuitem" className="ed-mi" onMouseDown={e => e.preventDefault()} onClick={() => void sendText()}>
-                <Sparkles />
-                <span>发送到 AI 对话窗</span>
-              </button>
-            )}
-          </div>
-        )}
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
       <button type="button" className="ed-text" onMouseDown={e => e.preventDefault()} disabled={busy} onClick={() => void noteText()}>
         <NotebookPen />
@@ -1531,44 +1533,46 @@ export function Editor({ state, source: given }: { state: ScreenshotState; sourc
                 {moreOpen ? <ChevronUp /> : <ChevronDown />}
               </button>
 
-              {moreOpen && (
-                <div className="ed-ink-menu" role="menu" aria-label="更多特效">
-                  <div className="ed-mh">更多特效</div>
-                  {moreEffectTools
-                    .filter(([id]) => visibleTool(id))
-                    .map(([id, label, icon]) => (
-                      <button
-                        key={id}
-                        type="button"
-                        role="menuitem"
-                        className={'ed-mi' + (tool === id ? ' active' : '')}
-                        onClick={() => choose(id)}
-                      >
-                        {icon}
-                        <span>{label}</span>
-                        {tool === id && <Check className="ed-mi-r" />}
-                      </button>
-                    ))}
-                  {visibleTool('image-adjust') && (
-                    <>
-                      <div className="ed-msep" />
-                      <button
-                        type="button"
-                        role="menuitem"
-                        className={'ed-mi' + (adjustOpen ? ' active' : '')}
-                        onClick={() => {
-                          setMoreOpen(false);
-                          setStyleOpen(false);
-                          setAdjustOpen(o => !o);
-                        }}
-                      >
-                        <RotateCw />
-                        <span>旋转 / 翻转 / 灰度 / 亮度</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
+              <AnimatePresence>
+                {moreOpen && (
+                  <motion.div key="more-menu" className="ed-ink-menu" role="menu" aria-label="更多特效" {...dropdown(menuUp || up)}>
+                    <div className="ed-mh">更多特效</div>
+                    {moreEffectTools
+                      .filter(([id]) => visibleTool(id))
+                      .map(([id, label, icon]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          role="menuitem"
+                          className={'ed-mi' + (tool === id ? ' active' : '')}
+                          onClick={() => choose(id)}
+                        >
+                          {icon}
+                          <span>{label}</span>
+                          {tool === id && <Check className="ed-mi-r" />}
+                        </button>
+                      ))}
+                    {visibleTool('image-adjust') && (
+                      <>
+                        <div className="ed-msep" />
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className={'ed-mi' + (adjustOpen ? ' active' : '')}
+                          onClick={() => {
+                            setMoreOpen(false);
+                            setStyleOpen(false);
+                            setAdjustOpen(o => !o);
+                          }}
+                        >
+                          <RotateCw />
+                          <span>旋转 / 翻转 / 灰度 / 亮度</span>
+                        </button>
+                      </>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             <span className="ed-sep" />
@@ -1644,90 +1648,92 @@ export function Editor({ state, source: given }: { state: ScreenshotState; sourc
                 {recognizeOpen ? <ChevronUp /> : <ChevronDown />}
               </button>
 
-              {recognizeOpen && (
-                <div className="ed-ink-menu ed-recognize-menu" role="menu">
-                  <div className="ed-mh">智能提取</div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="ed-mi"
-                    onClick={() => {
-                      closeMenus();
-                      setIntelligence('translate');
-                    }}
-                  >
-                    <Languages />
-                    <span>整图译文对照</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="ed-mi"
-                    onClick={() => {
-                      closeMenus();
-                      setIntelligence('table');
-                    }}
-                  >
-                    <Table2 />
-                    <span>提取表格</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="ed-mi"
-                    onClick={() => {
-                      closeMenus();
-                      setIntelligence('formula');
-                    }}
-                  >
-                    <Sigma />
-                    <span>提取公式 (LaTeX)</span>
-                  </button>
-                  {barcodes.length > 0 && (
+              <AnimatePresence>
+                {recognizeOpen && (
+                  <motion.div key="recognize-menu" className="ed-ink-menu ed-recognize-menu" role="menu" {...dropdown(menuUp || up)}>
+                    <div className="ed-mh">智能提取</div>
                     <button
                       type="button"
                       role="menuitem"
                       className="ed-mi"
                       onClick={() => {
                         closeMenus();
-                        setIntelligence('barcode');
+                        setIntelligence('translate');
                       }}
                     >
-                      <Barcode />
-                      <span>条码 ({barcodes.length})</span>
+                      <Languages />
+                      <span>整图译文对照</span>
                     </button>
-                  )}
-                  <div className="ed-msep" />
-                  <div className="ed-mh">OCR 选项 · {ocrStatus}</div>
-                  <div className="ed-menu-pad">
-                    <Segmented
-                      label="文字识别模式"
-                      value={ocrMode}
-                      onChange={mode => changeOCR(mode, enhance)}
-                      options={[
-                        ['text', '正文'],
-                        ['code', '代码 / 网址']
-                      ]}
-                    />
-                    <div className="ed-menu-toggle">
-                      <span>小字增强</span>
-                      <Switch label="小字增强" value={enhance} disabled={!ready || busy} change={() => changeOCR(ocrMode, !enhance)} />
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ed-mi"
+                      onClick={() => {
+                        closeMenus();
+                        setIntelligence('table');
+                      }}
+                    >
+                      <Table2 />
+                      <span>提取表格</span>
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ed-mi"
+                      onClick={() => {
+                        closeMenus();
+                        setIntelligence('formula');
+                      }}
+                    >
+                      <Sigma />
+                      <span>提取公式 (LaTeX)</span>
+                    </button>
+                    {barcodes.length > 0 && (
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="ed-mi"
+                        onClick={() => {
+                          closeMenus();
+                          setIntelligence('barcode');
+                        }}
+                      >
+                        <Barcode />
+                        <span>条码 ({barcodes.length})</span>
+                      </button>
+                    )}
+                    <div className="ed-msep" />
+                    <div className="ed-mh">OCR 选项 · {ocrStatus}</div>
+                    <div className="ed-menu-pad">
+                      <Segmented
+                        label="文字识别模式"
+                        value={ocrMode}
+                        onChange={mode => changeOCR(mode, enhance)}
+                        options={[
+                          ['text', '正文'],
+                          ['code', '代码 / 网址']
+                        ]}
+                      />
+                      <div className="ed-menu-toggle">
+                        <span>小字增强</span>
+                        <Switch label="小字增强" value={enhance} disabled={!ready || busy} change={() => changeOCR(ocrMode, !enhance)} />
+                      </div>
                     </div>
-                  </div>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="ed-mi"
-                    onClick={() => {
-                      closeMenus();
-                      changeOCR(ocrMode, enhance, true);
-                    }}
-                  >
-                    <RotateCw />
-                    <span>重新识别文字</span>
-                  </button>
-                </div>
-              )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ed-mi"
+                      onClick={() => {
+                        closeMenus();
+                        changeOCR(ocrMode, enhance, true);
+                      }}
+                    >
+                      <RotateCw />
+                      <span>重新识别文字</span>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {(inline || region) && <span className="ed-sep" />}
@@ -1795,41 +1801,43 @@ export function Editor({ state, source: given }: { state: ScreenshotState; sourc
                 </button>
               </span>
 
-              {formatOpen && (
-                <div className="ed-ink-menu ed-format-panel" role="menu" aria-label="保存与导出">
-                  <span className="ed-menu-label">保存格式</span>
-                  <Segmented
-                    label="保存格式"
-                    value={format}
-                    onChange={setFormat}
-                    options={screenshotOutputFormats.map(f => [f, f.toUpperCase()] as const)}
-                  />
-                  <span className="ed-menu-label">导出内容</span>
-                  <Segmented
-                    label="导出内容"
-                    value={contentMode ?? 'settings'}
-                    onChange={mode => setContentMode(mode === 'settings' ? undefined : mode)}
-                    options={[
-                      ['settings', '按设置'],
-                      ['result', '编辑结果'],
-                      ['original', '原图'],
-                      ['display', '显示效果']
-                    ]}
-                  />
-                  <div className="ed-msep" />
-                  {(
-                    [
-                      ['quick-save', '快速保存到默认目录'],
-                      ['copy-file', '复制为文件'],
-                      ['copy-path', '保存并复制路径']
-                    ] as const
-                  ).map(([action, label]) => (
-                    <button key={action} type="button" role="menuitem" className="ed-mi" onClick={() => void output(action)}>
-                      <span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
+              <AnimatePresence>
+                {formatOpen && (
+                  <motion.div key="format-menu" className="ed-ink-menu ed-format-panel" role="menu" aria-label="保存与导出" {...dropdown(menuUp || up)}>
+                    <span className="ed-menu-label">保存格式</span>
+                    <Segmented
+                      label="保存格式"
+                      value={format}
+                      onChange={setFormat}
+                      options={screenshotOutputFormats.map(f => [f, f.toUpperCase()] as const)}
+                    />
+                    <span className="ed-menu-label">导出内容</span>
+                    <Segmented
+                      label="导出内容"
+                      value={contentMode ?? 'settings'}
+                      onChange={mode => setContentMode(mode === 'settings' ? undefined : mode)}
+                      options={[
+                        ['settings', '按设置'],
+                        ['result', '编辑结果'],
+                        ['original', '原图'],
+                        ['display', '显示效果']
+                      ]}
+                    />
+                    <div className="ed-msep" />
+                    {(
+                      [
+                        ['quick-save', '快速保存到默认目录'],
+                        ['copy-file', '复制为文件'],
+                        ['copy-path', '保存并复制路径']
+                      ] as const
+                    ).map(([action, label]) => (
+                      <button key={action} type="button" role="menuitem" className="ed-mi" onClick={() => void output(action)}>
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             <button
@@ -1862,41 +1870,43 @@ export function Editor({ state, source: given }: { state: ScreenshotState; sourc
                 {aiOpen ? <ChevronUp /> : <ChevronDown />}
               </button>
 
-              {aiOpen && (
-                <div className="ed-ink-menu ed-ai-menu" role="menu" aria-label="问 AI 预设">
-                  {chatPresets.length > 0 && (
-                    <>
-                      <div className="ed-mh">对话预设 · 带图进 AI 小窗</div>
-                      {chatPresets.map(p => (
-                        <button key={p.id} type="button" role="menuitem" className="ed-mi" onClick={() => void output('image', p.id)}>
-                          <Badge target={p.target} dark />
-                          <span>{p.name}</span>
-                          <span className="ed-mi-r">{presetTargetLabels[p.target]}</span>
-                        </button>
-                      ))}
-                    </>
-                  )}
-                  {imagePresets.length > 0 && (
-                    <>
-                      {chatPresets.length > 0 && <div className="ed-msep" />}
-                      <div className="ed-mh">生图预设 · 作为参考图进生图窗</div>
-                      {imagePresets.map(p => (
-                        <button key={p.id} type="button" role="menuitem" className="ed-mi" onClick={() => void output('image', p.id)}>
-                          <ImageIcon />
-                          <span>{p.name}</span>
-                          <span className="ed-mi-r mono">API</span>
-                        </button>
-                      ))}
-                    </>
-                  )}
-                  {chatPresets.length === 0 && imagePresets.length === 0 && (
-                    <button type="button" role="menuitem" className="ed-mi" onClick={() => void output('image')}>
-                      <Sparkles />
-                      <span>带图打开 AI 对话窗</span>
-                    </button>
-                  )}
-                </div>
-              )}
+              <AnimatePresence>
+                {aiOpen && (
+                  <motion.div key="ai-menu" className="ed-ink-menu ed-ai-menu" role="menu" aria-label="问 AI 预设" {...dropdown(menuUp || up)}>
+                    {chatPresets.length > 0 && (
+                      <>
+                        <div className="ed-mh">对话预设 · 带图进 AI 小窗</div>
+                        {chatPresets.map(p => (
+                          <button key={p.id} type="button" role="menuitem" className="ed-mi" onClick={() => void output('image', p.id)}>
+                            <Badge target={p.target} dark />
+                            <span>{p.name}</span>
+                            <span className="ed-mi-r">{presetTargetLabels[p.target]}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {imagePresets.length > 0 && (
+                      <>
+                        {chatPresets.length > 0 && <div className="ed-msep" />}
+                        <div className="ed-mh">生图预设 · 作为参考图进生图窗</div>
+                        {imagePresets.map(p => (
+                          <button key={p.id} type="button" role="menuitem" className="ed-mi" onClick={() => void output('image', p.id)}>
+                            <ImageIcon />
+                            <span>{p.name}</span>
+                            <span className="ed-mi-r mono">API</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {chatPresets.length === 0 && imagePresets.length === 0 && (
+                      <button type="button" role="menuitem" className="ed-mi" onClick={() => void output('image')}>
+                        <Sparkles />
+                        <span>带图打开 AI 对话窗</span>
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             <span className="ed-sep" />

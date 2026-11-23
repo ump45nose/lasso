@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { motion } from 'motion/react';
+import { useEffect, useRef, useState } from 'react';
+import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import {
   ChevronDown,
   ClipboardPaste,
@@ -25,7 +25,7 @@ import {
 } from '../icons';
 import type { FinderActionReq, FinderEditorApp, FinderPanelState, FinderTerminalApp, IslandAPI } from '../../shared/contracts';
 import { useAppearance } from '../fonts';
-import { spring } from '../motion';
+import { collapse, dropdown, Glide, useSurfaceReveal } from '../motion';
 import './island.css';
 
 declare global {
@@ -66,7 +66,10 @@ export function FinderPanel() {
   const [moveFilter, setMoveFilter] = useState('');
   const [pathStyle, setPathStyle] = useState<'posix' | 'quoted' | 'filename'>('posix');
   const [openMenu, setOpenMenu] = useState<'path' | 'editor' | 'terminal' | null>(null);
+  const [menuHover, setMenuHover] = useState<string | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   useAppearance(state?.fonts);
+  const { controls } = useSurfaceReveal(cardRef);
 
   useEffect(() => {
     document.documentElement.classList.add('isl-html');
@@ -133,12 +136,11 @@ export function FinderPanel() {
       }}
     >
       <motion.div
-        className="fp-card"
+        ref={cardRef}
+        className="fp-card sk-draw"
         role="dialog"
         aria-label="访达动作面板"
-        initial={{ opacity: 0, scale: 0.96, y: 6 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={spring}
+        animate={controls}
       >
         <header className="fp-head">
           <FolderOpen size={15} className="fp-head-ic" />
@@ -151,15 +153,19 @@ export function FinderPanel() {
           </button>
         </header>
 
-        {cutPaths.length > 0 && (
-          <button type="button" className="fp-cutbar" onClick={() => void run({ kind: 'paste-move' })}>
-            <ClipboardPaste size={15} />
-            <span className="fp-cut-strong">待移 {cutPaths.length} 项</span>
-            <span className="fp-cut-sub">· 点击粘贴到此目录</span>
-            <span className="grow" />
-            <kbd className="mono">⌘V</kbd>
-          </button>
-        )}
+        <AnimatePresence initial={false}>
+          {cutPaths.length > 0 && (
+            <motion.div key="cutbar" className="fp-collapse" {...collapse}>
+              <button type="button" className="fp-cutbar sk-wiggle" onClick={() => void run({ kind: 'paste-move' })}>
+                <ClipboardPaste size={15} />
+                <span className="fp-cut-strong">待移 {cutPaths.length} 项</span>
+                <span className="fp-cut-sub">· 点击粘贴到此目录</span>
+                <span className="grow" />
+                <kbd className="mono">⌘V</kbd>
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <section className="fp-sec">
           <div className="fp-new-head">
@@ -182,104 +188,156 @@ export function FinderPanel() {
 
           <div className="fp-grid">
             <div className="fp-act-wrap" onClick={e => e.stopPropagation()}>
-              <button type="button" className="fp-act" onClick={() => void run({ kind: 'copy-paths', style: pathStyle })}>
+              <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'copy-paths', style: pathStyle })}>
                 <Copy size={15} />
                 <span>复制路径</span>
                 <span
-                  className="r"
+                  className={'r' + (openMenu === 'path' ? ' open' : '')}
                   onClick={e => {
                     e.stopPropagation();
+                    setMenuHover(null);
                     setOpenMenu(m => (m === 'path' ? null : 'path'));
                   }}
                 >
                   {pathStyleLabel}
-                  <ChevronDown size={11} />
+                  <ChevronDown size={11} className="fp-caret" />
                 </span>
               </button>
-              {openMenu === 'path' && (
-                <div className="fp-pop-menu" role="menu">
-                  {PATH_STYLES.map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className="fp-pop-mi"
-                      onClick={() => {
-                        setPathStyle(id);
-                        void run({ kind: 'copy-paths', style: id });
-                      }}
+              <AnimatePresence>
+                {openMenu === 'path' && (
+                  <LayoutGroup id="fp-path-menu">
+                    <motion.div
+                      key="path-menu"
+                      className="fp-pop-menu"
+                      role="menu"
+                      style={{ transformOrigin: 'top right' }}
+                      {...dropdown()}
+                      onPointerLeave={() => setMenuHover(null)}
                     >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
+                      {PATH_STYLES.map(([id, label]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={'fp-pop-mi' + (menuHover === id ? ' on' : '')}
+                          onPointerEnter={() => setMenuHover(id)}
+                          onClick={() => {
+                            setPathStyle(id);
+                            void run({ kind: 'copy-paths', style: id });
+                          }}
+                        >
+                          {menuHover === id && <Glide id="fp-pop-row" className="fp-pop-glide" />}
+                          <span className="fp-pop-lbl">{label}</span>
+                        </button>
+                      ))}
+                    </motion.div>
+                  </LayoutGroup>
+                )}
+              </AnimatePresence>
             </div>
 
-            <button type="button" className="fp-act" onClick={() => void run({ kind: 'cut-selection' })}>
+            <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'cut-selection' })}>
               <Scissors size={15} />
               <span>剪切选中</span>
             </button>
 
-            <button type="button" className="fp-act" onClick={() => void run({ kind: 'send-to-ai' })}>
+            <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'send-to-ai' })}>
               <Sparkles size={15} />
               <span>发给 AI</span>
             </button>
 
             <div className="fp-act-wrap" onClick={e => e.stopPropagation()}>
-              <button type="button" className="fp-act" onClick={() => void run({ kind: 'open-terminal', app: state.defaultTerminal })}>
+              <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'open-terminal', app: state.defaultTerminal })}>
                 <SquareTerminal size={15} />
                 <span>在此开终端</span>
                 <span
-                  className="r"
+                  className={'r' + (openMenu === 'terminal' ? ' open' : '')}
                   onClick={e => {
                     e.stopPropagation();
+                    setMenuHover(null);
                     setOpenMenu(m => (m === 'terminal' ? null : 'terminal'));
                   }}
                 >
                   {state.defaultTerminal}
-                  <ChevronDown size={11} />
+                  <ChevronDown size={11} className="fp-caret" />
                 </span>
               </button>
-              {openMenu === 'terminal' && (
-                <div className="fp-pop-menu" role="menu">
-                  {TERMINALS.map(app => (
-                    <button key={app} type="button" className="fp-pop-mi" onClick={() => void run({ kind: 'open-terminal', app })}>
-                      {app}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <AnimatePresence>
+                {openMenu === 'terminal' && (
+                  <LayoutGroup id="fp-term-menu">
+                    <motion.div
+                      key="terminal-menu"
+                      className="fp-pop-menu"
+                      role="menu"
+                      style={{ transformOrigin: 'top right' }}
+                      {...dropdown()}
+                      onPointerLeave={() => setMenuHover(null)}
+                    >
+                      {TERMINALS.map(app => (
+                        <button
+                          key={app}
+                          type="button"
+                          className={'fp-pop-mi' + (menuHover === app ? ' on' : '')}
+                          onPointerEnter={() => setMenuHover(app)}
+                          onClick={() => void run({ kind: 'open-terminal', app })}
+                        >
+                          {menuHover === app && <Glide id="fp-pop-row" className="fp-pop-glide" />}
+                          <span className="fp-pop-lbl">{app}</span>
+                        </button>
+                      ))}
+                    </motion.div>
+                  </LayoutGroup>
+                )}
+              </AnimatePresence>
             </div>
 
             <div className="fp-act-wrap" onClick={e => e.stopPropagation()}>
-              <button type="button" className="fp-act" onClick={() => void run({ kind: 'open-editor', app: state.defaultEditor })}>
+              <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'open-editor', app: state.defaultEditor })}>
                 <CodeXml size={15} />
                 <span>用编辑器打开</span>
                 <span
-                  className="r"
+                  className={'r' + (openMenu === 'editor' ? ' open' : '')}
                   onClick={e => {
                     e.stopPropagation();
+                    setMenuHover(null);
                     setOpenMenu(m => (m === 'editor' ? null : 'editor'));
                   }}
                 >
                   {state.defaultEditor === 'VSCode' ? 'VS Code' : state.defaultEditor}
-                  <ChevronDown size={11} />
+                  <ChevronDown size={11} className="fp-caret" />
                 </span>
               </button>
-              {openMenu === 'editor' && (
-                <div className="fp-pop-menu" role="menu">
-                  {EDITORS.map(([id, label]) => (
-                    <button key={id} type="button" className="fp-pop-mi" onClick={() => void run({ kind: 'open-editor', app: id })}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <AnimatePresence>
+                {openMenu === 'editor' && (
+                  <LayoutGroup id="fp-editor-menu">
+                    <motion.div
+                      key="editor-menu"
+                      className="fp-pop-menu"
+                      role="menu"
+                      style={{ transformOrigin: 'top right' }}
+                      {...dropdown()}
+                      onPointerLeave={() => setMenuHover(null)}
+                    >
+                      {EDITORS.map(([id, label]) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={'fp-pop-mi' + (menuHover === id ? ' on' : '')}
+                          onPointerEnter={() => setMenuHover(id)}
+                          onClick={() => void run({ kind: 'open-editor', app: id })}
+                        >
+                          {menuHover === id && <Glide id="fp-pop-row" className="fp-pop-glide" />}
+                          <span className="fp-pop-lbl">{label}</span>
+                        </button>
+                      ))}
+                    </motion.div>
+                  </LayoutGroup>
+                )}
+              </AnimatePresence>
             </div>
 
             <button
               type="button"
-              className={'fp-act ' + (confirmDelete ? 'confirm' : 'warn')}
+              className={'fp-act sk-wiggle ' + (confirmDelete ? 'confirm' : 'warn')}
               disabled={selCount === 0}
               onClick={() => (confirmDelete ? void run({ kind: 'delete-permanent' }) : setConfirmDelete(true))}
             >
@@ -289,29 +347,33 @@ export function FinderPanel() {
           </div>
         </section>
 
-        {state.hasImageSelection && (
-          <section className="fp-sec" aria-label="选中图片动作">
-            <div className="fp-lbl">选中图片 · {state.imageCount || 1} 张</div>
-            <div className="fp-grid">
-              <button type="button" className="fp-act" onClick={() => void run({ kind: 'convert-webp' })}>
-                <FileImage size={15} />
-                <span>原地转 .webp</span>
-              </button>
-              <button type="button" className="fp-act" onClick={() => void run({ kind: 'ocr-copy' })}>
-                <ScanText size={15} />
-                <span>识别文字并复制</span>
-              </button>
-              <button type="button" className="fp-act" onClick={() => void run({ kind: 'ocr-pin' })}>
-                <TextSelect size={15} />
-                <span>识别文字钉为贴图</span>
-              </button>
-              <button type="button" className="fp-act" onClick={() => void run({ kind: 'pin-image' })}>
-                <Pin size={15} />
-                <span>原图钉为贴图</span>
-              </button>
-            </div>
-          </section>
-        )}
+        <AnimatePresence initial={false}>
+          {state.hasImageSelection && (
+            <motion.section key="img-sec" className="fp-collapse" aria-label="选中图片动作" {...collapse}>
+              <div className="fp-sec">
+                <div className="fp-lbl">选中图片 · {state.imageCount || 1} 张</div>
+                <div className="fp-grid">
+                  <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'convert-webp' })}>
+                    <FileImage size={15} />
+                    <span>原地转 .webp</span>
+                  </button>
+                  <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'ocr-copy' })}>
+                    <ScanText size={15} />
+                    <span>识别文字并复制</span>
+                  </button>
+                  <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'ocr-pin' })}>
+                    <TextSelect size={15} />
+                    <span>识别文字钉为贴图</span>
+                  </button>
+                  <button type="button" className="fp-act sk-wiggle" onClick={() => void run({ kind: 'pin-image' })}>
+                    <Pin size={15} />
+                    <span>原图钉为贴图</span>
+                  </button>
+                </div>
+              </div>
+            </motion.section>
+          )}
+        </AnimatePresence>
 
         <section className="fp-sec fp-dest-sec" aria-label="目标目录">
           <label className="fp-input">

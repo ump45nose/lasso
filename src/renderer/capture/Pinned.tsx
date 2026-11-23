@@ -40,7 +40,7 @@ import type { PinAPI, PinAction, PinState, PinWorkspaceAPI } from '../../shared/
 import { presetTargetLabels } from '../../shared/contracts';
 import type { PinGroup, PinWorkspaceState } from '../../shared/history-sync';
 import { formatMarkdownBreaks } from '../../shared/translation-markdown';
-import { spring } from '../motion';
+import { collapse, fade, spring } from '../motion';
 import { Badge } from '../targets';
 import { PinEdit } from './PinEdit';
 import { selectedOCRText } from './selected-text';
@@ -137,28 +137,30 @@ function GroupPicker({
         <span>{groups.find(group => group.id === value)?.name || '选择分组'}</span>
         <ChevronDown />
       </button>
-      {open && (
-        <div className="pin-group-menu" role="listbox" aria-label={label}>
-          {groups.map(group => (
-            <button
-              type="button"
-              role="option"
-              aria-selected={value === group.id}
-              key={group.id}
-              onClick={() => {
-                onChange(group.id);
-                toggle(false);
-              }}
-            >
-              <span>
-                {group.name}
-                {!group.visible ? ' · 已隐藏' : ''}
-              </span>
-              {value === group.id && <Check />}
-            </button>
-          ))}
-        </div>
-      )}
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div key="pin-group-menu" className="pin-group-menu" role="listbox" aria-label={label} {...collapse}>
+            {groups.map(group => (
+              <button
+                type="button"
+                role="option"
+                aria-selected={value === group.id}
+                key={group.id}
+                onClick={() => {
+                  onChange(group.id);
+                  toggle(false);
+                }}
+              >
+                <span>
+                  {group.name}
+                  {!group.visible ? ' · 已隐藏' : ''}
+                </span>
+                {value === group.id && <Check />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -844,12 +846,14 @@ export function Pinned() {
             </motion.div>
           )}
         </AnimatePresence>
-        {dropping && (
-          <div className="pin-drop">
-            <ArrowUpRight />
-            <span>松开以新建贴图</span>
-          </div>
-        )}
+        <AnimatePresence>
+          {dropping && (
+            <motion.div key="pin-drop" className="pin-drop" {...fade}>
+              <ArrowUpRight />
+              <span>松开以新建贴图</span>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </section>
     </TipContext.Provider>
   );

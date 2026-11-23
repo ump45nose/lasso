@@ -1,12 +1,17 @@
-import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
-import { AnimatePresence, LayoutGroup, motion, type Transition } from 'motion/react';
+import { AnimatePresence, LayoutGroup, motion, useAnimationControls, type Transition } from 'motion/react';
 import { Check, ChevronDown } from './icons';
 
 /** Shared motion presets. CSS still owns hover, press and color; these cover presence, layout and sliding highlights. */
 export const ease = [0.22, 0.68, 0, 1] as const;
 export const spring: Transition = { type: 'spring', stiffness: 520, damping: 38, mass: 0.8 };
 const soft: Transition = { duration: 0.18, ease };
+export const fade = {
+  initial: { opacity: 0 },
+  animate: { opacity: 1, transition: { duration: 0.16, ease } },
+  exit: { opacity: 0, transition: { duration: 0.1, ease: 'easeIn' } }
+} as const;
 export const rise = {
   initial: { opacity: 0, y: 6 },
   animate: { opacity: 1, y: 0, transition: { duration: 0.28, ease } },
@@ -22,6 +27,71 @@ export const collapse = {
   animate: { height: 'auto', opacity: 1, transition: soft },
   exit: { height: 0, opacity: 0, transition: { duration: 0.14, ease: 'easeIn' } }
 } as const;
+
+export function dropdown(up = false) {
+  return {
+    initial: { opacity: 0, scale: 0.96, y: up ? 5 : -5 },
+    animate: { opacity: 1, scale: 1, y: 0, transition: spring },
+    exit: { opacity: 0, scale: 0.97, y: up ? 3 : -3, transition: { duration: 0.1, ease: 'easeIn' as const } }
+  };
+}
+
+/** Restart sketch icon draw-in animations inside a reused window when it becomes visible again. */
+export function replaySketchDraw(el: HTMLElement | null) {
+  if (!el) return;
+  el.getAnimations({ subtree: true }).forEach(animation => {
+    if (animation instanceof CSSAnimation && (animation.animationName === 'sk-draw' || animation.animationName === 'sk-pop')) {
+      animation.cancel();
+      animation.play();
+    }
+  });
+}
+
+/**
+ * Replays the spring entrance and `.sk-draw` icon tracing every time a persistent hidden/shown
+ * panel window is revealed again (`visibilitychange` hidden → visible, or `active` false → true).
+ */
+export function useSurfaceReveal(
+  ref: RefObject<HTMLElement | null>,
+  { active, y = 6, scale = 0.97 }: { active?: boolean; y?: number; scale?: number } = {}
+) {
+  const controls = useAnimationControls();
+  const [seq, setSeq] = useState(0);
+  const wasVisible = useRef(document.visibilityState === 'visible');
+  const wasActive = useRef(active);
+
+  const play = useCallback(() => {
+    setSeq(n => n + 1);
+    void controls.start({ opacity: [0, 1], y: [y, 0], scale: [scale, 1], transition: spring });
+  }, [controls, scale, y]);
+
+  useEffect(() => {
+    if (active === undefined || active) play();
+  }, []);
+
+  useEffect(() => {
+    if (active !== undefined) {
+      if (active && !wasActive.current) play();
+      wasActive.current = active;
+    }
+  }, [active, play]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      const visible = document.visibilityState === 'visible';
+      if (visible && !wasVisible.current && (active === undefined || active)) play();
+      wasVisible.current = visible;
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [active, play]);
+
+  useLayoutEffect(() => {
+    if (seq > 0) replaySketchDraw(ref.current);
+  }, [ref, seq]);
+
+  return { controls, replay: play };
+}
 
 const HiddenPaneContext = createContext(false);
 

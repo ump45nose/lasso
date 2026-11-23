@@ -283,8 +283,11 @@ svg.lucide { stroke-width: 1.6; flex-shrink: 0; }
 .l-mark { padding: 1px 7px; border-radius: 5px; background: var(--marker); color: var(--ink); }
 .l-pal-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
 .l-pal-group { padding: 8px 8px 4px; font-size: 11.5px; color: var(--ink-5); }
-.l-pal-row { width: 100%; height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; text-align: left; font-size: 13.5px; color: var(--ink-2); transition: background var(--t-fast), color var(--t-fast); }
-.l-pal-row[aria-selected="true"] { background: var(--clay-wash); color: var(--ink); }
+.l-pal-row { position: relative; width: 100%; height: 34px; display: flex; align-items: center; gap: 9px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; text-align: left; font-size: 13.5px; color: var(--ink-2); transition: color var(--t-fast), transform 100ms; }
+.l-pal-row > :not(.l-pal-glide) { position: relative; z-index: 1; }
+.l-pal-glide { position: absolute; inset: 0; border-radius: 8px; background: var(--clay-wash); pointer-events: none; z-index: 0; }
+.l-pal-row[aria-selected="true"] { color: var(--ink); }
+.l-pal-row:active:not(:disabled) { transform: scale(.99); }
 .l-pal-row:disabled { opacity: 1; color: var(--ink-5); }
 .l-pal-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .l-pal-icon { display: flex; color: var(--ink-4); }

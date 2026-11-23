@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { AnimatePresence, motion } from 'motion/react';
 import { ArrowDownToLine, Check, ChevronDown, ChevronUp, Lock, LockOpen, Plus, RotateCcw, Video } from '../icons';
 import type { CaptureRect, EditableRegion } from '../../shared/capture';
 import type { RegionPreset } from '../../shared/capture-regions';
 import { drawRegion, moveRegion, resizeRegion, validPixelRegion } from '../../shared/region-geometry';
+import { dropdown } from '../motion';
 
 const RATIO_PRESETS: readonly [number | null, string][] = [
   [null, '自由'],
@@ -367,96 +369,98 @@ export function RegionControls({
                 {open ? <ChevronUp /> : <ChevronDown />}
               </button>
 
-              {open && (
-                <div className="ed-ink-menu region-preset-menu" role="menu">
-                  <div className="ed-mh">比例</div>
-                  {RATIO_PRESETS.map(([val, label]) => {
-                    const selected = val === null ? ratio === null : ratio !== null && Math.abs(ratio - val) < 0.01;
-                    return (
-                      <button
-                        key={label}
-                        type="button"
-                        role="menuitem"
-                        className="ed-mi"
-                        onClick={() => {
-                          switchRatio(val);
-                          close();
-                        }}
-                      >
-                        <span>{label}</span>
-                        {selected && <Check className="ed-mi-r" />}
-                      </button>
-                    );
-                  })}
-
-                  {localPresets.length > 0 && (
-                    <>
-                      <div className="ed-mh">固定尺寸</div>
-                      {localPresets.map(p => (
+              <AnimatePresence>
+                {open && (
+                  <motion.div key="region-preset-menu" className="ed-ink-menu region-preset-menu" role="menu" {...dropdown()}>
+                    <div className="ed-mh">比例</div>
+                    {RATIO_PRESETS.map(([val, label]) => {
+                      const selected = val === null ? ratio === null : ratio !== null && Math.abs(ratio - val) < 0.01;
+                      return (
                         <button
-                          key={p.id}
+                          key={label}
                           type="button"
                           role="menuitem"
                           className="ed-mi"
                           onClick={() => {
-                            if (apply(p.width, p.height)) {
-                              setRatio(p.ratio);
-                              close();
-                            }
+                            switchRatio(val);
+                            close();
                           }}
                         >
-                          <span className="mono">
-                            {p.width} × {p.height}
-                          </span>
-                          <span className="ed-mi-r">{p.name}</span>
+                          <span>{label}</span>
+                          {selected && <Check className="ed-mi-r" />}
                         </button>
-                      ))}
-                    </>
-                  )}
+                      );
+                    })}
 
-                  <div className="ed-msep" />
-                  {savingPreset ? (
-                    <div className="region-save-inline">
-                      <input
-                        className="ed-word"
-                        aria-label="区域预设名称"
-                        placeholder={`${crop.width}×${crop.height} 名称…`}
-                        value={name}
-                        autoFocus
-                        onChange={e => setName(e.target.value)}
-                        onKeyDown={e => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            void saveCurrentPreset();
-                          }
-                        }}
-                      />
-                      <button type="button" className="ed-mi-save" onClick={() => void saveCurrentPreset()}>
-                        保存
+                    {localPresets.length > 0 && (
+                      <>
+                        <div className="ed-mh">固定尺寸</div>
+                        {localPresets.map(p => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            role="menuitem"
+                            className="ed-mi"
+                            onClick={() => {
+                              if (apply(p.width, p.height)) {
+                                setRatio(p.ratio);
+                                close();
+                              }
+                            }}
+                          >
+                            <span className="mono">
+                              {p.width} × {p.height}
+                            </span>
+                            <span className="ed-mi-r">{p.name}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+
+                    <div className="ed-msep" />
+                    {savingPreset ? (
+                      <div className="region-save-inline">
+                        <input
+                          className="ed-word"
+                          aria-label="区域预设名称"
+                          placeholder={`${crop.width}×${crop.height} 名称…`}
+                          value={name}
+                          autoFocus
+                          onChange={e => setName(e.target.value)}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              void saveCurrentPreset();
+                            }
+                          }}
+                        />
+                        <button type="button" className="ed-mi-save" onClick={() => void saveCurrentPreset()}>
+                          保存
+                        </button>
+                      </div>
+                    ) : (
+                      <button type="button" role="menuitem" className="ed-mi" onClick={() => setSavingPreset(true)}>
+                        <Plus />
+                        <span>保存当前尺寸…</span>
                       </button>
-                    </div>
-                  ) : (
-                    <button type="button" role="menuitem" className="ed-mi" onClick={() => setSavingPreset(true)}>
-                      <Plus />
-                      <span>保存当前尺寸…</span>
-                    </button>
-                  )}
+                    )}
 
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="ed-mi"
-                    onClick={() => {
-                      setRatio(context.ratio);
-                      commit(context.initialCrop);
-                      close();
-                    }}
-                  >
-                    <RotateCcw />
-                    <span>恢复初始选区</span>
-                  </button>
-                </div>
-              )}
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="ed-mi"
+                      onClick={() => {
+                        setRatio(context.ratio);
+                        commit(context.initialCrop);
+                        close();
+                      }}
+                    >
+                      <RotateCcw />
+                      <span>恢复初始选区</span>
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
 
             {(onStartScroll || onStartRecording) && <span className="ed-sep" />}

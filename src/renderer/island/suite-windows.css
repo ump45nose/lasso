@@ -13,16 +13,18 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-wbar-title { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; font-weight: 500; color: var(--ink); white-space: nowrap; }
 .sw-muted-ic { color: var(--ink-4); flex-shrink: 0; }
 
-.sw-ib { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background var(--t-fast), color var(--t-fast); }
+.sw-ib { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background var(--t-fast), color var(--t-fast), transform 100ms; }
 .sw-ib:hover:not(:disabled) { background: var(--clay-wash); color: var(--clay-ink); }
+.sw-ib:active:not(:disabled) { transform: scale(.94); }
 .sw-ib.on { background: var(--clay-wash-2); color: var(--clay-ink); }
 .sw-ib.sm { width: 24px; height: 24px; border-radius: 6px; }
 .sw-ib.danger { color: var(--danger); }
 .sw-ib.danger:hover:not(:disabled) { background: var(--danger-wash); color: var(--danger); }
 .sw-ib:disabled { opacity: .4; }
 
-.sw-btn { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast); }
+.sw-btn { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; transition: background var(--t-fast), border-color var(--t-fast), color var(--t-fast), transform 100ms; }
 .sw-btn:hover:not(:disabled) { background: var(--clay-wash); border-color: var(--clay-line); color: var(--clay-ink); }
+.sw-btn:active:not(:disabled) { transform: scale(.96); }
 .sw-btn.ghost { border-color: transparent; background: transparent; }
 .sw-btn.ghost:hover:not(:disabled) { border-color: transparent; }
 .sw-btn.pri { border-color: transparent; background: var(--clay); color: #FFFFFF; }
@@ -43,17 +45,19 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 /* Status dots inside suite windows */
 .sw-win .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--ink-5); }
 .sw-win .dot.olive { background: var(--olive); }
-.sw-win .dot.running { background: var(--clay); box-shadow: 0 0 0 3px var(--clay-halo); }
+.sw-win .dot.running { background: var(--clay); box-shadow: 0 0 0 3px var(--clay-halo); animation: l-pulse 1.4s ease-in-out infinite alternate; }
 .sw-win .dot.error { background: var(--danger); }
 .sw-win .dot.idle { background: var(--ink-6); }
 
 /* B3 Unified Translator */
 .sw-lang-wrap { position: relative; margin-left: 6px; }
-.sw-lang { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 7px; font-size: 12.5px; color: var(--ink-2); background: var(--sand); transition: background var(--t-fast), color var(--t-fast); }
-.sw-lang svg { color: var(--ink-4); }
+.sw-lang { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 7px; font-size: 12.5px; color: var(--ink-2); background: var(--sand); transition: background var(--t-fast), color var(--t-fast), transform 100ms; }
+.sw-lang svg { color: var(--ink-4); transition: color var(--t-fast), transform var(--t-fast) var(--ease-out); }
 .sw-lang:hover { background: var(--clay-wash); color: var(--clay-ink); }
+.sw-lang:active { transform: scale(.96); }
 .sw-lang.open { background: var(--clay-wash-2); color: var(--clay-ink); }
 .sw-lang.open svg { color: var(--clay-ink); }
+.sw-lang.open .sw-caret-ic, .sw-engine-btn.open .sw-caret-ic { transform: rotate(180deg); }
 
 .sw-menu { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; min-width: 200px; padding: 4px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow-float); display: flex; flex-direction: column; gap: 1px; }
 .sw-mi { width: 100%; height: 30px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink-2); font-size: 13px; text-align: left; display: flex; align-items: center; gap: 8px; transition: background var(--t-fast), color var(--t-fast); }
@@ -103,9 +107,10 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 
 .sw-engine { position: relative; display: flex; align-items: center; gap: 6px; padding: 10px 14px 0; font-size: 11.5px; color: var(--ink-4); flex-shrink: 0; }
 .sw-engine-wrap { position: relative; flex: 0 1 auto; min-width: 0; max-width: calc(100% - 32px); display: flex; align-items: center; }
-.sw-engine-btn { height: 24px; max-width: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 0 7px 0 6px; margin-left: -6px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-3); font-size: 11.5px; transition: background var(--t-fast), color var(--t-fast); }
-.sw-engine-btn svg { flex-shrink: 0; }
+.sw-engine-btn { height: 24px; max-width: 100%; display: inline-flex; align-items: center; gap: 6px; padding: 0 7px 0 6px; margin-left: -6px; border: 0; border-radius: 6px; background: transparent; color: var(--ink-3); font-size: 11.5px; transition: background var(--t-fast), color var(--t-fast), transform 100ms; }
+.sw-engine-btn svg { flex-shrink: 0; transition: transform var(--t-fast) var(--ease-out); }
 .sw-engine-btn:hover { background: var(--clay-wash); color: var(--clay-ink); }
+.sw-engine-btn:active { transform: scale(.97); }
 .sw-engine-btn.open { background: var(--clay-wash-2); color: var(--clay-ink); }
 .sw-engine-meta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sw-engine-menu { min-width: 268px; max-height: 168px; overflow-y: auto; }
@@ -134,7 +139,7 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-tr-prose a { color: var(--clay-ink); text-decoration: underline; text-underline-offset: 2px; }
 .sw-tr-placeholder { font-size: 13.5px; color: var(--ink-5); }
 .sw-tr-error { padding: 8px 10px; border-radius: 8px; background: var(--danger-wash); color: var(--danger); font-size: 12.5px; }
-.sw-caret { display: inline-block; width: 1.5px; height: 1.1em; background: var(--clay); vertical-align: -0.15em; margin-left: 2px; }
+.sw-caret { display: inline-block; width: 1.5px; height: 1.1em; background: var(--clay); vertical-align: -0.15em; margin-left: 2px; animation: l-blink 1s steps(2) infinite; }
 
 @media (max-width: 420px) {
   .sw-tr .sw-wfoot { gap: 4px; padding-inline: 8px; }
@@ -158,15 +163,18 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 
 .sw-clip-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px minmax(0, 1fr); }
 .sw-clip-list { border-right: 1px solid var(--line); padding: 6px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
-.sw-crow { height: 42px; flex-shrink: 0; display: flex; align-items: center; gap: 9px; padding: 0 8px; border-radius: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; transition: background var(--t-fast), color var(--t-fast); }
+.sw-crow { position: relative; height: 42px; flex-shrink: 0; display: flex; align-items: center; gap: 9px; padding: 0 8px; border-radius: 8px; font-size: 13px; color: var(--ink-2); cursor: pointer; transition: background var(--t-fast), color var(--t-fast); }
+.sw-crow > :not(.sw-crow-glide) { position: relative; z-index: 1; }
+.sw-crow-glide { position: absolute; inset: 0; border-radius: 8px; background: var(--clay-wash-2); pointer-events: none; z-index: 0; }
 .sw-crow:hover { background: var(--clay-wash); }
-.sw-crow.sel { background: var(--clay-wash-2); color: var(--ink); }
+.sw-crow.sel, .sw-crow.sel:hover { background: transparent; color: var(--ink); }
 .sw-crow-app { width: 22px; height: 22px; border-radius: 6px; background: var(--sand); color: var(--ink-3); display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
 .sw-crow-app img { width: 22px; height: 22px; border-radius: 5px; object-fit: cover; display: block; }
 .sw-crow-t { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .sw-crow-t.mono { font-size: 12px; }
 .sw-crow-dim { font-size: 11.5px; color: var(--ink-4); }
-.sw-crow-star { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: transparent; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.sw-crow-star { width: 20px; height: 20px; padding: 0; border: 0; border-radius: 5px; background: transparent; color: transparent; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; transition: color var(--t-fast), transform 140ms var(--ease-out); }
+.sw-crow-star:active { transform: scale(.86); }
 .sw-crow:hover .sw-crow-star { color: var(--ink-5); }
 .sw-crow-star.on, .sw-crow:hover .sw-crow-star.on { color: var(--clay); }
 .sw-crow-star.on svg { fill: var(--clay); stroke: var(--clay); }
@@ -174,6 +182,7 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-crow.sel .sw-crow-n { color: var(--clay-ink); }
 
 .sw-clip-prev { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--surface); }
+.sw-clip-prev-inner { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .sw-clip-code { flex: 1; min-height: 0; overflow: auto; padding: 14px 16px; font-size: 12px; line-height: 1.7; color: var(--ink-2); white-space: pre; user-select: text; }
 .sw-clip-line { min-height: 1.7em; }
 .sw-ln { display: inline-block; width: 26px; color: var(--ink-6); user-select: none; }
@@ -184,4 +193,5 @@ html.sw-html, body.sw-body { background: transparent; overflow: hidden; user-sel
 .sw-clip-empty { margin: auto; padding: 24px 16px; text-align: center; font-size: 12.5px; color: var(--ink-4); }
 
 .sw-clip-foot { gap: 12px; }
+.sw-foot-hints { display: inline-flex; align-items: center; gap: 12px; min-width: 0; }
 .sw-foot-tools { display: flex; align-items: center; gap: 2px; }

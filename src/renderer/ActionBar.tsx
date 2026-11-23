@@ -23,7 +23,7 @@ import {
 } from '../shared/contracts';
 import { BrandMark } from './BrandMark';
 import { useAppearance } from './fonts';
-import { Glide, spring } from './motion';
+import { Glide, replaySketchDraw, spring } from './motion';
 import { Badge } from './targets';
 
 declare global {
@@ -183,12 +183,7 @@ export function ActionBar() {
 
   // The window is reused between selections; restart the icon draw-in each time it is shown.
   useLayoutEffect(() => {
-    capsule.current?.getAnimations({ subtree: true }).forEach(animation => {
-      if (animation instanceof CSSAnimation) {
-        animation.cancel();
-        animation.play();
-      }
-    });
+    replaySketchDraw(capsule.current);
   }, [entry]);
 
   useEffect(() => {
