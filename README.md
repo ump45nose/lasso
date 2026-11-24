@@ -4,8 +4,9 @@ Mac 上不打断当前工作的 AI 小窗。
 
 在任意应用里选中文字，点击附近的动作条即可翻译、总结、解释、存入便签，或把内容送进 ChatGPT、Gemini 和兼容 API；没有选区时也能随时唤起小窗提问。当前版本 **0.8.6**，同时内置原生截图与原地标注、AI 生图、屏幕贴图、录屏，以及刘海岛、浮动便签、剪贴板历史、访达动作面板和窗口分屏。
 
-![Lasso 演示](docs/assets/readme/demo.gif)
-<!-- 演示动图由另一个任务生成，后续补上 -->
+[![Lasso 演示](docs/assets/readme/demo.gif)](https://github.com/ump45nose/lasso/releases/download/v0.8.6/Lasso-0.8.6-demo.mp4)
+
+动图为 22 秒精华片段，点击观看 [完整演示视频（84 秒，MP4）](https://github.com/ump45nose/lasso/releases/download/v0.8.6/Lasso-0.8.6-demo.mp4)。
 
 ## 核心功能
 
