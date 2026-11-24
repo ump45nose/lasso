@@ -420,12 +420,27 @@ export interface NookReviewBadge {
   label: string;
   hot?: boolean;
 }
+export interface IslandPinItem {
+  id: string;
+  title: string;
+  passthrough: boolean;
+  hidden: boolean;
+}
+export interface IslandMenuState {
+  selectionEnabled: boolean;
+  capturePending: boolean;
+  captureSleeping: boolean;
+  recordingStatus: 'idle' | 'countdown' | 'recording' | 'paused' | 'review' | 'recoverable';
+  recordingHasFrames: boolean;
+  pins: IslandPinItem[];
+}
 export interface IslandState {
   mode: IslandMode;
   fullscreenClock?: boolean;
   notch?: { hasNotch: boolean; width: number; height: number; menuBarHeight: number; leftSafeWidth?: number; rightSafeWidth?: number; anchorX?: number };
   nookPrefs: NookReminderPrefs;
   copyTranslateEnabled: boolean;
+  menu?: IslandMenuState;
   pomodoroPrefs: PomodoroSettings;
   pomodoro: {
     active: boolean;
@@ -474,7 +489,24 @@ export interface NookReminderPrefs {
   aiResets: boolean;
   localAndCustom: boolean;
 }
-export type IslandQuickAction = 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel' | 'open-translator' | 'open-clipboard';
+export type IslandQuickAction = 'open-launcher' | 'screenshot-area' | 'open-settings' | 'toggle-notes' | 'open-finder-panel' | 'open-translator' | 'open-clipboard';
+
+export type IslandMenuAction =
+  | { kind: 'open-launcher' }
+  | { kind: 'open-media' }
+  | { kind: 'open-settings' }
+  | { kind: 'quit' }
+  | { kind: 'screenshot'; mode: 'area' | 'rect' | 'window' | 'screen' | 'front' | 'repeat'; delay?: 0 | 3 | 5 | 10; scroll?: boolean }
+  | { kind: 'cancel-capture-delay' }
+  | { kind: 'resume-capture' }
+  | { kind: 'recording-panel' }
+  | { kind: 'recording'; action: 'start-rect' | 'start-window' | 'start-screen' | 'pause' | 'resume' | 'stop' | 'cancel' | 'recover' | 'discard-recovery' }
+  | { kind: 'pin-clipboard' }
+  | { kind: 'pin-restore-all' }
+  | { kind: 'pin-hide-all' }
+  | { kind: 'pin-restore'; id: string }
+  | { kind: 'toggle-selection' }
+  | { kind: 'toggle-copy-translate' };
 
 export interface TranslatorEngineOption {
   id: string;
@@ -598,6 +630,7 @@ export interface IslandAPI {
   dismissAlert(alertId?: string): Promise<void>;
   restartService(label: string): Promise<void>;
   quickAction(action: IslandQuickAction): Promise<void>;
+  menuAction(action: IslandMenuAction): Promise<void>;
   setNookReminderPrefs(patch: Partial<NookReminderPrefs>): Promise<void>;
   setCopyTranslate(enabled: boolean): Promise<void>;
   getTranslatorState(): Promise<TranslatorWindowState>;

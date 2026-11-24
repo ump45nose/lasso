@@ -64,6 +64,8 @@ import type {
   ActionBarConfig,
   AppPrompt,
   GeneralSettings,
+  IslandMenuAction,
+  IslandMenuState,
   LaunchOptions,
   PaletteEvent,
   PaletteScope,
@@ -103,7 +105,7 @@ let win: BrowserWindow;
 let settingsWindow: SettingsWindow;
 let motion: WindowMotion;
 let tasks: TaskManager;
-let tray: Tray;
+let tray: Tray | null = null;
 let settingsPath: string;
 let presetsPath: string;
 let fontsDir: string;
@@ -176,6 +178,7 @@ function publish() {
   settingsWindow?.publish();
   media?.refreshPresets();
   actionBar?.update(state.presets, false, state.settings);
+  syncTray();
   island?.updateSettings(state.settings);
 }
 
@@ -363,7 +366,107 @@ function selectTask(id: string) {
   publish();
 }
 
+function buildIslandMenuState(): IslandMenuState {
+  const recSession = recording?.state();
+  const status = recSession?.status ?? 'idle';
+  const recordingStatus: IslandMenuState['recordingStatus'] =
+    status === 'countdown' || status === 'recording' || status === 'paused' || status === 'review' || status === 'recoverable'
+      ? status
+      : 'idle';
+  return {
+    selectionEnabled: state.settings.selectionEnabled,
+    capturePending: Boolean(screenshots && screenshots.efficiency.state.phase !== 'idle'),
+    captureSleeping: Boolean(screenshots?.sleeping),
+    recordingStatus,
+    recordingHasFrames: Boolean(recSession && recSession.frameCount > 0),
+    pins: screenshots?.pins.listSummaries() ?? []
+  };
+}
+
+async function handleIslandMenuAction(action: IslandMenuAction) {
+  switch (action.kind) {
+    case 'open-launcher':
+      showWindow();
+      return;
+    case 'open-media':
+      void media?.show();
+      return;
+    case 'open-settings':
+      openSettings();
+      return;
+    case 'quit':
+      requestQuit();
+      return;
+    case 'screenshot':
+      await startScreenshot(action.mode, action.delay ?? 0, Boolean(action.scroll));
+      return;
+    case 'cancel-capture-delay':
+      screenshots?.efficiency.cancel();
+      return;
+    case 'resume-capture':
+      screenshots?.focus();
+      return;
+    case 'recording-panel':
+      await recordingPanel?.show();
+      return;
+    case 'recording':
+      if (action.action === 'start-rect') await recordingPanel?.act({ type: 'start', mode: 'rect' });
+      else if (action.action === 'start-window') await recordingPanel?.act({ type: 'start', mode: 'window' });
+      else if (action.action === 'start-screen') await recordingPanel?.act({ type: 'start', mode: 'screen' });
+      else await recordingPanel?.act({ type: action.action });
+      return;
+    case 'pin-clipboard':
+      await runGlobalAction('pin-clipboard').catch(error => {
+        state.notice = (error as Error).message;
+        publish();
+      });
+      return;
+    case 'pin-restore-all':
+      screenshots?.pins.restoreAll();
+      return;
+    case 'pin-hide-all':
+      screenshots?.pins.hideAll();
+      return;
+    case 'pin-restore':
+      screenshots?.pins.restoreById(action.id);
+      return;
+    case 'toggle-selection': {
+      const saved = saveCaptureSettings({ selectionEnabled: !state.settings.selectionEnabled, clipboardFallback: state.settings.clipboardFallback });
+      if (saved.error) dialog.showErrorBox('未能保存划词设置', saved.error);
+      return;
+    }
+    case 'toggle-copy-translate':
+      try {
+        saveTranslation({ ...state.settings.translation, copyTranslateEnabled: !state.settings.translation.copyTranslateEnabled });
+      } catch (error) {
+        state.notice = (error as Error).message;
+        publish();
+      }
+      return;
+  }
+}
+
+function syncTray() {
+  if (quitting || !state) return;
+  const wantTray = state.settings.notchIslandEnabled === false;
+  if (!wantTray) {
+    if (tray) {
+      tray.destroy();
+      tray = null;
+    }
+    return;
+  }
+  if (!tray) {
+    const trayIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets/trayTemplate.png'));
+    trayIcon.setTemplateImage(true);
+    tray = new Tray(trayIcon);
+    tray.setToolTip('Lasso');
+  }
+  updateTray();
+}
+
 function updateTray() {
+  island?.refreshMenuState();
   if (!tray) return;
   const capturePending = Boolean(screenshots && screenshots.efficiency.state.phase !== 'idle');
   const shortcuts = state.settings.actionShortcuts;
@@ -1632,11 +1735,7 @@ async function boot() {
 
   const appIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets/lasso-icon.png'));
   if (!appIcon.isEmpty()) app.dock?.setIcon(appIcon);
-  const trayIcon = nativeImage.createFromPath(join(app.getAppPath(), 'assets/trayTemplate.png'));
-  trayIcon.setTemplateImage(true);
-  tray = new Tray(trayIcon);
-  tray.setToolTip('Lasso');
-  updateTray();
+  syncTray();
 
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -1683,9 +1782,12 @@ async function boot() {
 
   island = new NotchIsland({
     onQuickAction: action => {
-      if (action === 'screenshot-area') void startScreenshot('area');
+      if (action === 'open-launcher') showWindow();
+      else if (action === 'screenshot-area') void startScreenshot('area');
       else openSettings();
     },
+    getMenuState: buildIslandMenuState,
+    onMenuAction: handleIslandMenuAction,
     openSettings,
     onPinImage: pinImage,
     onPinText: async text => {
@@ -1826,7 +1928,7 @@ async function boot() {
       const trayState = recSession ? `${recSession.status}:${recSession.frameCount > 0}` : 'idle';
       if (trayState !== recordingTrayState) {
         recordingTrayState = trayState;
-        if (tray && !quitting) updateTray();
+        if (!quitting) updateTray();
       }
     }
   });

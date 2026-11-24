@@ -1038,7 +1038,7 @@ export function DesktopSuitePane({ state, notify }: { state: ShellState; notify:
           <div className="l-set-row">
             <div className="l-set-row-main">
               <div className="l-set-row-name">启用顶部刘海岛</div>
-              <div className="l-set-row-sub">平时无事项自动隐藏；有专注任务、番茄钟或提醒时显现（按住 ⌘ 点击穿透）</div>
+              <div className="l-set-row-sub">合并替代系统托盘菜单栏；无待办时保留精简 Lasso 入口，关闭后恢复传统托盘图标（按住 ⌘ 点击穿透）</div>
             </div>
             <Switch
               label="启用顶部刘海岛"

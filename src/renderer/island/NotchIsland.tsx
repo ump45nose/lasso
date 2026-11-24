@@ -2,28 +2,41 @@ import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import {
   ArrowUpRight,
+  Camera,
   Check,
   ClipboardList,
   Coffee,
+  Crop,
+  Eye,
+  EyeOff,
   FileText,
   FolderOpen,
+  Image,
   Languages,
+  LayoutDashboard,
   ListChecks,
   Minus,
+  MousePointerClick,
   NotebookPen,
   Pause,
+  Pin,
   Play,
   Plus,
+  Power,
+  RefreshCw,
   RotateCcw,
   Scan,
   Settings,
+  Sparkles,
   Square,
   Timer,
+  Video,
   Volume2,
   VolumeX,
   X
 } from '../icons';
-import type { IslandAPI, IslandAlertItem, IslandState, IslandTaskItem } from '../../shared/contracts';
+import type { IslandAPI, IslandAlertItem, IslandMenuAction, IslandMenuState, IslandState, IslandTaskItem, SnapSlot } from '../../shared/contracts';
+import { BrandMark } from '../BrandMark';
 import { useAppearance } from '../fonts';
 import { collapse, ease, Glide, spring } from '../motion';
 import './island.css';
@@ -196,8 +209,47 @@ function formatNowClock(now: Date): string {
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 }
 
+const SNAP_ROWS: ReadonlyArray<ReadonlyArray<readonly [SnapSlot, string]>> = [
+  [
+    ['left-half', '左半'],
+    ['right-half', '右半'],
+    ['top-half', '上半'],
+    ['bottom-half', '下半'],
+    ['maximize', '最大化'],
+    ['center', '居中']
+  ],
+  [
+    ['left-third', '左 1/3'],
+    ['center-third', '中 1/3'],
+    ['right-third', '右 1/3'],
+    ['left-two-thirds', '左 2/3'],
+    ['right-two-thirds', '右 2/3'],
+    ['coding-ai', '2:1'],
+    ['equal-split', '1:1']
+  ],
+  [
+    ['top-left', '左上'],
+    ['top-right', '右上'],
+    ['bottom-left', '左下'],
+    ['bottom-right', '右下'],
+    ['prev-display', '上屏'],
+    ['next-display', '下屏']
+  ]
+];
+
+const DEFAULT_MENU: IslandMenuState = {
+  selectionEnabled: true,
+  capturePending: false,
+  captureSleeping: false,
+  recordingStatus: 'idle',
+  recordingHasFrames: false,
+  pins: []
+};
+
 export function NotchIsland() {
   const [state, setState] = useState<IslandState | null>(null);
+  const [boardTab, setBoardTab] = useState<'focus' | 'tools'>('focus');
+  const [quitArmed, setQuitArmed] = useState(false);
   const [activeListTab, setActiveListTab] = useState<string>('focus');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [clockText, setClockText] = useState<string>(() => formatNowClock(new Date()));
@@ -240,6 +292,11 @@ export function NotchIsland() {
   const nookCompletedCount = state?.nookCompletedCount ?? 0;
   const nookTotalCount = state?.nookTotalCount ?? 0;
   const notch = state?.notch;
+  const menu = state?.menu ?? DEFAULT_MENU;
+  const hasToolsActivity =
+    menu.capturePending ||
+    menu.captureSleeping ||
+    menu.recordingStatus !== 'idle';
 
   const focusOpenTasks = nookTasks.filter(t => !t.completed && t.inFocus);
   const focusDoneTasks = nookTasks.filter(t => t.completed && t.inFocus);
@@ -262,7 +319,7 @@ export function NotchIsland() {
     : Math.min(160, Math.max(116, notch?.leftSafeWidth ?? 132));
   const rightSafeW = hasNotch ? 0 : Math.min(88, Math.max(48, notch?.rightSafeWidth ?? 56));
 
-  // State 1: All-Clear hidden when nothing pending and not expanded
+  // Always keep a compact Lasso brand capsule when all-clear, since Notch Island replaces the old Tray menu bar.
   const wingKind =
     !state || fullscreenClock
       ? null
@@ -274,7 +331,7 @@ export function NotchIsland() {
             ? 'focus'
             : focusOpenTasks.length > 0 || hasHotReview
               ? 'idle'
-              : null;
+              : 'brand';
 
   const dropKind =
     !state || fullscreenClock
@@ -352,9 +409,16 @@ export function NotchIsland() {
       return;
     }
     if (dropKind !== 'board') {
+      setQuitArmed(false);
       sendHit(isAnyHovered(), true);
     }
   }, [hasState, dropKind, wingKind]);
+
+  useEffect(() => {
+    if (!quitArmed) return;
+    const timer = setTimeout(() => setQuitArmed(false), 3000);
+    return () => clearTimeout(timer);
+  }, [quitArmed]);
 
   if (!state) return null;
 
@@ -580,6 +644,31 @@ export function NotchIsland() {
                     animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
                     exit={{ opacity: 0, y: 4, transition: { duration: 0.1, ease: 'easeIn' } }}
                   >
+                    {wingKind === 'brand' && (
+                      <button
+                        type="button"
+                        className="isl-wing-hit"
+                        aria-label="打开 Lasso 控制面板"
+                        onClick={toggleBoard}
+                      >
+                        <span className="isl-wing isl-wing-left">
+                          <BrandMark size={14} ink="var(--on-ink)" />
+                          <span className="isl-wing-title isl-wing-brand">Lasso</span>
+                        </span>
+                        {hasNotch && <span className="isl-wing-notch-gap" aria-hidden="true" />}
+                        <span className="isl-wing isl-wing-right">
+                          {menu.recordingStatus === 'recording' ? (
+                            <span className="isl-wing-meta mono">
+                              <span className="isl-dot-clay" aria-hidden="true" />
+                              <span>录制</span>
+                            </span>
+                          ) : menu.pins.length > 0 ? (
+                            <span className="isl-wing-meta mono">{menu.pins.length} 贴图</span>
+                          ) : null}
+                        </span>
+                      </button>
+                    )}
+
                     {wingKind === 'idle' && (
                       <button
                         type="button"
@@ -749,10 +838,40 @@ export function NotchIsland() {
                 {dropKind === 'board' && (
                   <div className="isl-board sk-draw">
                     <header className="isl-board-head">
-                      <h3>今日聚焦</h3>
-                      <span className="isl-board-date mono">{formatTodayLabel()}</span>
+                      <LayoutGroup id="isl-board-tabs">
+                        <div className="isl-board-tabs" role="tablist" aria-label="面板视图">
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={boardTab === 'focus'}
+                            className={'isl-board-tab' + (boardTab === 'focus' ? ' on' : '')}
+                            onClick={() => {
+                              setQuitArmed(false);
+                              setBoardTab('focus');
+                            }}
+                          >
+                            {boardTab === 'focus' && <Glide id="isl-board-tab-bg" className="isl-board-tab-glide" />}
+                            <span className="isl-board-tab-lbl">聚焦</span>
+                          </button>
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={boardTab === 'tools'}
+                            className={'isl-board-tab' + (boardTab === 'tools' ? ' on' : '')}
+                            onClick={() => {
+                              setQuitArmed(false);
+                              setBoardTab('tools');
+                            }}
+                          >
+                            {boardTab === 'tools' && <Glide id="isl-board-tab-bg" className="isl-board-tab-glide" />}
+                            <span className="isl-board-tab-lbl">工具</span>
+                            {hasToolsActivity && <span className="isl-board-tab-dot" aria-hidden="true" />}
+                          </button>
+                        </div>
+                      </LayoutGroup>
+                      {!quitArmed && <span className="isl-board-date mono">{formatTodayLabel()}</span>}
                       <span className="grow" />
-                      {nookReviewBadge && (
+                      {boardTab === 'focus' && nookReviewBadge && !quitArmed && (
                         <button
                           type="button"
                           className="isl-review-pill"
@@ -766,13 +885,49 @@ export function NotchIsland() {
                       )}
                       <button
                         type="button"
-                        className="isl-ib"
+                        className="isl-ib sm"
+                        aria-label="设置"
+                        title="设置 (⌘,)"
+                        onClick={() => void window.island.menuAction({ kind: 'open-settings' })}
+                      >
+                        <Settings size={14} />
+                      </button>
+                      <button
+                        type="button"
+                        className={quitArmed ? 'isl-quit-armed' : 'isl-ib sm'}
+                        aria-label={quitArmed ? '确认退出 Lasso' : '退出 Lasso'}
+                        title={quitArmed ? '再次点击退出 Lasso' : '退出 Lasso'}
+                        onClick={() => {
+                          if (quitArmed) {
+                            setQuitArmed(false);
+                            void window.island.menuAction({ kind: 'quit' });
+                          } else {
+                            setQuitArmed(true);
+                          }
+                        }}
+                      >
+                        <Power size={13} />
+                        {quitArmed && <span>确认退出</span>}
+                      </button>
+                      <button
+                        type="button"
+                        className="isl-ib sm"
                         aria-label="收起看板"
                         onClick={() => window.island.setMode(resolveCollapsedMode())}
                       >
                         <X size={15} />
                       </button>
                     </header>
+
+                    <AnimatePresence mode="wait" initial={false}>
+                      {boardTab === 'focus' ? (
+                        <motion.div
+                          key="board-focus"
+                          className="isl-board-pane"
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+                          exit={{ opacity: 0, y: -4, transition: { duration: 0.09, ease: 'easeIn' } }}
+                        >
 
                     {/* 1. Alert Block (only when pending alerts exist) */}
                     <AnimatePresence initial={false}>
@@ -999,12 +1154,12 @@ export function NotchIsland() {
                     <div className="isl-tools6">
                       {(
                         [
+                          ['open-launcher', Sparkles, 'AI 对话'],
                           ['screenshot-area', Scan, '区域截图'],
                           ['open-translator', Languages, '输入翻译'],
                           ['open-clipboard', ClipboardList, '剪贴板'],
                           ['toggle-notes', NotebookPen, '便签'],
-                          ['open-finder-panel', FolderOpen, '访达动作'],
-                          ['open-settings', Settings, '设置']
+                          ['open-finder-panel', FolderOpen, '访达动作']
                         ] as const
                       ).map(([action, Icon, label], idx) => (
                         <button
@@ -1019,6 +1174,364 @@ export function NotchIsland() {
                         </button>
                       ))}
                     </div>
+                        </motion.div>
+                      ) : (
+                        <motion.div
+                          key="board-tools"
+                          className="isl-board-pane isl-tools-pane"
+                          initial={{ opacity: 0, y: 4 }}
+                          animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
+                          exit={{ opacity: 0, y: -4, transition: { duration: 0.09, ease: 'easeIn' } }}
+                        >
+                          {/* 1. Core Windows & AI */}
+                          <div className="isl-blk">
+                            <div className="isl-blk-lbl">
+                              <Sparkles size={13} />
+                              <span>窗口与工具</span>
+                            </div>
+                            <div className="isl-menu-grid">
+                              {(
+                                [
+                                  [{ kind: 'open-launcher' } satisfies IslandMenuAction, Sparkles, 'AI 对话'],
+                                  [{ kind: 'open-media' } satisfies IslandMenuAction, Image, 'AI 生图'],
+                                  ['open-translator' as const, Languages, '输入翻译'],
+                                  ['open-clipboard' as const, ClipboardList, '剪贴板'],
+                                  ['toggle-notes' as const, NotebookPen, '浮动便签'],
+                                  ['open-finder-panel' as const, FolderOpen, '访达动作']
+                                ] as const
+                              ).map(([action, Icon, label]) => (
+                                <button
+                                  key={label}
+                                  type="button"
+                                  className="isl-tool-btn sk-wiggle"
+                                  onClick={() =>
+                                    typeof action === 'string'
+                                      ? void window.island.quickAction(action)
+                                      : void window.island.menuAction(action)
+                                  }
+                                >
+                                  <Icon size={14} />
+                                  <span>{label}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* 2. Capture & Recording */}
+                          <div className="isl-blk">
+                            <div className="isl-blk-lbl">
+                              <Camera size={13} />
+                              <span>截图与录屏</span>
+                              <span className="grow" />
+                              {menu.captureSleeping && (
+                                <button
+                                  type="button"
+                                  className="isl-chip-act"
+                                  onClick={() => void window.island.menuAction({ kind: 'resume-capture' })}
+                                >
+                                  恢复图片编辑
+                                </button>
+                              )}
+                              {menu.capturePending && (
+                                <button
+                                  type="button"
+                                  className="isl-chip-act"
+                                  onClick={() => void window.island.menuAction({ kind: 'cancel-capture-delay' })}
+                                >
+                                  取消延时
+                                </button>
+                              )}
+                            </div>
+                            <div className="isl-cap-primary">
+                              <button
+                                type="button"
+                                className="isl-tool-btn sk-wiggle"
+                                disabled={menu.capturePending}
+                                onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'area' })}
+                              >
+                                <Scan size={13} />
+                                <span>区域</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="isl-tool-btn sk-wiggle"
+                                disabled={menu.capturePending}
+                                onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'rect' })}
+                              >
+                                <Crop size={13} />
+                                <span>框选</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="isl-tool-btn sk-wiggle"
+                                disabled={menu.capturePending}
+                                onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'area', scroll: true })}
+                              >
+                                <ArrowUpRight size={13} />
+                                <span>长截图</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="isl-tool-btn sk-wiggle"
+                                disabled={menu.capturePending}
+                                onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'repeat' })}
+                              >
+                                <RefreshCw size={13} />
+                                <span>重截</span>
+                              </button>
+                            </div>
+                            <div className="isl-chip-row">
+                              <button
+                                type="button"
+                                className="isl-chip"
+                                disabled={menu.capturePending}
+                                onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'window' })}
+                              >
+                                窗口
+                              </button>
+                              <button
+                                type="button"
+                                className="isl-chip"
+                                disabled={menu.capturePending}
+                                onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'screen' })}
+                              >
+                                全屏
+                              </button>
+                              <button
+                                type="button"
+                                className="isl-chip"
+                                disabled={menu.capturePending}
+                                onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'front' })}
+                              >
+                                前台窗
+                              </button>
+                              <span className="isl-chip-sep" aria-hidden="true" />
+                              {([3, 5, 10] as const).map(delay => (
+                                <button
+                                  key={delay}
+                                  type="button"
+                                  className="isl-chip mono"
+                                  disabled={menu.capturePending}
+                                  onClick={() => void window.island.menuAction({ kind: 'screenshot', mode: 'area', delay })}
+                                >
+                                  {delay}s
+                                </button>
+                              ))}
+                            </div>
+                            <div className="isl-rec-row">
+                              <Video size={13} className="isl-rec-ic" />
+                              {menu.recordingStatus === 'idle' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording-panel' })}
+                                  >
+                                    录制面板
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'start-rect' })}
+                                  >
+                                    区域录
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'start-window' })}
+                                  >
+                                    窗口录
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'start-screen' })}
+                                  >
+                                    全屏录
+                                  </button>
+                                </>
+                              ) : menu.recordingStatus === 'recoverable' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="isl-chip on"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'recover' })}
+                                  >
+                                    恢复未完成录制
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'discard-recovery' })}
+                                  >
+                                    丢弃
+                                  </button>
+                                </>
+                              ) : menu.recordingStatus === 'review' ? (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="isl-chip on"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording-panel' })}
+                                  >
+                                    查看 / 导出录制
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'cancel' })}
+                                  >
+                                    结束
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="isl-dot-clay" aria-hidden="true" />
+                                  {menu.recordingStatus === 'recording' ? (
+                                    <button
+                                      type="button"
+                                      className="isl-chip"
+                                      onClick={() => void window.island.menuAction({ kind: 'recording', action: 'pause' })}
+                                    >
+                                      暂停
+                                    </button>
+                                  ) : menu.recordingStatus === 'paused' ? (
+                                    <button
+                                      type="button"
+                                      className="isl-chip on"
+                                      onClick={() => void window.island.menuAction({ kind: 'recording', action: 'resume' })}
+                                    >
+                                      继续
+                                    </button>
+                                  ) : null}
+                                  <button
+                                    type="button"
+                                    className="isl-chip on"
+                                    disabled={!menu.recordingHasFrames}
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'stop' })}
+                                  >
+                                    停止
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'recording', action: 'cancel' })}
+                                  >
+                                    取消
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* 3. Pins Management */}
+                          <div className="isl-blk">
+                            <div className="isl-blk-lbl">
+                              <Pin size={13} />
+                              <span>贴图管理</span>
+                              <span className="r mono">{menu.pins.length}</span>
+                            </div>
+                            <div className="isl-chip-row">
+                              <button
+                                type="button"
+                                className="isl-chip"
+                                onClick={() => void window.island.menuAction({ kind: 'pin-clipboard' })}
+                              >
+                                <Pin size={11} />
+                                <span>贴出剪贴板</span>
+                              </button>
+                              {menu.pins.length > 0 && (
+                                <>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'pin-restore-all' })}
+                                  >
+                                    <Eye size={11} />
+                                    <span>恢复全部</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="isl-chip"
+                                    onClick={() => void window.island.menuAction({ kind: 'pin-hide-all' })}
+                                  >
+                                    <EyeOff size={11} />
+                                    <span>隐藏全部</span>
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                            {menu.pins.length > 0 && (
+                              <div className="isl-pin-list">
+                                {menu.pins.map(pin => (
+                                  <button
+                                    key={pin.id}
+                                    type="button"
+                                    className="isl-pin-row"
+                                    onClick={() => void window.island.menuAction({ kind: 'pin-restore', id: pin.id })}
+                                  >
+                                    <span className="trunc">{pin.title}</span>
+                                    {(pin.passthrough || pin.hidden) && (
+                                      <span className="isl-pin-tag">{pin.passthrough ? '穿透' : '已隐藏'}</span>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* 4. Window Snapping */}
+                          <div className="isl-blk">
+                            <div className="isl-blk-lbl">
+                              <LayoutDashboard size={13} />
+                              <span>窗口分屏</span>
+                              <span className="r">前台窗口</span>
+                            </div>
+                            <div className="isl-snap-rows">
+                              {SNAP_ROWS.map((row, rowIdx) => (
+                                <div key={rowIdx} className="isl-chip-row">
+                                  {row.map(([slot, label]) => (
+                                    <button
+                                      key={slot}
+                                      type="button"
+                                      className="isl-chip isl-snap-chip"
+                                      onClick={() => void window.island.snapWindow(slot)}
+                                    >
+                                      {label}
+                                    </button>
+                                  ))}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* 5. Quick Toggles */}
+                          <div className="isl-toggle-row">
+                            <button
+                              type="button"
+                              className={'isl-toggle-pill' + (menu.selectionEnabled ? ' on' : '')}
+                              aria-pressed={menu.selectionEnabled}
+                              onClick={() => void window.island.menuAction({ kind: 'toggle-selection' })}
+                            >
+                              <MousePointerClick size={13} />
+                              <span>划词动作条</span>
+                              <span className="isl-toggle-state">{menu.selectionEnabled ? '开' : '暂停'}</span>
+                            </button>
+                            <button
+                              type="button"
+                              className={'isl-toggle-pill' + (state.copyTranslateEnabled ? ' on' : '')}
+                              aria-pressed={state.copyTranslateEnabled}
+                              onClick={() => void window.island.menuAction({ kind: 'toggle-copy-translate' })}
+                            >
+                              <Languages size={13} />
+                              <span>复制即译</span>
+                              <span className="isl-toggle-state">{state.copyTranslateEnabled ? '开' : '关'}</span>
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 )}
                 </div>

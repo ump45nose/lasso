@@ -176,6 +176,26 @@ contextBridge.executeInMainWorld({
       value: {
         islandStates(base) {
           return {
+            brandCapsule: {
+              ...base,
+              mode: 'idle',
+              alerts: [],
+              toast: null,
+              nookReviewBadge: null,
+              nookTaskLists: [],
+              nookTasks: [],
+              nookCompletedCount: 0,
+              nookTotalCount: 0,
+              pomodoro: null,
+              menu: {
+                selectionEnabled: true,
+                capturePending: false,
+                captureSleeping: false,
+                recordingStatus: 'idle',
+                recordingHasFrames: false,
+                pins: []
+              }
+            },
             focusCapsule: {
               ...base,
               mode: 'focus',
@@ -235,6 +255,18 @@ contextBridge.executeInMainWorld({
               nookCompletedCount: 1,
               nookTotalCount: 6,
               pomodoro: focusPomodoro,
+              copyTranslateEnabled: true,
+              menu: {
+                selectionEnabled: true,
+                capturePending: false,
+                captureSleeping: true,
+                recordingStatus: 'idle',
+                recordingHasFrames: false,
+                pins: [
+                  { id: 'pin-1', title: '配色规范参考.png', passthrough: false, hidden: false },
+                  { id: 'pin-2', title: 'API 响应片段', passthrough: true, hidden: false }
+                ]
+              },
               nookPrefs: { enabled: true, tasks: true, hubAttention: true, aiResets: true, localAndCustom: true }
             },
             boardIdle: {

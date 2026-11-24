@@ -86,6 +86,7 @@ import {
   Play as LPlay,
   Plug as LPlug,
   Plus as LPlus,
+  Power as LPower,
   Redo2 as LRedo2,
   RefreshCw as LRefreshCw,
   RotateCcw as LRotateCcw,
@@ -236,6 +237,7 @@ export const Eye = make('Eye', LEye, generalSketches.Eye);
 export const EyeOff = make('EyeOff', LEyeOff, generalSketches.EyeOff);
 export const CircleAlert = make('CircleAlert', LCircleAlert, generalSketches.CircleAlert);
 export const Loader2 = make('Loader2', LLoader2, generalSketches.Loader2);
+export const Power = make('Power', LPower, generalSketches.Power);
 export const File = make('File', LFile, contentSketches.File);
 export const FileText = make('FileText', LFileText, contentSketches.FileText);
 export const FileImage = make('FileImage', LFileImage, contentSketches.FileImage);

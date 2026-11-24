@@ -627,6 +627,13 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       const islFixtures = await page(isl, `window.island.getState().then(b => window.__uiShotsFixtures.islandStates(b))`);
 
       isl.setSize(520, 64);
+      isl.webContents.send('island:changed', islFixtures.brandCapsule);
+      await wait(300);
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-menubar-wings.mode-brand')) && document.body.textContent.includes('Lasso')`))) {
+        throw Error('B4 Island all-clear brand capsule missing');
+      }
+      names.push(await save(isl, 'v4-b4-island-brand'));
+
       isl.webContents.send('island:changed', islFixtures.focusCapsule);
       await wait(300);
       names.push(await save(isl, 'v4-b4-island-focus'));
@@ -672,6 +679,24 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         throw Error('B4 Island board quick tools (剪贴板等) clipped below visible card bounds');
       }
       names.push(await save(isl, 'v4-b4-island-board'));
+
+      // Switch to 工具 tab (merged menu bar controls)
+      await page(isl, `[...document.querySelectorAll('.isl-board-tab')].find(b => b.textContent.includes('工具'))?.click()`);
+      await wait(300);
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-tools-pane')) && document.body.textContent.includes('截图与录屏') && document.body.textContent.includes('窗口分屏') && document.body.textContent.includes('贴图管理')`))) {
+        throw Error('B4 Island merged tools tab missing expected sections');
+      }
+      names.push(await save(isl, 'v4-b4-island-board-tools'));
+
+      // Verify in-place two-step quit confirmation arms without quitting on first click
+      await page(isl, `document.querySelector('[aria-label="退出 Lasso"]')?.click()`);
+      await wait(150);
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-quit-armed')) && document.body.textContent.includes('确认退出')`))) {
+        throw Error('B4 Island quit button did not arm in-place confirmation');
+      }
+      // Switch back to 聚焦 tab for remaining focus checks
+      await page(isl, `[...document.querySelectorAll('.isl-board-tab')].find(b => b.textContent.includes('聚焦'))?.click()`);
+      await wait(250);
 
       // Switch to 循环 tab and expand routine task notes
       await page(isl, `[...document.querySelectorAll('.isl-task-tab')].find(b => b.textContent.includes('循环'))?.click()`);

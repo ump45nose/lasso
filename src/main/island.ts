@@ -6,6 +6,8 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type {
   IslandAlertItem,
+  IslandMenuAction,
+  IslandMenuState,
   IslandMode,
   IslandState,
   IslandTaskItem,
@@ -56,7 +58,9 @@ const SNAP_SLOTS: readonly SnapSlot[] = [
   'prev-display',
   'next-display'
 ];
-const QUICK_ACTIONS = ['screenshot-area', 'open-settings', 'toggle-notes', 'open-finder-panel', 'open-translator', 'open-clipboard'] as const;
+const QUICK_ACTIONS = ['open-launcher', 'screenshot-area', 'open-settings', 'toggle-notes', 'open-finder-panel', 'open-translator', 'open-clipboard'] as const;
+const SCREENSHOT_MENU_MODES = new Set(['area', 'rect', 'window', 'screen', 'front', 'repeat']);
+const RECORDING_MENU_ACTIONS = new Set(['start-rect', 'start-window', 'start-screen', 'pause', 'resume', 'stop', 'cancel', 'recover', 'discard-recovery']);
 
 interface NookFocusSnapshot {
   reviewBadge: NookReviewBadge | null;
@@ -531,7 +535,9 @@ function readNookFocusData(): NookFocusSnapshot {
 }
 
 export interface NotchIslandCallbacks {
-  onQuickAction: (action: 'screenshot-area' | 'open-settings') => void;
+  onQuickAction: (action: 'open-launcher' | 'screenshot-area' | 'open-settings') => void;
+  getMenuState?: () => IslandMenuState;
+  onMenuAction?: (action: IslandMenuAction) => Promise<void> | void;
   openSettings?: (section?: SettingsSection) => void;
   onPinImage: (image: NativeImage, title?: string) => Promise<void>;
   onPinText: (text: string, title?: string) => Promise<void>;
@@ -777,6 +783,31 @@ export class NotchIsland {
       }
       this.callbacks.onQuickAction(action);
     });
+    ipcMain.handle('island:menu-action', async (event, action: IslandMenuAction) => {
+      check(event);
+      if (!action || typeof action !== 'object' || typeof action.kind !== 'string') {
+        throw new Error('无效的菜单操作');
+      }
+      if (action.kind === 'screenshot') {
+        if (!SCREENSHOT_MENU_MODES.has(action.mode)) throw new Error('无效的截图模式');
+        if (action.delay !== undefined && ![0, 3, 5, 10].includes(action.delay)) throw new Error('无效的延时时间');
+      } else if (action.kind === 'recording') {
+        if (!RECORDING_MENU_ACTIONS.has(action.action)) throw new Error('无效的录制操作');
+      } else if (action.kind === 'pin-restore') {
+        if (typeof action.id !== 'string' || !action.id) throw new Error('无效的贴图 ID');
+      }
+      const keepBoardOpen =
+        action.kind === 'toggle-selection' ||
+        action.kind === 'toggle-copy-translate' ||
+        action.kind === 'pin-restore-all' ||
+        action.kind === 'pin-hide-all';
+      if (!keepBoardOpen) {
+        if (this.mode === 'board') this.closeBoard();
+        else this.syncMousePassthrough(true);
+      }
+      await this.callbacks.onMenuAction?.(action);
+      if (keepBoardOpen) this.publish();
+    });
     ipcMain.handle('island:nook-prefs', (event, patch: Partial<NookReminderPrefs>) => {
       check(event);
       if (
@@ -926,8 +957,7 @@ export class NotchIsland {
 
   private isCapsuleActive(): boolean {
     if (!this.islandEnabled || this.fullscreenHidden || this.isFullscreenClock()) return false;
-    if (this.mode === 'board' || this.toastItem || this.alerts.length > 0 || this.pomodoro?.active) return true;
-    return this.nookTasks.some(t => !t.completed && t.inFocus) || Boolean(this.nookReviewBadge?.hot);
+    return true;
   }
 
   private placeIslandWindow(geo?: ReturnType<NonNullable<NativeAx['notchGeometry']>>) {
@@ -979,6 +1009,7 @@ export class NotchIsland {
         : { hasNotch: false, width: 156, height: 28, menuBarHeight: 28, leftSafeWidth: 132, rightSafeWidth: 56 },
       nookPrefs: { ...this.nookPrefs },
       copyTranslateEnabled: this.copyTranslateEnabled,
+      menu: this.callbacks.getMenuState?.(),
       pomodoroPrefs: { ...this.pomodoroPrefs },
       pomodoro: this.pomodoro,
       toast: this.toastItem,
@@ -1046,6 +1077,11 @@ export class NotchIsland {
     if (!this.window.isDestroyed()) {
       this.window.webContents.send('island:changed', this.snapshot());
     }
+  }
+
+  refreshMenuState() {
+    if (this.destroyed) return;
+    this.publish();
   }
 
   updateSettings(settings: Settings) {

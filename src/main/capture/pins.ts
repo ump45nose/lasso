@@ -510,9 +510,13 @@ export class PinManager {
     throw Error('不支持的贴图操作');
   }
   private restore(pin:Pin){pin.state.passthrough=false;pin.win.setIgnoreMouseEvents(false);this.focus(pin.state.id);this.publish(pin);this.changed();}
+  listSummaries(){return [...this.pins.values()].map(pin=>({id:pin.state.id,title:(!pin.win.isDestroyed()?pin.win.getTitle():pin.state.title)||'贴图',passthrough:Boolean(pin.state.passthrough),hidden:!pin.win.isDestroyed()&&!pin.win.isVisible()}));}
+  restoreAll(){for(const pin of this.pins.values())this.restore(pin);}
+  hideAll(){for(const pin of this.pins.values()){pin.visible=false;pin.win.hide();}this.changed();}
+  restoreById(id:string){const pin=this.pins.get(id);if(pin)this.restore(pin);}
   trayItems():Electron.MenuItemConstructorOptions[]{return [
-    {label:'恢复全部贴图 / 退出穿透',enabled:this.size>0,click:()=>{for(const pin of this.pins.values())this.restore(pin);}},
-    {label:'隐藏全部贴图',enabled:this.size>0,click:()=>{for(const pin of this.pins.values()){pin.visible=false;pin.win.hide();}this.changed();}},
+    {label:'恢复全部贴图 / 退出穿透',enabled:this.size>0,click:()=>this.restoreAll()},
+    {label:'隐藏全部贴图',enabled:this.size>0,click:()=>this.hideAll()},
     ...[...this.pins.values()].map(pin=>({label:(!pin.win.isDestroyed()?pin.win.getTitle():pin.state.title)+(pin.state.passthrough?' · 穿透':(!pin.win.isDestroyed()&&!pin.win.isVisible())?' · 已隐藏':''),click:()=>this.restore(pin)}))
   ];}
   dispose(){if(this.disposed)return;if(this.persistTimer)clearTimeout(this.persistTimer);this.persist();this.disposed=true;this.floating.dispose();screen.removeListener('display-removed',this.fit);screen.removeListener('display-metrics-changed',this.fit);for(const channel of ['pin:drag-start','pin:drag-move','pin:drag-end'])ipcMain.removeAllListeners(channel);this.stopEditorServices();for(const pin of [...this.pins.values()]){pin.ocr.reset();pin.win.destroy();}for(const channel of ['pin:state','pin:action','pin:text','pin:fast-text','pin:note-text','pin:source','pin:editor-export','pin:editor-action','pin:set-opacity','pin:set-zoom','pin:set-group','pin:update-text'])ipcMain.removeHandler(channel);}

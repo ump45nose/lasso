@@ -16,6 +16,7 @@ const api: IslandAPI = {
   dismissAlert: alertId => ipcRenderer.invoke('island:dismiss-alert', alertId),
   restartService: label => ipcRenderer.invoke('island:restart-service', label),
   quickAction: action => ipcRenderer.invoke('island:quick', action),
+  menuAction: action => ipcRenderer.invoke('island:menu-action', action),
   setNookReminderPrefs: patch => ipcRenderer.invoke('island:nook-prefs', patch),
   setCopyTranslate: enabled => ipcRenderer.invoke('island:copy-translate', enabled),
   getTranslatorState: () => ipcRenderer.invoke('translator:state'),

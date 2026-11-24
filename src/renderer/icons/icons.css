@@ -10,6 +10,7 @@ svg.sk .skm { stroke: var(--sk-accent); stroke-width: 4.2; opacity: .9; }
 .l-record-control .l-btn:hover svg.sk, .l-rec-ib:hover:not(:disabled) svg.sk, .ed-tool[aria-pressed="true"]:hover:not(:disabled) svg.sk, .ed-mi:hover svg.sk, .ed-mi.active svg.sk,
 .pin-bar button:hover svg.sk, .pin-thumbnail-actions button:hover svg.sk, .scroll-controls .l-btn:hover:not(:disabled) svg.sk,
 .isl-review-pill:hover svg.sk, .isl-ib:hover svg.sk, .isl-ink-btn:hover svg.sk, .isl-task-focus svg.sk, .isl-pomo-step:hover:not(:disabled) svg.sk,
+.isl-tool-btn:hover:not(:disabled) svg.sk, .isl-chip:hover:not(:disabled) svg.sk, .isl-toggle-pill:hover svg.sk, .isl-pin-row:hover svg.sk,
 .fp-cutbar svg.sk, .fp-act:hover:not(:disabled) svg.sk, .fp-pop-mi:hover svg.sk, .fp-pop-mi.on svg.sk,
 .en-img-bar button:hover svg.sk, .en-lightbox-btn:hover svg.sk, .en-lightbox-close:hover svg.sk { --sk-accent: var(--ink); }
 
