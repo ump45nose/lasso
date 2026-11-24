@@ -27,15 +27,17 @@ React、Electron、Lucide 沿用各自 npm 包与许可；未引入 PopClip 商�
 
 ChatGPT 完成状态依据当前页面明确的 `data-talvt-turn-state=complete`；最新回答用 `data-chatgpt-selection-message-id` 对照恢复页，并检查浏览器资源时序中最新的对应历史请求成功。只观察网站自己的请求，不自行获取令牌或调用私有接口。停止按钮、待确认界面、草稿及附件优先保护。网站不再提供这些标记时不回收，在适配器集中更新。隔离世界仅记录交互时间与页面状态，不向网站开放本地 IPC。
 
-## CLI、聊天展示与打包
+## 聊天展示与打包
 
-- Codex：调用已安装 CLI 的官方 app-server 协议，不复制其执行引擎。
-- Pi：调用已安装 `@earendil-works/pi-coding-agent` 的 RPC；以随包文档为准，参考其客户端与 CodexHost 的原生接口边界，未复制 CodexHost 产品代码。
+本地 CLI 目标（Codex app-server、Pi RPC）已在 `a1a1a77` 下线，相关接入代码已删除，不再复用这两个项目的协议。
+
 - react-markdown / remark-gfm：MIT，渲染 Markdown 与表格，不启用任意 HTML。
 - @electron/packager：BSD-2-Clause，生成固定应用身份的 macOS 包。
 - Gemini 选择器独立封装，上传共用 Electron CDP 文件输入能力。图片入口不依赖某个截图软件或付费功能。
 
 ## S1 截图与区域候选
+
+本节记录 S1 当时的选型。`129ee11` 起，取图与选区改为 ScreenCaptureKit + AppKit 原生实现。
 
 - Electron desktopCapturer：沿用现有 Electron，按显示器匹配取图；CoreGraphics/AX 的薄 N-API 桥接仅返回窗口和界面矩形。桥接随主应用签名，不创建另一款需独立授权的工具。
 - edge_det 0.1.3（Apache-2.0）：直接依赖 npm 包，编入独立工作线程，参数参考 eSearch 的视觉候选实现；不是完整区域识别引擎。
