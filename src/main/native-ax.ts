@@ -32,6 +32,8 @@ export interface NativeAx {
   stopIslandAnchorWatch(): void;
   startFullscreenWatch(cb: (fullscreen: boolean) => void): void;
   stopFullscreenWatch(): void;
+  startOutsideClickWatch(handle: Buffer, cb: () => void): void;
+  stopOutsideClickWatch(): void;
   setStationaryWindow(handle: Buffer, visibleOnFullScreen?: boolean): void;
 }
 

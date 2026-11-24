@@ -587,6 +587,7 @@ export class NotchIsland {
   private destroyed = false;
   private mousePassthrough = false;
   private pointerInside = false;
+  private outsideClickWatching = false;
 
   private readonly onDisplayMetricsChanged = () => {
     this.placeIslandWindow();
@@ -892,6 +893,7 @@ export class NotchIsland {
       if (this.mode === 'board') {
         this.mode = this.resolveBaseMode();
       }
+      this.syncOutsideClickWatch();
       this.syncMousePassthrough(true);
       this.ax.notchGeometry?.(false);
       if (!this.window.isDestroyed() && this.window.isVisible()) {
@@ -1019,9 +1021,25 @@ export class NotchIsland {
     this.setMousePassthrough(!allowHit);
   }
 
+  private syncOutsideClickWatch() {
+    const want = !this.destroyed && !this.fullscreenHidden && this.mode === 'board' && !this.window.isDestroyed();
+    if (want === this.outsideClickWatching) return;
+    this.outsideClickWatching = want;
+    if (want) {
+      this.ax.startOutsideClickWatch?.(this.window.getNativeWindowHandle(), () => {
+        if (!this.destroyed && this.mode === 'board') {
+          this.closeBoard();
+        }
+      });
+    } else {
+      this.ax.stopOutsideClickWatch?.();
+    }
+  }
+
   private publish() {
     const modeChanged = this.mode !== this.lastPublishedMode;
     this.lastPublishedMode = this.mode;
+    this.syncOutsideClickWatch();
     if ((this.mode === 'idle' || this.mode === 'focus' || this.mode === 'toast') && (modeChanged || !this.isCapsuleActive())) {
       this.syncMousePassthrough();
     }
@@ -1149,7 +1167,7 @@ export class NotchIsland {
       this.mode = this.resolveBaseMode();
     }
     this.syncMousePassthrough(true);
-    if (!this.window.isDestroyed()) this.window.blur();
+    if (!this.window.isDestroyed() && this.window.isFocused()) this.window.blur();
     this.publish();
   }
 
@@ -1550,6 +1568,8 @@ export class NotchIsland {
     this.nookWatchers.clear();
     this.ax.stopIslandAnchorWatch?.();
     this.ax.stopFullscreenWatch?.();
+    this.ax.stopOutsideClickWatch?.();
+    this.outsideClickWatching = false;
     this.ax.stopFinderTrigger?.();
     this.ax.stopCopyWatch?.();
     this.ax.setWindowDragSnapEnabled?.(false);

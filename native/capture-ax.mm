@@ -58,6 +58,10 @@ static id g_fullscreen_screen_obs = nil;
 static dispatch_source_t g_fullscreen_timer = nil;
 static int g_last_fullscreen_state = -1;
 static int g_fullscreen_exit_streak = 0;
+static napi_threadsafe_function g_outside_click_tsfn = nullptr;
+static id g_outside_global_monitor = nil;
+static id g_outside_local_monitor = nil;
+static __weak NSWindow* g_outside_click_window = nil;
 
 static void onMain(void (^block)(void));
 
@@ -1848,6 +1852,97 @@ static napi_value stopFullscreenWatch(napi_env e, napi_callback_info) {
   return undefined;
 }
 
+static void callOutsideClickJS(napi_env env, napi_value cb, void*, void*) {
+  if (env && cb) {
+    napi_value recv;
+    napi_get_undefined(env, &recv);
+    napi_call_function(env, recv, cb, 0, nullptr, nullptr);
+  }
+}
+
+static void stopOutsideClickMonitoring() {
+  onMain(^{
+    if (g_outside_global_monitor) {
+      [NSEvent removeMonitor:g_outside_global_monitor];
+      g_outside_global_monitor = nil;
+    }
+    if (g_outside_local_monitor) {
+      [NSEvent removeMonitor:g_outside_local_monitor];
+      g_outside_local_monitor = nil;
+    }
+    g_outside_click_window = nil;
+    if (g_outside_click_tsfn) {
+      napi_release_threadsafe_function(g_outside_click_tsfn, napi_tsfn_abort);
+      g_outside_click_tsfn = nullptr;
+    }
+  });
+}
+
+static napi_value startOutsideClickWatch(napi_env e, napi_callback_info info) {
+  size_t n = 2;
+  napi_value args[2];
+  napi_get_cb_info(e, info, &n, args, nullptr, nullptr);
+  void* bytes = nullptr;
+  size_t length = 0;
+  napi_valuetype cbType;
+  if (n != 2 ||
+      napi_get_buffer_info(e, args[0], &bytes, &length) != napi_ok ||
+      length < sizeof(void*) ||
+      napi_typeof(e, args[1], &cbType) != napi_ok ||
+      cbType != napi_function) {
+    napi_throw_type_error(e, nullptr, "window handle and outside click callback required");
+    return nullptr;
+  }
+  stopOutsideClickMonitoring();
+  NSWindow* targetWin = nil;
+  @autoreleasepool {
+    targetWin = ((__bridge NSView*)(*(void**)bytes)).window;
+  }
+  if (!targetWin) {
+    napi_value undefined;
+    napi_get_undefined(e, &undefined);
+    return undefined;
+  }
+  napi_value name;
+  napi_create_string_utf8(e, "lasso-outside-click-watch", NAPI_AUTO_LENGTH, &name);
+  if (napi_create_threadsafe_function(e, args[1], nullptr, name, 0, 1, nullptr, nullptr, nullptr,
+                                      callOutsideClickJS, &g_outside_click_tsfn) != napi_ok) {
+    napi_throw_error(e, nullptr, "Could not create outside click callback");
+    return nullptr;
+  }
+  napi_unref_threadsafe_function(e, g_outside_click_tsfn);
+  onMain(^{
+    g_outside_click_window = targetWin;
+    NSEventMask mask = NSEventMaskLeftMouseDown | NSEventMaskRightMouseDown | NSEventMaskOtherMouseDown;
+    g_outside_global_monitor = [NSEvent addGlobalMonitorForEventsMatchingMask:mask handler:^(NSEvent*) {
+      NSWindow* win = g_outside_click_window;
+      if (win && !win.ignoresMouseEvents && NSPointInRect(NSEvent.mouseLocation, win.frame)) {
+        return;
+      }
+      if (g_outside_click_tsfn) {
+        napi_call_threadsafe_function(g_outside_click_tsfn, nullptr, napi_tsfn_nonblocking);
+      }
+    }];
+    g_outside_local_monitor = [NSEvent addLocalMonitorForEventsMatchingMask:mask handler:^NSEvent*(NSEvent* event) {
+      NSWindow* win = g_outside_click_window;
+      if (win && event.window != win && g_outside_click_tsfn) {
+        napi_call_threadsafe_function(g_outside_click_tsfn, nullptr, napi_tsfn_nonblocking);
+      }
+      return event;
+    }];
+  });
+  napi_value undefined;
+  napi_get_undefined(e, &undefined);
+  return undefined;
+}
+
+static napi_value stopOutsideClickWatch(napi_env e, napi_callback_info) {
+  stopOutsideClickMonitoring();
+  napi_value undefined;
+  napi_get_undefined(e, &undefined);
+  return undefined;
+}
+
 /** Keeps the window in place during Mission Control and out of Cmd-` cycling; Electron exposes neither behavior. */
 static napi_value setStationaryWindow(napi_env e, napi_callback_info info) {
   size_t n = 2;
@@ -1907,6 +2002,8 @@ static napi_value init(napi_env e,napi_value exports){
     {"stopIslandAnchorWatch",nullptr,stopIslandAnchorWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"startFullscreenWatch",nullptr,startFullscreenWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"stopFullscreenWatch",nullptr,stopFullscreenWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"startOutsideClickWatch",nullptr,startOutsideClickWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
+    {"stopOutsideClickWatch",nullptr,stopOutsideClickWatch,nullptr,nullptr,nullptr,napi_default,nullptr},
     {"setStationaryWindow",nullptr,setStationaryWindow,nullptr,nullptr,nullptr,napi_default,nullptr}
   };
   napi_define_properties(e,exports,sizeof(d)/sizeof(d[0]),d);
@@ -1917,6 +2014,7 @@ static napi_value init(napi_env e,napi_value exports){
     stopDragSnapMonitoring();
     stopIslandBlocker();
     stopFullscreenMonitoring();
+    stopOutsideClickMonitoring();
   }, nullptr);
   return exports;
 }
