@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { Check, ChevronDown, Copy, ExternalLink, FileText, Image as ImageIcon, Lock, LockOpen, Pin, Plus, Search, Trash2, X } from '../icons';
-import type { EdgeNotesState, IslandAPI } from '../../shared/contracts';
+import type { EdgeNotesState, IslandAPI, NotesResizeEdge } from '../../shared/contracts';
 import { useAppearance } from '../fonts';
 import { dropdown, ease, fade, pop, spring, useSurfaceReveal } from '../motion';
 import { countNoteImages, insertNoteImages, isImageFile, NoteEditor, type NoteImageAction, type NoteImageRef } from './NoteEditor';
@@ -16,6 +16,7 @@ declare global {
 }
 
 const SCRATCHPAD = 'Scratchpad.md';
+const RESIZE_EDGES: readonly NotesResizeEdge[] = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
 function formatShortDate(ts?: number): string {
   if (!ts) return '';
   const d = new Date(ts);
@@ -48,6 +49,7 @@ export function EdgeNotes() {
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const editorRef = useRef<EditorView | null>(null);
   const winRef = useRef<HTMLElement | null>(null);
+  const resizingRef = useRef(false);
 
   useAppearance(state?.fonts);
   const { controls } = useSurfaceReveal(winRef, { active: state?.open });
@@ -126,6 +128,15 @@ export function EdgeNotes() {
   }, [flushSave]);
 
   useEffect(() => {
+    const openNewPicker = async () => {
+      await flushSave();
+      setLightbox(null);
+      setPickerOpen(true);
+      setTimeout(() => searchInputRef.current?.focus(), 20);
+    };
+    const stopNew = window.island.onNotesNew(() => {
+      void openNewPicker();
+    });
     const onKeyDown = async (event: KeyboardEvent) => {
       if (event.key === 'Escape' && lightbox) {
         event.preventDefault();
@@ -140,10 +151,7 @@ export function EdgeNotes() {
         window.island.setNotesOpen(false);
       } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'n') {
         event.preventDefault();
-        await flushSave();
-        setLightbox(null);
-        setPickerOpen(true);
-        setTimeout(() => searchInputRef.current?.focus(), 20);
+        await openNewPicker();
       } else if (event.key === 'Escape' && pickerOpen) {
         event.preventDefault();
         setPickerOpen(false);
@@ -151,7 +159,10 @@ export function EdgeNotes() {
       }
     };
     window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
+    return () => {
+      stopNew();
+      window.removeEventListener('keydown', onKeyDown);
+    };
   }, [pickerOpen, lightbox, flushSave]);
 
   const handlePasteImage = useCallback(
@@ -294,8 +305,44 @@ export function EdgeNotes() {
     if (next && request === fileRequestRef.current) applyNote(next);
   }
 
+  function onResizePointerDown(edge: NotesResizeEdge, event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    resizingRef.current = true;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    window.island.startNotesResize(edge);
+  }
+
+  function onResizePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    if (!resizingRef.current) return;
+    event.preventDefault();
+    window.island.moveNotesResize();
+  }
+
+  function onResizePointerEnd(event: React.PointerEvent<HTMLDivElement>) {
+    if (!resizingRef.current) return;
+    resizingRef.current = false;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    window.island.endNotesResize();
+  }
+
   return (
     <div className="en-stage" onClick={() => pickerOpen && setPickerOpen(false)}>
+      {RESIZE_EDGES.map(edge => (
+        <div
+          key={edge}
+          className={`en-resize en-resize-${edge}`}
+          aria-hidden="true"
+          onPointerDown={event => onResizePointerDown(edge, event)}
+          onPointerMove={onResizePointerMove}
+          onPointerUp={onResizePointerEnd}
+          onPointerCancel={onResizePointerEnd}
+          onLostPointerCapture={onResizePointerEnd}
+        />
+      ))}
       <motion.section
         ref={winRef}
         className={'en-win sk-draw' + (!state.focused ? ' blurred' : '')}

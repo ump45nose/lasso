@@ -206,9 +206,18 @@ export function NotchIsland() {
   useEffect(() => {
     document.documentElement.classList.add('isl-html');
     document.body.classList.add('isl-body');
-    const stop = window.island.onState(setState);
-    void window.island.getState().then(setState);
-    return () => stop();
+    const stop = window.island.onState(next => {
+      lastHitRef.current = null;
+      setState(next);
+    });
+    void window.island.getState().then(next => {
+      lastHitRef.current = null;
+      setState(next);
+    });
+    return () => {
+      stop();
+      if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+    };
   }, []);
 
   const fullscreenClock = Boolean(state?.fullscreenClock);
@@ -282,42 +291,174 @@ export function NotchIsland() {
 
   const wingKindRef = useRef(wingKind);
   const dropKindRef = useRef(dropKind);
+  const modeRef = useRef(mode);
+  const pomodoroRef = useRef(pomodoro);
+  const wingHoveredRef = useRef(false);
+  const anchorHoveredRef = useRef(false);
+  const cardHoveredRef = useRef(false);
+  const leaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastHitRef = useRef<boolean | null>(null);
   wingKindRef.current = wingKind;
   dropKindRef.current = dropKind;
+  modeRef.current = mode;
+  pomodoroRef.current = pomodoro;
 
-  useEffect(() => {
-    if (state && !dropKind && !wingKind) {
-      window.island.hit(false);
+  const clearLeaveTimer = () => {
+    if (leaveTimerRef.current) {
+      clearTimeout(leaveTimerRef.current);
+      leaveTimerRef.current = null;
     }
-  }, [state, dropKind, wingKind]);
+  };
+
+  const sendHit = (inside: boolean, force = false) => {
+    if (!force && lastHitRef.current === inside) return;
+    lastHitRef.current = inside;
+    window.island.hit(inside);
+  };
+
+  const isAnyHovered = () =>
+    Boolean(
+      (wingKindRef.current && wingHoveredRef.current) ||
+        ((wingKindRef.current || dropKindRef.current) && anchorHoveredRef.current) ||
+        (dropKindRef.current && cardHoveredRef.current)
+    );
+
+  const resolveCollapsedMode = () => {
+    const pomo = pomodoroRef.current;
+    return pomo?.active ? (pomo.kind === 'slacking' ? 'slacking' : 'focus') : 'idle';
+  };
+
+  const scheduleHoverCollapse = () => {
+    clearLeaveTimer();
+    if (modeRef.current !== 'focus-hover' && modeRef.current !== 'nook-alert') return;
+    leaveTimerRef.current = setTimeout(() => {
+      leaveTimerRef.current = null;
+      if (isAnyHovered()) return;
+      if (modeRef.current === 'focus-hover' || modeRef.current === 'nook-alert') {
+        window.island.setMode(resolveCollapsedMode());
+      }
+    }, 240);
+  };
+
+  const hasState = Boolean(state);
+  useEffect(() => {
+    if (!hasState) return;
+    if (!dropKind) cardHoveredRef.current = false;
+    if (!wingKind) wingHoveredRef.current = false;
+    if (!dropKind && !wingKind) {
+      anchorHoveredRef.current = false;
+      clearLeaveTimer();
+      sendHit(false, true);
+      return;
+    }
+    if (dropKind !== 'board') {
+      sendHit(isAnyHovered(), true);
+    }
+  }, [hasState, dropKind, wingKind]);
 
   if (!state) return null;
 
-  function resolveCollapsedMode() {
-    return pomodoro?.active ? (pomodoro.kind === 'slacking' ? 'slacking' : 'focus') : 'idle';
+  function toggleBoard() {
+    clearLeaveTimer();
+    window.island.setMode(modeRef.current === 'board' ? resolveCollapsedMode() : 'board');
   }
 
-  function enterWing() {
-    if (!wingKindRef.current) {
-      window.island.hit(false);
-      return;
-    }
-    window.island.hit(true);
+  function openWingHover() {
     if (alerts.length > 0 && (mode === 'idle' || mode === 'focus')) window.island.setMode('nook-alert');
     else if (mode === 'focus' && pomodoro?.active) window.island.setMode('focus-hover');
   }
 
-  function enterCard(event?: { metaKey?: boolean }) {
-    if (event?.metaKey || !dropKindRef.current) {
-      window.island.hit(false);
+  function enterWing(event?: { metaKey?: boolean }) {
+    if (event?.metaKey || !wingKindRef.current) {
+      wingHoveredRef.current = false;
+      if (!isAnyHovered()) sendHit(false, true);
       return;
     }
-    window.island.hit(true);
+    clearLeaveTimer();
+    wingHoveredRef.current = true;
+    sendHit(true, true);
+    openWingHover();
+  }
+
+  function moveWing(event: { metaKey?: boolean }) {
+    if (event.metaKey || !wingKindRef.current) {
+      wingHoveredRef.current = false;
+      if (!isAnyHovered()) sendHit(false);
+      return;
+    }
+    const wasHovered = wingHoveredRef.current;
+    clearLeaveTimer();
+    wingHoveredRef.current = true;
+    sendHit(true);
+    if (!wasHovered) openWingHover();
+  }
+
+  function leaveWing() {
+    wingHoveredRef.current = false;
+    if (!isAnyHovered()) {
+      sendHit(false, true);
+      scheduleHoverCollapse();
+    }
+  }
+
+  function enterAnchor(event?: { metaKey?: boolean }) {
+    if (event?.metaKey || (!wingKindRef.current && !dropKindRef.current)) {
+      anchorHoveredRef.current = false;
+      if (!isAnyHovered()) sendHit(false, true);
+      return;
+    }
+    clearLeaveTimer();
+    anchorHoveredRef.current = true;
+    sendHit(true, true);
+  }
+
+  function moveAnchor(event: { metaKey?: boolean }) {
+    if (event.metaKey || (!wingKindRef.current && !dropKindRef.current)) {
+      anchorHoveredRef.current = false;
+      if (!isAnyHovered()) sendHit(false);
+      return;
+    }
+    clearLeaveTimer();
+    anchorHoveredRef.current = true;
+    sendHit(true);
+  }
+
+  function leaveAnchor() {
+    anchorHoveredRef.current = false;
+    if (!isAnyHovered()) {
+      if (modeRef.current !== 'board') sendHit(false, true);
+      scheduleHoverCollapse();
+    }
+  }
+
+  function enterCard(event?: { metaKey?: boolean }) {
+    if (event?.metaKey || !dropKindRef.current) {
+      cardHoveredRef.current = false;
+      if (!isAnyHovered()) sendHit(false, true);
+      return;
+    }
+    clearLeaveTimer();
+    cardHoveredRef.current = true;
+    sendHit(true, true);
+  }
+
+  function moveCard(event: { metaKey?: boolean }) {
+    if (event.metaKey || !dropKindRef.current) {
+      cardHoveredRef.current = false;
+      if (!isAnyHovered()) sendHit(false);
+      return;
+    }
+    clearLeaveTimer();
+    cardHoveredRef.current = true;
+    sendHit(true);
   }
 
   function leaveCard() {
-    if (mode === 'focus-hover' || mode === 'nook-alert') window.island.setMode(resolveCollapsedMode());
-    window.island.hit(false);
+    cardHoveredRef.current = false;
+    if (!isAnyHovered()) {
+      sendHit(false, true);
+      scheduleHoverCollapse();
+    }
   }
 
   function startFocus(task?: { id: string | null; title: string }) {
@@ -336,19 +477,32 @@ export function NotchIsland() {
     <div
       className="isl-stage"
       onPointerMove={event => {
-        if (event.metaKey || !(event.target as Element | null)?.closest?.('.isl-drop-card, .isl-menubar-wings, .isl-notch-anchor')) {
-          window.island.hit(false);
+        if (event.metaKey || !(event.target as Element | null)?.closest?.('.isl-drop-slot, .isl-drop-card, .isl-menubar-wings, .isl-notch-anchor')) {
+          wingHoveredRef.current = false;
+          anchorHoveredRef.current = false;
+          cardHoveredRef.current = false;
+          sendHit(false);
         }
       }}
       onPointerDown={event => {
         if (event.target === event.currentTarget) {
-          window.island.hit(false);
+          wingHoveredRef.current = false;
+          anchorHoveredRef.current = false;
+          cardHoveredRef.current = false;
+          clearLeaveTimer();
+          sendHit(false, true);
           if (mode === 'board' || mode === 'focus-hover' || mode === 'nook-alert') {
             window.island.setMode(resolveCollapsedMode());
           }
         }
       }}
-      onPointerLeave={() => window.island.hit(false)}
+      onPointerLeave={() => {
+        wingHoveredRef.current = false;
+        anchorHoveredRef.current = false;
+        cardHoveredRef.current = false;
+        sendHit(false, true);
+        scheduleHoverCollapse();
+      }}
     >
       <div
         style={
@@ -390,17 +544,10 @@ export function NotchIsland() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1, transition: { duration: 0.14, ease } }}
               exit={{ opacity: 0, transition: { duration: 0.12, ease: 'easeIn' } }}
-              onPointerEnter={event => {
-                if (event.metaKey || (!wingKindRef.current && !dropKindRef.current)) {
-                  window.island.hit(false);
-                  return;
-                }
-                window.island.hit(true);
-              }}
-              onPointerLeave={() => {
-                if (mode !== 'board') window.island.hit(false);
-              }}
-              onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+              onPointerEnter={enterAnchor}
+              onPointerMove={moveAnchor}
+              onPointerLeave={leaveAnchor}
+              onClick={toggleBoard}
             />
           )}
         </AnimatePresence>
@@ -415,20 +562,15 @@ export function NotchIsland() {
                 initial={{ opacity: 0, scaleX: 0.72, scaleY: 0.65, y: -6 }}
                 animate={{ opacity: 1, scaleX: 1, scaleY: 1, y: 0, transition: spring }}
                 exit={{ opacity: 0, scaleX: 0.76, scaleY: 0.65, y: -6, transition: { duration: 0.16, ease } }}
-                onPointerEnter={event => {
-                  if (event.metaKey) {
-                    window.island.hit(false);
-                    return;
-                  }
-                  enterWing();
-                }}
-                onPointerMove={event => {
-                  if (event.metaKey) window.island.hit(false);
-                }}
+                onPointerEnter={enterWing}
+                onPointerMove={moveWing}
                 onPointerDown={event => {
-                  if (event.metaKey) window.island.hit(false);
+                  if (event.metaKey) {
+                    wingHoveredRef.current = false;
+                    sendHit(false, true);
+                  }
                 }}
-                onPointerLeave={leaveCard}
+                onPointerLeave={leaveWing}
               >
                 <AnimatePresence mode="wait" initial={false}>
                   <motion.div
@@ -443,7 +585,7 @@ export function NotchIsland() {
                         type="button"
                         className="isl-wing-hit"
                         aria-label="展开今日聚焦看板"
-                        onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+                        onClick={toggleBoard}
                       >
                         <span className="isl-wing isl-wing-left">
                           <span className="isl-dot-faint" />
@@ -470,7 +612,7 @@ export function NotchIsland() {
                         type="button"
                         className="isl-wing-hit"
                         aria-label={`专注计时 ${pomodoro.taskTitle}`}
-                        onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+                        onClick={toggleBoard}
                       >
                         <span className="isl-wing isl-wing-left">
                           <Timer size={13} className="isl-wing-ic" />
@@ -490,7 +632,7 @@ export function NotchIsland() {
                         type="button"
                         className="isl-wing-hit"
                         aria-label="Nook 紧迫提醒"
-                        onClick={() => window.island.setMode(mode === 'board' ? resolveCollapsedMode() : 'board')}
+                        onClick={toggleBoard}
                       >
                         <span className="isl-wing isl-wing-left">
                           <span className="isl-dot-clay" />
@@ -540,10 +682,12 @@ export function NotchIsland() {
                 initial={{ opacity: 0, y: -14, scale: 0.92 }}
                 animate={{ opacity: 1, y: 0, scale: 1, transition: spring }}
                 exit={{ opacity: 0, y: -10, scale: 0.94, transition: { duration: 0.16, ease } }}
-                className={`isl-drop-card mode-${dropKind}`}
+                className="isl-drop-slot"
                 onPointerEnter={enterCard}
+                onPointerMove={moveCard}
                 onPointerLeave={leaveCard}
               >
+                <div className={`isl-drop-card mode-${dropKind}`}>
                 {dropKind === 'focus-hover' && pomodoro && (
                   <div className="isl-mini-card">
                     <div className="isl-blk-lbl">
@@ -877,6 +1021,7 @@ export function NotchIsland() {
                     </div>
                   </div>
                 )}
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

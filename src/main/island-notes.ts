@@ -1,5 +1,5 @@
 import { app, clipboard, ClipboardItem, ipcMain, nativeImage, protocol, screen, shell } from 'electron';
-import type { BrowserWindow, Display, IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron';
+import type { BrowserWindow, Display, IpcMainEvent, IpcMainInvokeEvent, NativeImage, Point, Rectangle } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -7,11 +7,14 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { appearanceOf, type EdgeNotesState, type IslandState, type Settings } from '../shared/contracts';
+import { appearanceOf, type EdgeNotesState, type IslandState, type NotesResizeEdge, type Settings } from '../shared/contracts';
 import { writeFileAtomic } from './files';
 import { createIslandWindow } from './island-window';
+import { fitToWorkArea } from './position';
 
 const NOTES_W = 448, NOTES_H = 528;
+const NOTES_MIN_W = 360, NOTES_MIN_H = 320;
+const RESIZE_EDGES = new Set<NotesResizeEdge>(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
 const SCRATCHPAD = 'Scratchpad.md';
 const ASSETS_DIR = 'assets';
 const MAX_NOTE_IMAGE_BYTES = 32 * 1024 * 1024;
@@ -215,7 +218,9 @@ export interface EdgeNotesDeps {
 export class EdgeNotes {
   readonly window: BrowserWindow;
   private state: Omit<EdgeNotesState, 'notes'>;
-  private boundsByDisplay = new Map<number, { x: number; y: number }>();
+  private boundsByDisplay = new Map<number, Rectangle>();
+  private lastSize = { width: NOTES_W, height: NOTES_H };
+  private resizeDrag: { edge: NotesResizeEdge; cursor: Point; bounds: Rectangle; workArea: Rectangle } | null = null;
   private quitting = false;
 
   constructor(fonts: IslandState['fonts'], private deps: EdgeNotesDeps) {
@@ -237,9 +242,10 @@ export class EdgeNotes {
 
     this.window = createIslandWindow(NOTES_W, NOTES_H, { focusable: true });
     this.window.setMovable(true);
+    this.window.setResizable(true);
+    this.window.setMinimumSize(NOTES_MIN_W, NOTES_MIN_H);
     this.window.setAlwaysOnTop(true, 'floating');
     this.window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    this.window.webContents.setIgnoreMenuShortcuts(true);
     this.window.on('close', event => {
       if (!this.quitting) {
         event.preventDefault();
@@ -254,15 +260,24 @@ export class EdgeNotes {
       this.state.focused = false;
       this.publish();
     });
-    this.window.on('moved', () => {
+    const rememberBounds = () => {
+      if (this.window.isDestroyed() || !this.state.open) return;
       const bounds = this.window.getBounds();
       const display = screen.getDisplayMatching(bounds);
-      this.boundsByDisplay.set(display.id, { x: bounds.x, y: bounds.y });
-    });
+      this.boundsByDisplay.set(display.id, bounds);
+      this.lastSize = { width: bounds.width, height: bounds.height };
+    };
+    this.window.on('moved', rememberBounds);
+    this.window.on('resized', rememberBounds);
     this.window.webContents.on('before-input-event', (event, input) => {
-      if (input.type === 'keyDown' && input.meta && input.key.toLowerCase() === 'w') {
+      if (input.type !== 'keyDown' || !input.meta || input.control || input.alt || input.shift) return;
+      const key = input.key.toLowerCase();
+      if (key === 'w') {
         event.preventDefault();
         this.hideDrawer();
+      } else if (key === 'n') {
+        event.preventDefault();
+        this.window.webContents.send('notes:new');
       }
     });
 
@@ -327,10 +342,67 @@ export class EdgeNotes {
       check(event);
       const file = this.noteFile(name);
       if (!file) return;
-      const image = await this.window.webContents.capturePage({ x: 14, y: 14, width: NOTES_W - 28, height: NOTES_H - 28 });
+      const [contentW, contentH] = this.window.getContentSize();
+      const image = await this.window.webContents.capturePage({
+        x: 14,
+        y: 14,
+        width: Math.max(1, contentW - 28),
+        height: Math.max(1, contentH - 28)
+      });
       if (!image.isEmpty()) {
         await this.deps.onPinImage(image);
         this.deps.toast(`已将「${file.replace(/\.md$/i, '')}」钉为桌面贴图`, 'Pin');
+      }
+    });
+    ipcMain.on('notes:resize-start', (event, edge: NotesResizeEdge) => {
+      check(event);
+      if (this.window.isDestroyed() || !RESIZE_EDGES.has(edge)) return;
+      const bounds = this.window.getBounds();
+      const workArea = screen.getDisplayMatching(bounds).workArea;
+      this.resizeDrag = { edge, cursor: screen.getCursorScreenPoint(), bounds, workArea };
+    });
+    ipcMain.on('notes:resize-move', event => {
+      check(event);
+      if (!this.resizeDrag || this.window.isDestroyed()) return;
+      const { edge, cursor: startCursor, bounds, workArea } = this.resizeDrag;
+      const cursor = screen.getCursorScreenPoint();
+      const dx = cursor.x - startCursor.x;
+      const dy = cursor.y - startCursor.y;
+      const minW = Math.min(NOTES_MIN_W, workArea.width);
+      const minH = Math.min(NOTES_MIN_H, workArea.height);
+      let x = bounds.x;
+      let y = bounds.y;
+      let width = bounds.width;
+      let height = bounds.height;
+      if (edge.includes('e')) {
+        const maxW = Math.max(minW, workArea.x + workArea.width - bounds.x);
+        width = Math.max(minW, Math.min(bounds.width + dx, maxW));
+      } else if (edge.includes('w')) {
+        const right = bounds.x + bounds.width;
+        const maxW = Math.max(minW, right - workArea.x);
+        width = Math.max(minW, Math.min(bounds.width - dx, maxW));
+        x = right - width;
+      }
+      if (edge.includes('s')) {
+        const maxH = Math.max(minH, workArea.y + workArea.height - bounds.y);
+        height = Math.max(minH, Math.min(bounds.height + dy, maxH));
+      } else if (edge.includes('n')) {
+        const bottom = bounds.y + bounds.height;
+        const maxH = Math.max(minH, bottom - workArea.y);
+        height = Math.max(minH, Math.min(bounds.height - dy, maxH));
+        y = bottom - height;
+      }
+      this.window.setBounds({ x: Math.round(x), y: Math.round(y), width: Math.round(width), height: Math.round(height) }, false);
+    });
+    ipcMain.on('notes:resize-end', event => {
+      check(event);
+      if (!this.resizeDrag) return;
+      this.resizeDrag = null;
+      if (!this.window.isDestroyed()) {
+        const bounds = this.window.getBounds();
+        const display = screen.getDisplayMatching(bounds);
+        this.boundsByDisplay.set(display.id, bounds);
+        this.lastSize = { width: bounds.width, height: bounds.height };
       }
     });
     ipcMain.handle('notes:save-image', (event, payload: { bytes: Uint8Array; name?: string; mimeType?: string }) => {
@@ -399,14 +471,30 @@ export class EdgeNotes {
   place(display: Display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())) {
     if (this.window.isDestroyed()) return;
     const area = display.workArea;
-    const position = this.boundsByDisplay.get(display.id) ?? { x: area.x + area.width - NOTES_W - 24, y: area.y + 44 };
-    this.window.setBounds({ ...position, width: NOTES_W, height: NOTES_H });
+    const saved = this.boundsByDisplay.get(display.id);
+    const width = Math.max(Math.min(NOTES_MIN_W, area.width), Math.min(saved?.width ?? this.lastSize.width, area.width));
+    const height = Math.max(Math.min(NOTES_MIN_H, area.height), Math.min(saved?.height ?? this.lastSize.height, area.height));
+    const target: Rectangle = saved
+      ? { x: saved.x, y: saved.y, width, height }
+      : { x: area.x + area.width - width - 24, y: area.y + 44, width, height };
+    this.window.setBounds(fitToWorkArea(target, area));
+  }
+
+  fitOnScreen() {
+    if (this.window.isDestroyed() || !this.state.open) return;
+    const bounds = this.window.getBounds();
+    const display = screen.getDisplayMatching(bounds);
+    const fitted = fitToWorkArea(bounds, display.workArea);
+    if (fitted.x !== bounds.x || fitted.y !== bounds.y || fitted.width !== bounds.width || fitted.height !== bounds.height) {
+      this.window.setBounds(fitted);
+    }
   }
 
   openDrawer() {
     if (this.window.isDestroyed()) return;
+    const wasVisible = this.window.isVisible();
     this.reload();
-    this.place();
+    if (!wasVisible) this.place();
     this.state.open = true;
     this.state.focused = true;
     this.publish();
@@ -416,6 +504,7 @@ export class EdgeNotes {
 
   hideDrawer() {
     if (this.window.isDestroyed()) return;
+    this.resizeDrag = null;
     this.state.open = false;
     this.state.focused = false;
     this.window.hide();

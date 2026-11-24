@@ -535,6 +535,8 @@ export interface EdgeNoteItem {
   content: string;
   updatedAt?: number;
 }
+export type NotesResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
 export type EdgeNotesState = {
   open: boolean;
   focused: boolean;
@@ -630,6 +632,10 @@ export interface IslandAPI {
   pasteNoteClipboardImage(): Promise<{ relativePath: string } | null>;
   copyNoteImage(src: string): Promise<{ error: string | null }>;
   openNoteImage(src: string, action: 'open' | 'pin'): Promise<{ error: string | null }>;
+  startNotesResize(edge: NotesResizeEdge): void;
+  moveNotesResize(): void;
+  endNotesResize(): void;
+  onNotesNew(callback: () => void): () => void;
   onNotesState(callback: (state: EdgeNotesState) => void): () => void;
   // Finder Super Action Panel surface API
   getFinderState(): Promise<FinderPanelState>;

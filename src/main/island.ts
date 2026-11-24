@@ -586,8 +586,12 @@ export class NotchIsland {
   private lastPublishedMode: IslandMode = 'idle';
   private destroyed = false;
   private mousePassthrough = false;
+  private pointerInside = false;
 
-  private readonly onDisplayMetricsChanged = () => this.placeWindows();
+  private readonly onDisplayMetricsChanged = () => {
+    this.placeIslandWindow();
+    this.notes.fitOnScreen();
+  };
 
   constructor(private callbacks: NotchIslandCallbacks) {
     this.ax = process.env.LASSO_DATA_ROOT ? {} : nativeAx();
@@ -665,8 +669,17 @@ export class NotchIsland {
     });
     ipcMain.on('island:mode', (event, mode: IslandMode) => {
       if (this.destroyed || !fromMainFrame(event, this.window) || !MODES.includes(mode)) return;
+      const prevMode = this.mode;
       this.mode = mode;
+      if (prevMode === 'toast' && mode !== 'toast') {
+        if (this.toastTimer) {
+          clearTimeout(this.toastTimer);
+          this.toastTimer = null;
+        }
+        this.toastItem = null;
+      }
       if (this.mode === 'board') {
+        this.refreshNookData();
         this.setMousePassthrough(false);
       } else {
         this.syncMousePassthrough();
@@ -675,14 +688,8 @@ export class NotchIsland {
     });
     ipcMain.on('island:hit', (event, inside: boolean) => {
       if (this.destroyed || !fromMainFrame(event, this.window) || typeof inside !== 'boolean') return;
-      const allowHit =
-        inside &&
-        (this.mode === 'board' ||
-          this.mode === 'focus-hover' ||
-          this.mode === 'nook-alert' ||
-          this.mode === 'slacking' ||
-          this.isCapsuleActive());
-      this.setMousePassthrough(!allowHit);
+      this.pointerInside = inside;
+      this.syncMousePassthrough();
     });
     ipcMain.handle('island:pomo-start', (event, task?: { id: string | null; title: string }, minutes?: number, kind: 'focus' | 'slacking' = 'focus') => {
       check(event);
@@ -749,7 +756,7 @@ export class NotchIsland {
       if (this.mode === 'board') {
         this.closeBoard();
       } else {
-        this.syncMousePassthrough();
+        this.syncMousePassthrough(true);
       }
       if (action === 'toggle-notes') {
         this.notes.toggleDrawer();
@@ -885,7 +892,7 @@ export class NotchIsland {
       if (this.mode === 'board') {
         this.mode = this.resolveBaseMode();
       }
-      this.syncMousePassthrough();
+      this.syncMousePassthrough(true);
       this.ax.notchGeometry?.(false);
       if (!this.window.isDestroyed() && this.window.isVisible()) {
         this.window.hide();
@@ -897,7 +904,7 @@ export class NotchIsland {
       if (this.mode === 'board') {
         this.mode = this.resolveBaseMode();
       }
-      this.syncMousePassthrough();
+      this.syncMousePassthrough(true);
       this.ax.notchGeometry?.(false);
     }
 
@@ -942,7 +949,6 @@ export class NotchIsland {
 
   private placeWindows(geo?: ReturnType<NonNullable<NativeAx['notchGeometry']>>) {
     this.placeIslandWindow(geo);
-    this.notes.place();
   }
 
   private resolveBaseMode(): IslandMode {
@@ -984,14 +990,33 @@ export class NotchIsland {
     };
   }
 
+  private canAcceptMouse(): boolean {
+    if (this.destroyed || this.fullscreenHidden || this.isFullscreenClock()) return false;
+    if (!this.islandEnabled && this.mode !== 'board') return false;
+    return (
+      this.mode === 'board' ||
+      this.mode === 'focus-hover' ||
+      this.mode === 'nook-alert' ||
+      this.mode === 'slacking' ||
+      this.isCapsuleActive()
+    );
+  }
+
   private setMousePassthrough(enabled: boolean) {
     if (this.destroyed || this.window.isDestroyed() || this.mousePassthrough === enabled) return;
     this.window.setIgnoreMouseEvents(enabled, { forward: true });
     this.mousePassthrough = enabled;
   }
 
-  private syncMousePassthrough() {
-    if (this.mode !== 'board') this.setMousePassthrough(true);
+  private syncMousePassthrough(forcePassthrough = false) {
+    if (forcePassthrough) {
+      this.pointerInside = false;
+      this.setMousePassthrough(true);
+      return;
+    }
+    const allowHit = this.pointerInside && this.canAcceptMouse();
+    if (!allowHit) this.pointerInside = false;
+    this.setMousePassthrough(!allowHit);
   }
 
   private publish() {
@@ -1024,7 +1049,7 @@ export class NotchIsland {
       if (!nextEnabled) {
         this.ax.notchGeometry?.(false);
         this.mode = 'idle';
-        this.syncMousePassthrough();
+        this.syncMousePassthrough(true);
         if (!this.window.isDestroyed() && this.window.isVisible()) this.window.hide();
       } else if (this.shouldShowWindow() && !this.window.isDestroyed() && !this.window.isVisible()) {
         this.window.showInactive();
@@ -1042,7 +1067,12 @@ export class NotchIsland {
     }
     this.ax.setFinderTriggerOptions?.(settings.finderTriggers.middleClick, settings.finderTriggers.rightHold);
 
-    if (this.mode !== 'board' && this.mode !== 'toast') {
+    if (
+      this.mode !== 'board' &&
+      this.mode !== 'toast' &&
+      !(this.mode === 'nook-alert' && this.alerts.length > 0) &&
+      !(this.mode === 'focus-hover' && this.pomodoro?.active)
+    ) {
       this.mode = this.resolveBaseMode();
     }
     this.publish();
@@ -1118,7 +1148,7 @@ export class NotchIsland {
     if (this.mode !== 'toast') {
       this.mode = this.resolveBaseMode();
     }
-    this.syncMousePassthrough();
+    this.syncMousePassthrough(true);
     if (!this.window.isDestroyed()) this.window.blur();
     this.publish();
   }
@@ -1217,9 +1247,13 @@ export class NotchIsland {
     if (this.mode !== 'board') this.mode = 'toast';
     this.publish();
     this.toastTimer = setTimeout(() => {
+      this.toastTimer = null;
       this.toastItem = null;
       if (this.mode === 'toast') {
-        this.mode = previousMode === 'toast' ? this.resolveBaseMode() : previousMode;
+        this.mode =
+          previousMode === 'toast' || previousMode === 'nook-alert' || previousMode === 'focus-hover'
+            ? this.resolveBaseMode()
+            : previousMode;
       }
       this.syncMousePassthrough();
       this.publish();
@@ -1326,7 +1360,7 @@ export class NotchIsland {
       ...(meta ?? {})
     }));
     this.alerts = this.alerts.filter(a => a.id !== alertId);
-    if (this.mode !== 'board') {
+    if (this.mode !== 'board' && !(this.mode === 'nook-alert' && this.alerts.length > 0)) {
       this.mode = this.resolveBaseMode();
       this.syncMousePassthrough();
     }
@@ -1355,7 +1389,7 @@ export class NotchIsland {
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'dismiss', id: alertId }));
     }
     this.persistDismissedAlerts();
-    if (this.mode !== 'board') {
+    if (this.mode !== 'board' && !(this.mode === 'nook-alert' && this.alerts.length > 0)) {
       this.mode = this.resolveBaseMode();
       this.syncMousePassthrough();
     }
@@ -1369,7 +1403,7 @@ export class NotchIsland {
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'restart-launchd', label }));
     });
     this.alerts = this.alerts.filter(a => a.target !== label && a.id !== label && a.id !== `launchd:${label}`);
-    if (this.mode !== 'board') {
+    if (this.mode !== 'board' && !(this.mode === 'nook-alert' && this.alerts.length > 0)) {
       this.mode = this.resolveBaseMode();
       this.syncMousePassthrough();
     }
@@ -1409,7 +1443,7 @@ export class NotchIsland {
         this.alerts = [];
       }
       this.persistDismissedAlerts();
-      if (this.mode !== 'board') {
+      if (this.mode !== 'board' && !(this.mode === 'nook-alert' && this.alerts.length > 0)) {
         this.mode = this.resolveBaseMode();
         this.syncMousePassthrough();
       }

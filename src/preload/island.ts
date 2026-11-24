@@ -50,6 +50,10 @@ const api: IslandAPI = {
   pasteNoteClipboardImage: () => ipcRenderer.invoke('notes:paste-clipboard-image'),
   copyNoteImage: src => ipcRenderer.invoke('notes:copy-image', src),
   openNoteImage: (src, action) => ipcRenderer.invoke('notes:open-image', src, action),
+  startNotesResize: edge => ipcRenderer.send('notes:resize-start', edge),
+  moveNotesResize: () => ipcRenderer.send('notes:resize-move'),
+  endNotesResize: () => ipcRenderer.send('notes:resize-end'),
+  onNotesNew: callback => on<void>('notes:new', callback),
   onNotesState: callback => on<EdgeNotesState>('notes:changed', callback),
 
   getFinderState: () => ipcRenderer.invoke('finder:state'),
