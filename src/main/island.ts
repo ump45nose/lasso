@@ -1394,7 +1394,15 @@ export class NotchIsland {
     if (nextCompleted) {
       this.alerts = this.alerts.filter(a => a.id !== taskId && a.target !== taskId);
       if (this.pomodoro?.taskId === taskId) {
-        this.stopPomodoro();
+        if (this.mode === 'board') {
+          if (this.tickTimer) {
+            clearInterval(this.tickTimer);
+            this.tickTimer = null;
+          }
+          this.pomodoro = null;
+        } else {
+          this.stopPomodoro();
+        }
       }
       if (this.mode === 'nook-alert' && this.alerts.length === 0) {
         this.mode = this.resolveBaseMode();

@@ -663,6 +663,8 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       names.push(await save(isl, 'v4-b4-island-alert'));
 
       isl.setSize(440, 740);
+      await page(isl, `window.island.setMode('board')`);
+      await wait(150);
       isl.webContents.send('island:changed', islFixtures.board);
       await wait(400);
       if (await page(isl, `document.body.textContent.includes('Codex')`)) throw Error('B4 Island board still contains retired CLI');
@@ -691,6 +693,25 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         throw Error('B4 Island board quick tools (剪贴板等) clipped below visible card bounds');
       }
       names.push(await save(isl, 'v4-b4-island-board'));
+
+      // Verify task completion animation (clay checkbox burst + strike-through before committing completion)
+      await page(isl, `document.querySelector('[aria-label="完成 替换 hermes 与整理工作流"]')?.click()`);
+      await wait(160);
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-task.completing') && document.querySelector('.isl-chk.completing'))`))) {
+        throw Error('B4 Island board task completion animation class did not activate');
+      }
+      global.uiShots.fs.writeFileSync(
+        global.uiShots.path.join(global.uiShots.out, 'v4-b4-island-board-task-complete.png'),
+        (await isl.webContents.capturePage()).toPNG()
+      );
+      names.push('v4-b4-island-board-task-complete');
+      await wait(450);
+      if (await page(isl, `Boolean(document.querySelector('.isl-task.completing'))`)) {
+        throw Error('B4 Island board task completion animation did not settle');
+      }
+      // Restore full fixture board state for subsequent tab checks
+      isl.webContents.send('island:changed', islFixtures.board);
+      await wait(250);
 
       // Switch to 工具 tab (merged menu bar controls)
       await page(isl, `[...document.querySelectorAll('.isl-board-tab')].find(b => b.textContent.includes('工具'))?.click()`);

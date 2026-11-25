@@ -253,7 +253,9 @@ export function NotchIsland() {
   const [quitArmed, setQuitArmed] = useState(false);
   const [activeListTab, setActiveListTab] = useState<string>('focus');
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [completingIds, setCompletingIds] = useState<Set<string>>(() => new Set());
   const [clockText, setClockText] = useState<string>(() => formatNowClock(new Date()));
+  const completeTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   useAppearance(state?.fonts);
 
   useEffect(() => {
@@ -270,6 +272,11 @@ export function NotchIsland() {
     return () => {
       stop();
       if (leaveTimerRef.current) clearTimeout(leaveTimerRef.current);
+      for (const [taskId, timer] of completeTimersRef.current) {
+        clearTimeout(timer);
+        void window.island.completeTask(taskId);
+      }
+      completeTimersRef.current.clear();
     };
   }, []);
 
@@ -421,6 +428,23 @@ export function NotchIsland() {
     return () => clearTimeout(timer);
   }, [quitArmed]);
 
+  useEffect(() => {
+    setCompletingIds(prev => {
+      if (prev.size === 0) return prev;
+      let changed = false;
+      const next = new Set(prev);
+      for (const id of prev) {
+        if (completeTimersRef.current.has(id)) continue;
+        const item = nookTasks.find(t => t.id === id);
+        if (!item || item.completed) {
+          next.delete(id);
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [nookTasks]);
+
   if (!state) return null;
 
   function toggleBoard() {
@@ -530,6 +554,34 @@ export function NotchIsland() {
     const candidate = visibleOpenTasks[0] ?? focusOpenTasks[0];
     const first = task ?? (candidate ? { id: candidate.id, title: candidate.title } : undefined);
     void window.island.startPomodoro(first, undefined, 'focus');
+  }
+
+  function triggerCompleteTask(taskId: string) {
+    if (completingIds.has(taskId) || completeTimersRef.current.has(taskId)) return;
+    setExpandedTaskId(prev => (prev === taskId ? null : prev));
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      void window.island.completeTask(taskId);
+      return;
+    }
+    setCompletingIds(prev => {
+      const next = new Set(prev);
+      next.add(taskId);
+      return next;
+    });
+    const timer = setTimeout(() => {
+      completeTimersRef.current.delete(taskId);
+      void window.island.completeTask(taskId).finally(() => {
+        setTimeout(() => {
+          setCompletingIds(prev => {
+            if (!prev.has(taskId)) return prev;
+            const next = new Set(prev);
+            next.delete(taskId);
+            return next;
+          });
+        }, 120);
+      });
+    }, 360);
+    completeTimersRef.current.set(taskId, timer);
   }
 
   const urgentTitle = focusOpenTasks[0]?.title || nookReviewBadge?.label || '';
@@ -938,15 +990,8 @@ export function NotchIsland() {
                       </div>
                     </header>
 
-                    <AnimatePresence mode="wait" initial={false}>
-                      {boardTab === 'focus' ? (
-                        <motion.div
-                          key="board-focus"
-                          className="isl-board-pane"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
-                          exit={{ opacity: 0, y: -4, transition: { duration: 0.09, ease: 'easeIn' } }}
-                        >
+                    {boardTab === 'focus' ? (
+                      <div key="board-focus" className="isl-board-pane">
 
                     {/* 1. Alert Block (only when pending alerts exist) */}
                     <AnimatePresence initial={false}>
@@ -1045,7 +1090,10 @@ export function NotchIsland() {
                       <div className="isl-blk-lbl">
                         <ListChecks size={13} />
                         <span>Google Tasks</span>
-                        <span className="r mono">
+                        <span
+                          key={effectiveTab === 'focus' ? `${nookCompletedCount}/${nookTotalCount}` : `open-${visibleOpenTasks.length}`}
+                          className="r mono isl-count-tick"
+                        >
                           {effectiveTab === 'focus' ? `${nookCompletedCount} / ${nookTotalCount}` : `${visibleOpenTasks.length} 待办`}
                         </span>
                         <button
@@ -1099,43 +1147,54 @@ export function NotchIsland() {
                           {visibleTasks.length === 0 ? (
                             <div className="isl-task-empty">{effectiveTab === 'focus' ? '今日重点已全部清空' : '该清单暂无待办'}</div>
                           ) : (
-                            <div className="isl-task-list">
+                            <LayoutGroup id="isl-task-list">
+                              <div className="isl-task-list">
+                                <AnimatePresence initial={false}>
                               {visibleTasks.map(task => {
                                 const hasNotes = Boolean(task.notes);
-                                const isExpanded = hasNotes && expandedTaskId === task.id;
+                                const isCompleting = !task.completed && completingIds.has(task.id);
+                                const isDone = Boolean(task.completed);
+                                const isExpanded = hasNotes && !isCompleting && expandedTaskId === task.id;
                                 const secondaryTag =
                                   effectiveTab === 'focus' && task.listTitle && task.listTitle !== '一般性' && task.listTitle !== 'Google Tasks'
                                     ? shortTag(task.listTitle)
                                     : '';
                                 return (
-                                  <div key={task.id} className={'isl-task-wrap' + (isExpanded ? ' open' : '')}>
-                                    <div className={'isl-task' + (task.completed ? ' done' : '') + (hasNotes ? ' has-notes' : '')}>
+                                  <motion.div
+                                    key={task.id}
+                                    layout="position"
+                                    transition={{ layout: spring }}
+                                    exit={{ opacity: 0, height: 0, x: 8, transition: { duration: 0.2, ease } }}
+                                    className={'isl-task-wrap' + (isExpanded ? ' open' : '') + (isCompleting ? ' completing' : '')}
+                                  >
+                                    <div className={'isl-task' + (isDone ? ' done' : '') + (isCompleting ? ' completing' : '') + (hasNotes ? ' has-notes' : '')}>
                                       <button
                                         type="button"
-                                        className={'isl-chk' + (task.completed ? ' on' : '')}
+                                        className={'isl-chk' + (isDone ? ' on' : '') + (isCompleting ? ' completing' : '')}
                                         aria-label={`完成 ${task.title}`}
-                                        disabled={Boolean(task.completed)}
+                                        disabled={isDone || isCompleting}
                                         onClick={event => {
                                           event.stopPropagation();
-                                          void window.island.completeTask(task.id);
+                                          triggerCompleteTask(task.id);
                                         }}
                                       >
-                                        {task.completed && <Check size={11} />}
+                                        {(isDone || isCompleting) && <Check size={11} />}
                                       </button>
                                       {hasNotes ? (
                                         <button
                                           type="button"
                                           className="isl-task-main"
                                           aria-expanded={isExpanded}
+                                          disabled={isCompleting}
                                           onClick={() => setExpandedTaskId(prev => (prev === task.id ? null : task.id))}
                                         >
-                                          <span className="t trunc">{task.title}</span>
+                                          <span className="t trunc"><span className="t-label">{task.title}</span></span>
                                           <FileText size={11} className="isl-note-ic" aria-hidden="true" />
                                         </button>
                                       ) : (
-                                        <span className="t trunc">{task.title}</span>
+                                        <span className="t trunc"><span className="t-label">{task.title}</span></span>
                                       )}
-                                      {!task.completed && (
+                                      {!isDone && !isCompleting && (
                                         <button
                                           type="button"
                                           className="isl-task-focus"
@@ -1145,11 +1204,11 @@ export function NotchIsland() {
                                           <span>专注</span>
                                         </button>
                                       )}
-                                      {!task.completed && task.routineSlot ? (
+                                      {!isDone && !isCompleting && task.routineSlot ? (
                                         <span className="isl-task-slot">{task.routineSlot}</span>
-                                      ) : !task.completed && task.dueLabel ? (
+                                      ) : !isDone && !isCompleting && task.dueLabel ? (
                                         <span className={'due mono' + (task.overdue ? ' late' : '')}>{task.dueLabel}</span>
-                                      ) : !task.completed && secondaryTag ? (
+                                      ) : !isDone && !isCompleting && secondaryTag ? (
                                         <span className="due">{secondaryTag}</span>
                                       ) : null}
                                     </div>
@@ -1160,10 +1219,12 @@ export function NotchIsland() {
                                         </motion.div>
                                       )}
                                     </AnimatePresence>
-                                  </div>
+                                  </motion.div>
                                 );
                               })}
-                            </div>
+                                </AnimatePresence>
+                              </div>
+                            </LayoutGroup>
                           )}
                         </motion.div>
                       </AnimatePresence>
@@ -1193,15 +1254,9 @@ export function NotchIsland() {
                         </button>
                       ))}
                     </div>
-                        </motion.div>
-                      ) : (
-                        <motion.div
-                          key="board-tools"
-                          className="isl-board-pane isl-tools-pane"
-                          initial={{ opacity: 0, y: 4 }}
-                          animate={{ opacity: 1, y: 0, transition: { duration: 0.16, ease } }}
-                          exit={{ opacity: 0, y: -4, transition: { duration: 0.09, ease: 'easeIn' } }}
-                        >
+                      </div>
+                    ) : (
+                      <div key="board-tools" className="isl-board-pane isl-tools-pane">
                           {/* 1. Core Windows & AI */}
                           <div className="isl-blk">
                             <div className="isl-blk-lbl">
@@ -1548,9 +1603,8 @@ export function NotchIsland() {
                               <span className="isl-toggle-state">{state.copyTranslateEnabled ? '开' : '关'}</span>
                             </button>
                           </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                      </div>
+                    )}
                   </div>
                 )}
                 </div>
