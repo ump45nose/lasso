@@ -750,6 +750,7 @@ export class NotchIsland {
     });
     ipcMain.handle('island:dismiss-alert', (event, alertId?: string) => {
       check(event);
+      if (alertId !== undefined && typeof alertId !== 'string') throw new Error('提醒 ID 无效');
       this.dismissAlert(alertId);
     });
     ipcMain.handle('island:restart-service', (event, label: string) => {
@@ -1424,12 +1425,14 @@ export class NotchIsland {
   dismissAlert(alertId?: string) {
     const dismissAll = !alertId || alertId === '*';
     if (dismissAll) {
+      if (this.alerts.length === 0) return;
       const ids = this.alerts.map(alert => alert.id);
       for (const a of this.alerts) {
         if (a.id) this.dismissedAlertKeys.add(a.id);
         this.dismissedAlertKeys.add(`${a.kind}:${a.target || ''}:${a.title}`);
       }
       this.alerts = [];
+      this.alertBridgeMeta.clear();
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'dismiss', ids }));
     } else {
       const target = this.alerts.find(a => a.id === alertId);
@@ -1440,6 +1443,7 @@ export class NotchIsland {
         this.dismissedAlertKeys.add(alertId);
       }
       this.alerts = this.alerts.filter(a => a.id !== alertId);
+      this.alertBridgeMeta.delete(alertId);
       this.ax.postBridge?.('com.nook.bridge.action', JSON.stringify({ action: 'dismiss', id: alertId }));
     }
     this.persistDismissedAlerts();

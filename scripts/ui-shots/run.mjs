@@ -671,6 +671,18 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
         throw Error('B4 Island board missing review pill or task tabs');
       }
       if (!(await page(isl, `(() => {
+        const btn = document.querySelector('[aria-label^="清除全部通知"]');
+        const head = document.querySelector('.isl-board-head');
+        if (!btn || btn.disabled || !btn.classList.contains('act') || !head) return false;
+        const headRect = head.getBoundingClientRect();
+        return [...head.querySelectorAll('button')].every(b => {
+          const r = b.getBoundingClientRect();
+          return r.left >= headRect.left - 1 && r.right <= headRect.right + 1;
+        });
+      })()`))) {
+        throw Error('B4 Island board clear-all-alerts button missing, disabled, or overflowing header');
+      }
+      if (!(await page(isl, `(() => {
         const card = document.querySelector('.isl-drop-card.mode-board');
         const tools = document.querySelector('.isl-tools6');
         if (!card || !tools) return false;
@@ -713,8 +725,8 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       await wait(200);
       isl.webContents.send('island:changed', islFixtures.boardIdle);
       await wait(350);
-      if (!(await page(isl, `Boolean(document.querySelector('.isl-pomo-chip')) && Boolean(document.querySelector('.isl-pomo-stepper')) && Boolean(document.querySelector('[aria-label="关闭结束提示音"]'))`))) {
-        throw Error('B4 Island idle timer missing duration presets, stepper or sound toggle');
+      if (!(await page(isl, `Boolean(document.querySelector('.isl-pomo-chip')) && Boolean(document.querySelector('.isl-pomo-stepper')) && Boolean(document.querySelector('[aria-label="关闭结束提示音"]')) && Boolean(document.querySelector('[aria-label="暂无可清除的通知"]')?.disabled)`))) {
+        throw Error('B4 Island idle timer missing duration presets, stepper, sound toggle or disabled clear-alerts button');
       }
       names.push(await save(isl, 'v4-b4-island-board-timer'));
 

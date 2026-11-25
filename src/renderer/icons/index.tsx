@@ -11,6 +11,7 @@ import {
   ArrowUp as LArrowUp,
   ArrowUpRight as LArrowUpRight,
   Barcode as LBarcode,
+  BellMinus as LBellMinus,
   BookOpen as LBookOpen,
   Brush as LBrush,
   Camera as LCamera,
@@ -238,6 +239,7 @@ export const EyeOff = make('EyeOff', LEyeOff, generalSketches.EyeOff);
 export const CircleAlert = make('CircleAlert', LCircleAlert, generalSketches.CircleAlert);
 export const Loader2 = make('Loader2', LLoader2, generalSketches.Loader2);
 export const Power = make('Power', LPower, generalSketches.Power);
+export const BellMinus = make('BellMinus', LBellMinus, generalSketches.BellMinus);
 export const File = make('File', LFile, contentSketches.File);
 export const FileText = make('FileText', LFileText, contentSketches.FileText);
 export const FileImage = make('FileImage', LFileImage, contentSketches.FileImage);

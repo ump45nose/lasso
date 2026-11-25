@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type CSSProperties } from 'react';
 import { AnimatePresence, LayoutGroup, motion } from 'motion/react';
 import {
   ArrowUpRight,
+  BellMinus,
   Camera,
   Check,
   ClipboardList,
@@ -883,40 +884,58 @@ export function NotchIsland() {
                           <ArrowUpRight size={11} />
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="isl-ib sm"
-                        aria-label="设置"
-                        title="设置 (⌘,)"
-                        onClick={() => void window.island.menuAction({ kind: 'open-settings' })}
-                      >
-                        <Settings size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className={quitArmed ? 'isl-quit-armed' : 'isl-ib sm'}
-                        aria-label={quitArmed ? '确认退出 Lasso' : '退出 Lasso'}
-                        title={quitArmed ? '再次点击退出 Lasso' : '退出 Lasso'}
-                        onClick={() => {
-                          if (quitArmed) {
+                      <div className="isl-head-acts">
+                        <button
+                          type="button"
+                          className={'isl-ib sm' + (alerts.length > 0 ? ' act' : '')}
+                          disabled={alerts.length === 0}
+                          aria-label={alerts.length > 0 ? `清除全部通知（${alerts.length} 条）` : '暂无可清除的通知'}
+                          title={alerts.length > 0 ? `一键清除全部通知（${alerts.length} 条）` : '暂无挂起通知'}
+                          onClick={() => {
                             setQuitArmed(false);
-                            void window.island.menuAction({ kind: 'quit' });
-                          } else {
-                            setQuitArmed(true);
-                          }
-                        }}
-                      >
-                        <Power size={13} />
-                        {quitArmed && <span>确认退出</span>}
-                      </button>
-                      <button
-                        type="button"
-                        className="isl-ib sm"
-                        aria-label="收起看板"
-                        onClick={() => window.island.setMode(resolveCollapsedMode())}
-                      >
-                        <X size={15} />
-                      </button>
+                            void window.island.dismissAlert('*');
+                          }}
+                        >
+                          <BellMinus size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="isl-ib sm"
+                          aria-label="设置"
+                          title="设置 (⌘,)"
+                          onClick={() => {
+                            setQuitArmed(false);
+                            void window.island.menuAction({ kind: 'open-settings' });
+                          }}
+                        >
+                          <Settings size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className={quitArmed ? 'isl-quit-armed' : 'isl-ib sm'}
+                          aria-label={quitArmed ? '确认退出 Lasso' : '退出 Lasso'}
+                          title={quitArmed ? '再次点击退出 Lasso' : '退出 Lasso'}
+                          onClick={() => {
+                            if (quitArmed) {
+                              setQuitArmed(false);
+                              void window.island.menuAction({ kind: 'quit' });
+                            } else {
+                              setQuitArmed(true);
+                            }
+                          }}
+                        >
+                          <Power size={13} />
+                          {quitArmed && <span>确认退出</span>}
+                        </button>
+                        <button
+                          type="button"
+                          className="isl-ib sm"
+                          aria-label="收起看板"
+                          onClick={() => window.island.setMode(resolveCollapsedMode())}
+                        >
+                          <X size={15} />
+                        </button>
+                      </div>
                     </header>
 
                     <AnimatePresence mode="wait" initial={false}>
