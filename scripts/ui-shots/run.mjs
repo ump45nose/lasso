@@ -709,6 +709,29 @@ require(${JSON.stringify(join(root, 'dist/main.cjs'))});
       if (await page(isl, `Boolean(document.querySelector('.isl-task.completing'))`)) {
         throw Error('B4 Island board task completion animation did not settle');
       }
+      // Restore full fixture board state and verify overflow list (12 tasks) never crushes or overlaps rows
+      const manyTasks = [
+        ...islFixtures.board.nookTasks,
+        ...Array.from({ length: 8 }, (_, idx) => ({
+          id: `overflow-${idx + 1}`,
+          title: `长清单校验任务 ${idx + 1}`,
+          listId: 'list-general',
+          listTitle: '一般性',
+          completed: false,
+          inFocus: true
+        }))
+      ];
+      isl.webContents.send('island:changed', { ...islFixtures.board, nookTasks: manyTasks, nookTotalCount: manyTasks.filter(t => t.inFocus).length });
+      await wait(250);
+      if (!(await page(isl, `(() => {
+        const list = document.querySelector('.isl-task-list');
+        const rows = [...document.querySelectorAll('.isl-task-wrap')];
+        if (!list || rows.length < 10 || list.scrollHeight <= list.clientHeight) return false;
+        const rects = rows.map(r => r.getBoundingClientRect());
+        return rects.every((r, i) => r.height >= 33 && (i === 0 || r.top >= rects[i - 1].bottom - 0.5));
+      })()`))) {
+        throw Error('B4 Island overflow task list crushed or overlapped rows');
+      }
       // Restore full fixture board state for subsequent tab checks
       isl.webContents.send('island:changed', islFixtures.board);
       await wait(250);

@@ -1148,7 +1148,7 @@ export function NotchIsland() {
                             <div className="isl-task-empty">{effectiveTab === 'focus' ? '今日重点已全部清空' : '该清单暂无待办'}</div>
                           ) : (
                             <LayoutGroup id="isl-task-list">
-                              <div className="isl-task-list">
+                              <motion.div className="isl-task-list" layoutScroll>
                                 <AnimatePresence initial={false}>
                               {visibleTasks.map(task => {
                                 const hasNotes = Boolean(task.notes);
@@ -1223,7 +1223,7 @@ export function NotchIsland() {
                                 );
                               })}
                                 </AnimatePresence>
-                              </div>
+                              </motion.div>
                             </LayoutGroup>
                           )}
                         </motion.div>

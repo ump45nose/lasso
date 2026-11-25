@@ -316,8 +316,8 @@ html.isl-html, body.isl-body { background: transparent; overflow: hidden; user-s
 .isl-task-list { display: flex; flex-direction: column; max-height: 220px; min-height: 72px; overflow-y: auto; margin: 0 -6px; padding: 0 6px; }
 .isl-task-list::-webkit-scrollbar-thumb { background: rgba(250, 249, 245, 0.16) padding-box; }
 .isl-task-list::-webkit-scrollbar-thumb:hover { background-color: rgba(250, 249, 245, 0.28); }
-.isl-task-wrap { display: flex; flex-direction: column; overflow: hidden; }
-.isl-task { display: flex; align-items: center; gap: 9px; height: 34px; padding: 0 6px; margin: 0; border-radius: 8px; font-size: 13px; color: var(--on-ink); transition: background var(--t-fast), color var(--t-slow) var(--ease-out); }
+.isl-task-wrap { display: flex; flex-direction: column; flex-shrink: 0; overflow: hidden; }
+.isl-task { display: flex; align-items: center; gap: 9px; height: 34px; flex-shrink: 0; padding: 0 6px; margin: 0; border-radius: 8px; font-size: 13px; color: var(--on-ink); transition: background var(--t-fast), color var(--t-slow) var(--ease-out); }
 .isl-task:hover, .isl-task-wrap.open .isl-task { background: rgba(250, 249, 245, 0.06); }
 .isl-task.completing { animation: isl-task-flash 380ms var(--ease-out) both; }
 .isl-task > .t { flex: 1; min-width: 0; }
